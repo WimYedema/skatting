@@ -59,3 +59,8 @@ export function lognormalMode(mu: number, sigma: number): number {
 export function lognormalMean(mu: number, sigma: number): number {
 	return Math.exp(mu + sigma ** 2 / 2)
 }
+
+/** Compute mu from a desired mode position: mode = exp(mu - sigma²) → mu = ln(mode) + sigma² */
+export function muFromMode(mode: number, sigma: number): number {
+	return Math.log(Math.max(mode, 1e-6)) + sigma ** 2
+}

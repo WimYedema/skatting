@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { generateBlobPoints, lognormalMean, lognormalMode, lognormalPdf } from './lognormal'
+import {
+	generateBlobPoints,
+	lognormalMean,
+	lognormalMode,
+	lognormalPdf,
+	muFromMode,
+} from './lognormal'
 
 describe('lognormalPdf', () => {
 	it('returns 0 for x <= 0', () => {
@@ -52,6 +58,28 @@ describe('lognormalMean', () => {
 		const mu = 1
 		const sigma = 0.5
 		expect(lognormalMean(mu, sigma)).toBeGreaterThan(lognormalMode(mu, sigma))
+	})
+})
+
+describe('muFromMode', () => {
+	it('round-trips: lognormalMode(muFromMode(mode, sigma), sigma) ≈ mode', () => {
+		const mode = 5
+		const sigma = 0.7
+		const mu = muFromMode(mode, sigma)
+		expect(lognormalMode(mu, sigma)).toBeCloseTo(mode)
+	})
+
+	it('works across a range of sigma values', () => {
+		for (const sigma of [0.2, 0.5, 1.0, 1.5, 2.0]) {
+			const mode = 3
+			const mu = muFromMode(mode, sigma)
+			expect(lognormalMode(mu, sigma)).toBeCloseTo(mode, 4)
+		}
+	})
+
+	it('clamps near-zero mode to avoid -Infinity', () => {
+		const mu = muFromMode(0, 1.0)
+		expect(Number.isFinite(mu)).toBe(true)
 	})
 })
 

@@ -40,9 +40,11 @@ See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../.
 
 - All P2P message types must be defined in `src/lib/types.ts`
 - State shared across components lives in Svelte `$state` at the top-level component, passed via props or context — no external state library
-- Canvas redraw triggered via `$effect` watching reactive state
-- Use `requestAnimationFrame` for smooth 60fps drag interactions
+- Canvas redraw triggered via `$effect` watching reactive state — draw **synchronously** in the effect, not inside `requestAnimationFrame` (avoids race conditions with ResizeObserver)
+- In `$effect`, read all reactive values **before** any async boundary — Svelte only tracks synchronous reads
 - Use pointer events (`pointerdown`, `pointermove`, `pointerup`) not mouse events — supports touch
+- Canvas buffer size set imperatively (`canvas.width = w`) in the draw effect, **not** via HTML attributes — prevents layout feedback loops
+- ResizeObserver should observe the **container div**, not the canvas itself
 
 ## Build & Test
 

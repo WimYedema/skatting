@@ -1,4 +1,4 @@
-import { generateBlobPoints } from './lognormal'
+import { generateBlobPoints, muFromMode } from './lognormal'
 
 export interface CanvasConfig {
 	/** Padding in pixels around the drawable area */
@@ -37,27 +37,63 @@ export function canvasToMathX(
 	return xMin + ((canvasX - config.padding) / drawWidth) * (xMax - xMin)
 }
 
-/** Map sigma from canvas Y position: top = low sigma (certain), bottom = high sigma (uncertain) */
-export function canvasYToSigma(
-	canvasY: number,
-	canvasHeight: number,
-	sigmaRange: [number, number] = [0.2, 2.0],
-): number {
-	const [sigmaMin, sigmaMax] = sigmaRange
-	const t = Math.max(0, Math.min(1, (canvasY - 40) / (canvasHeight - 80)))
-	// Top → sigmaMin (certain), Bottom → sigmaMax (uncertain)
-	return sigmaMin + t * (sigmaMax - sigmaMin)
-}
-
-/** Map sigma back to canvas Y position */
-export function sigmaToCanvasY(
+/**
+ * Compute the canvas Y position of the blob peak for a given mu and sigma.
+ * This matches exactly how drawBlob renders the peak.
+ */
+export function peakCanvasY(
+	mu: number,
 	sigma: number,
 	canvasHeight: number,
-	sigmaRange: [number, number] = [0.2, 2.0],
+	config: CanvasConfig = DEFAULT_CONFIG,
 ): number {
-	const [sigmaMin, sigmaMax] = sigmaRange
-	const t = (sigma - sigmaMin) / (sigmaMax - sigmaMin)
-	return 40 + t * (canvasHeight - 80)
+	const pad = config.padding
+	const drawHeight = canvasHeight - pad * 2
+	const yScale = drawHeight * 0.6
+	const baselineY = canvasHeight - pad
+
+	// Compute the scaled peak PDF value (matching generateBlobPoints scaling)
+	const points = generateBlobPoints(mu, sigma, config.blobArea)
+	const maxY = Math.max(...points.map((p) => p.y))
+	return baselineY - maxY * yScale
+}
+
+/**
+ * Find the sigma that makes the blob peak reach the given canvas Y position.
+ * Uses binary search since peak height is monotonically decreasing with sigma.
+ * Higher cursor → higher sigma (less certain, shorter peak).
+ */
+export function canvasYToSigmaFromPeak(
+	canvasY: number,
+	canvasHeight: number,
+	desiredMode: number,
+	sigmaRange: [number, number] = [0.1, 2.5],
+	config: CanvasConfig = DEFAULT_CONFIG,
+): number {
+	const pad = config.padding
+	const baselineY = canvasHeight - pad
+
+	// Clamp: cursor at or below baseline → max sigma; cursor at top → min sigma
+	if (canvasY >= baselineY - 2) return sigmaRange[1]
+	if (canvasY <= pad) return sigmaRange[0]
+
+	let lo = sigmaRange[0]
+	let hi = sigmaRange[1]
+
+	// Binary search: lower sigma → taller peak (lower canvasY)
+	for (let i = 0; i < 20; i++) {
+		const mid = (lo + hi) / 2
+		const mu = muFromMode(desiredMode, mid)
+		const peakY = peakCanvasY(mu, mid, canvasHeight, config)
+		if (peakY < canvasY) {
+			// Peak is too high (too tall), need more sigma
+			lo = mid
+		} else {
+			// Peak is too low (too short), need less sigma
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2
 }
 
 /** Draw axes with labels */
@@ -107,15 +143,13 @@ export function drawBlob(
 	const pad = config.padding
 	const drawHeight = canvasHeight - pad * 2
 
-	// Find max y for scaling the blob height to fit within the drawable area
-	const maxY = Math.max(...points.map((p) => p.y))
-	if (maxY <= 0) return
+	// Fixed yScale: maps math-space y to pixels.
+	// Use a constant so that changing sigma visibly changes height.
+	// A narrow blob (low sigma) will be tall; a wide blob (high sigma) will be short.
+	const yScale = drawHeight * 0.6
 
-	// Scale: blob peak takes up at most 80% of drawable height
-	const yScale = (drawHeight * 0.8) / maxY
-
-	// The baseline Y (bottom of the blob) corresponds to the sigma position
-	const baselineY = sigmaToCanvasY(sigma, canvasHeight)
+	// Fixed baseline at the x-axis (bottom of drawable area)
+	const baselineY = canvasHeight - pad
 
 	ctx.save()
 	ctx.globalAlpha = alpha
