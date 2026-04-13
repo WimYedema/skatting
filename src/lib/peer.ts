@@ -1,6 +1,13 @@
 import type { Room } from 'trystero/nostr'
 import { joinRoom, selfId } from 'trystero/nostr'
-import type { EstimateMessage, PeerEstimate, RevealMessage } from './types'
+import type {
+	EstimateMessage,
+	NameMessage,
+	PeerEstimate,
+	ReadyMessage,
+	RevealMessage,
+	TopicMessage,
+} from './types'
 import { PEER_COLORS } from './types'
 
 const APP_ID = 'estimate-p2p-tool'
@@ -11,6 +18,9 @@ export interface PeerSession {
 	room: Room
 	sendEstimate: (estimate: EstimateMessage) => Promise<void>
 	sendReveal: (reveal: RevealMessage) => Promise<void>
+	sendName: (name: NameMessage) => Promise<void>
+	sendTopic: (topic: TopicMessage) => Promise<void>
+	sendReady: (ready: ReadyMessage) => Promise<void>
 	leave: () => Promise<void>
 }
 
@@ -19,6 +29,9 @@ export interface PeerCallbacks {
 	onPeerLeave: (peerId: string) => void
 	onEstimate: (estimate: PeerEstimate) => void
 	onReveal: (revealed: boolean) => void
+	onName: (peerId: string, name: string) => void
+	onTopic: (topic: string) => void
+	onReady: (peerId: string, ready: boolean) => void
 }
 
 export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSession {
@@ -26,6 +39,9 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 
 	const [sendEstimate, onEstimate] = room.makeAction<EstimateMessage>('estimate')
 	const [sendReveal, onReveal] = room.makeAction<RevealMessage>('reveal')
+	const [sendName, onName] = room.makeAction<NameMessage>('name')
+	const [sendTopic, onTopic] = room.makeAction<TopicMessage>('topic')
+	const [sendReady, onReady] = room.makeAction<ReadyMessage>('ready')
 
 	room.onPeerJoin((peerId) => {
 		callbacks.onPeerJoin(peerId)
@@ -43,6 +59,18 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		callbacks.onReveal(data.revealed)
 	})
 
+	onName((data, peerId) => {
+		callbacks.onName(peerId, data.name)
+	})
+
+	onTopic((data) => {
+		callbacks.onTopic(data.topic)
+	})
+
+	onReady((data, peerId) => {
+		callbacks.onReady(peerId, data.ready)
+	})
+
 	return {
 		roomId,
 		selfId,
@@ -52,6 +80,15 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		},
 		sendReveal: async (reveal) => {
 			await sendReveal(reveal)
+		},
+		sendName: async (name) => {
+			await sendName(name)
+		},
+		sendTopic: async (topic) => {
+			await sendTopic(topic)
+		},
+		sendReady: async (ready) => {
+			await sendReady(ready)
 		},
 		leave: () => room.leave(),
 	}

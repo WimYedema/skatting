@@ -17,6 +17,18 @@ export type RevealMessage = {
 	revealed: boolean
 }
 
+export type NameMessage = {
+	name: string
+}
+
+export type TopicMessage = {
+	topic: string
+}
+
+export type ReadyMessage = {
+	ready: boolean
+}
+
 /** Distinct colors assigned to peers for overlay rendering */
 export const PEER_COLORS = [
 	'#ef4444', // red

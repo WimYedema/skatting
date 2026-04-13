@@ -2,12 +2,14 @@
 	import { generateRoomId } from '../lib/peer'
 
 	interface Props {
-		onJoin: (roomId: string) => void
+		onJoin: (roomId: string, userName: string, topic: string) => void
 	}
 
 	let { onJoin }: Props = $props()
 
 	let roomId = $state('')
+	let userName = $state('')
+	let topic = $state('')
 	let mode = $state<'choose' | 'create' | 'join'>('choose')
 
 	function handleCreate() {
@@ -21,11 +23,14 @@
 	}
 
 	function handleSubmit() {
-		const trimmed = roomId.trim().toLowerCase()
-		if (trimmed.length > 0) {
-			onJoin(trimmed)
+		const trimmedRoom = roomId.trim().toLowerCase()
+		const trimmedName = userName.trim()
+		if (trimmedRoom.length > 0 && trimmedName.length > 0) {
+			onJoin(trimmedRoom, trimmedName, topic.trim())
 		}
 	}
+
+	let canSubmit = $derived(roomId.trim().length > 0 && userName.trim().length > 0)
 </script>
 
 <div class="lobby">
@@ -33,15 +38,39 @@
 	<p class="subtitle">2D continuous estimation for agile teams</p>
 
 	{#if mode === 'choose'}
+		<div class="form-group">
+			<label for="user-name">Your name</label>
+			<input
+				id="user-name"
+				type="text"
+				bind:value={userName}
+				placeholder="e.g. Alice"
+				maxlength="30"
+			/>
+		</div>
 		<div class="actions">
-			<button class="primary" onclick={handleCreate}>Create Session</button>
-			<button class="secondary" onclick={handleJoinMode}>Join Session</button>
+			<button class="primary" onclick={handleCreate} disabled={userName.trim().length === 0}>
+				Create Session
+			</button>
+			<button class="secondary" onclick={handleJoinMode} disabled={userName.trim().length === 0}>
+				Join Session
+			</button>
 		</div>
 	{:else if mode === 'create'}
 		<div class="room-info">
+			<div class="form-group">
+				<label for="topic">What are we estimating?</label>
+				<input
+					id="topic"
+					type="text"
+					bind:value={topic}
+					placeholder="e.g. User login feature"
+					maxlength="100"
+				/>
+			</div>
 			<p>Share this code with your team:</p>
 			<div class="room-code">{roomId}</div>
-			<button class="primary" onclick={handleSubmit}>Start</button>
+			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>
 			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
 		</div>
 	{:else}
@@ -52,9 +81,9 @@
 				bind:value={roomId}
 				placeholder="e.g. abc23"
 				maxlength="10"
-				onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSubmit()}
+				onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && canSubmit && handleSubmit()}
 			/>
-			<button class="primary" onclick={handleSubmit} disabled={roomId.trim().length === 0}>
+			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
 				Join
 			</button>
 			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
@@ -85,6 +114,18 @@
 	.actions {
 		display: flex;
 		gap: 12px;
+	}
+
+	.form-group {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+	}
+
+	label {
+		font-size: 0.875rem;
+		color: #94a3b8;
 	}
 
 	.room-info {
