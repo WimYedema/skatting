@@ -25,6 +25,6 @@
 		}
 	},
 	"files": {
-		"includes": ["src/**", "vite.config.ts", "biome.json", "tsconfig*.json"]
+		"includes": ["src/**/*.ts", "vite.config.ts", "biome.json", "tsconfig*.json"]
 	}
 }
