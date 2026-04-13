@@ -172,10 +172,12 @@ export function getPeerColor(peerId: string, allPeerIds: string[]): string {
 }
 
 export function generateRoomId(): string {
-	const chars = 'abcdefghjkmnpqrstuvwxyz23456789'
+	const consonants = 'bdfghjkmnprstvz'
+	const vowels = 'aeiou'
 	let id = ''
-	for (let i = 0; i < 5; i++) {
-		id += chars[Math.floor(Math.random() * chars.length)]
+	for (let i = 0; i < 3; i++) {
+		id += consonants[Math.floor(Math.random() * consonants.length)]
+		id += vowels[Math.floor(Math.random() * vowels.length)]
 	}
 	return id
 }

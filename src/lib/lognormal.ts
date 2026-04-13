@@ -138,3 +138,39 @@ export function combineEstimates(
 
 	return { mu: combinedMu, sigma: combinedSigma }
 }
+
+const FIBONACCI = [1, 2, 3, 5, 8, 13, 21]
+
+/**
+ * Snap a raw median value to a human-friendly verdict.
+ * - points: nearest Fibonacci number (1, 2, 3, 5, 8, 13, 21)
+ * - days: nearest reasonable time unit (half-day, day, week, month)
+ */
+export function snapVerdict(median: number, unit: string): string {
+	if (unit === 'points') {
+		let best = FIBONACCI[0]
+		let bestDist = Math.abs(median - best)
+		for (const f of FIBONACCI) {
+			const d = Math.abs(median - f)
+			if (d < bestDist) {
+				best = f
+				bestDist = d
+			}
+		}
+		return `${best}`
+	}
+
+	// Days: snap to a natural time granularity
+	if (median < 0.75) return '½ day'
+	if (median < 1.25) return '1 day'
+	if (median < 1.75) return '1½ days'
+	if (median < 2.5) return '2 days'
+	if (median < 3.5) return '3 days'
+	if (median < 4.5) return '4 days'
+	if (median < 6) return '1 week'
+	if (median < 8.5) return '1½ weeks'
+	if (median < 12) return '2 weeks'
+	if (median < 17) return '3 weeks'
+	if (median < 23) return '1 month'
+	return `${Math.round(median)} days`
+}

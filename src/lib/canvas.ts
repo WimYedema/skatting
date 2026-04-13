@@ -4,6 +4,7 @@ import {
 	lognormalPdf,
 	lognormalQuantile,
 	muFromMode,
+	snapVerdict,
 } from './lognormal'
 
 /**
@@ -653,6 +654,47 @@ function drawAnnotations(
 	ctx.restore()
 }
 
+/**
+ * Draw a prominent verdict label below the combined blob.
+ * Shows the snapped value (Fibonacci for points, natural units for days).
+ */
+function drawVerdict(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	width: number,
+	height: number,
+	unit: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const pad = config.padding
+	const median = lognormalQuantile(0.5, mu, sigma)
+	const verdict = snapVerdict(median, unit)
+
+	// Place at top-right third intersection of the chart area
+	const baselineY = height - pad
+	const chartHeight = baselineY - pad
+	const chartWidth = width - pad * 2
+	const labelX = pad + chartWidth * (2 / 3)
+	const labelY = pad + chartHeight * (1 / 3)
+
+	ctx.save()
+	ctx.font = '22px Caveat, cursive'
+	ctx.fillStyle = '#2a2520'
+	ctx.globalAlpha = 0.8
+	ctx.textAlign = 'right'
+	ctx.fillText(`call it ${verdict}`, labelX, labelY)
+
+	if (unit === 'points') {
+		ctx.font = '12px Caveat, cursive'
+		ctx.fillStyle = '#7a7060'
+		ctx.globalAlpha = 0.6
+		ctx.fillText('(fibonacci)', labelX, labelY + 15)
+	}
+
+	ctx.restore()
+}
+
 /** Clear the canvas and draw the full scene */
 export function drawScene(
 	ctx: CanvasRenderingContext2D,
@@ -713,6 +755,7 @@ export function drawScene(
 		if (combined) {
 			drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
 			drawAnnotations(ctx, combined.mu, combined.sigma, width, height, unit)
+			drawVerdict(ctx, combined.mu, combined.sigma, width, height, unit)
 		}
 	}
 }

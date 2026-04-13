@@ -8,6 +8,7 @@ import {
 	lognormalPdf,
 	lognormalQuantile,
 	muFromMode,
+	snapVerdict,
 } from './lognormal'
 
 describe('lognormalPdf', () => {
@@ -271,5 +272,50 @@ describe('lognormalQuantile', () => {
 		const p90 = lognormalQuantile(0.9, mu, sigma)
 		expect(p10).toBeLessThan(p50)
 		expect(p50).toBeLessThan(p90)
+	})
+})
+
+describe('snapVerdict', () => {
+	describe('points (fibonacci)', () => {
+		it('snaps to exact fibonacci values', () => {
+			expect(snapVerdict(1, 'points')).toBe('1')
+			expect(snapVerdict(5, 'points')).toBe('5')
+			expect(snapVerdict(13, 'points')).toBe('13')
+		})
+
+		it('snaps to nearest fibonacci', () => {
+			expect(snapVerdict(4, 'points')).toBe('3') // equidistant from 3 and 5, picks lower
+			expect(snapVerdict(4.5, 'points')).toBe('5')
+			expect(snapVerdict(6, 'points')).toBe('5')
+			expect(snapVerdict(9, 'points')).toBe('8')
+			expect(snapVerdict(11, 'points')).toBe('13')
+			expect(snapVerdict(18, 'points')).toBe('21')
+		})
+
+		it('clamps small values to 1', () => {
+			expect(snapVerdict(0.3, 'points')).toBe('1')
+		})
+	})
+
+	describe('days (natural units)', () => {
+		it('uses half-day for very small', () => {
+			expect(snapVerdict(0.5, 'days')).toBe('½ day')
+		})
+
+		it('uses days for small values', () => {
+			expect(snapVerdict(1, 'days')).toBe('1 day')
+			expect(snapVerdict(2, 'days')).toBe('2 days')
+			expect(snapVerdict(3, 'days')).toBe('3 days')
+		})
+
+		it('uses weeks for medium values', () => {
+			expect(snapVerdict(5, 'days')).toBe('1 week')
+			expect(snapVerdict(10, 'days')).toBe('2 weeks')
+			expect(snapVerdict(15, 'days')).toBe('3 weeks')
+		})
+
+		it('uses month for large values', () => {
+			expect(snapVerdict(20, 'days')).toBe('1 month')
+		})
 	})
 })
