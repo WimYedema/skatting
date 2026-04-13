@@ -29,16 +29,20 @@ export type ReadyMessage = {
 	ready: boolean
 }
 
-/** Distinct colors assigned to peers for overlay rendering */
+export type UnitMessage = {
+	unit: string
+}
+
+/** Muted colors assigned to peers — like colored pencils on paper */
 export const PEER_COLORS = [
-	'#ef4444', // red
-	'#f97316', // orange
-	'#eab308', // yellow
-	'#22c55e', // green
-	'#06b6d4', // cyan
-	'#8b5cf6', // violet
-	'#ec4899', // pink
-	'#14b8a6', // teal
-	'#f59e0b', // amber
-	'#6366f1', // indigo
+	'#b56b6b', // dusty rose
+	'#c4885a', // warm ochre
+	'#8a9a5a', // sage green
+	'#6a94a0', // muted teal
+	'#8b7baa', // slate purple
+	'#c47a8a', // faded pink
+	'#7a9a6a', // olive
+	'#a08a5a', // tan
+	'#7a8aaa', // steel blue
+	'#9a7a6a', // warm grey
 ]

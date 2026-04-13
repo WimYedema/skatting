@@ -64,3 +64,32 @@ export function lognormalMean(mu: number, sigma: number): number {
 export function muFromMode(mode: number, sigma: number): number {
 	return Math.log(Math.max(mode, 1e-6)) + sigma ** 2
 }
+
+/**
+ * Combine multiple log-normal estimates using precision weighting (Bayesian product of experts).
+ * More certain estimates (lower σ) get more weight. Combined σ is always narrower.
+ */
+export function combineEstimates(
+	estimates: Array<{ mu: number; sigma: number }>,
+): { mu: number; sigma: number } | null {
+	if (estimates.length === 0) return null
+	if (estimates.length === 1) return { mu: estimates[0].mu, sigma: estimates[0].sigma }
+
+	// Filter out degenerate estimates (sigma must be positive and finite)
+	const valid = estimates.filter((e) => e.sigma > 0 && Number.isFinite(e.sigma))
+	if (valid.length === 0) return null
+	if (valid.length === 1) return { mu: valid[0].mu, sigma: valid[0].sigma }
+
+	let precisionSum = 0
+	let weightedMuSum = 0
+	for (const est of valid) {
+		const precision = 1 / est.sigma ** 2
+		precisionSum += precision
+		weightedMuSum += est.mu * precision
+	}
+
+	const combinedSigma = Math.sqrt(1 / precisionSum)
+	const combinedMu = weightedMuSum / precisionSum
+
+	return { mu: combinedMu, sigma: combinedSigma }
+}

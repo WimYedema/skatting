@@ -4,8 +4,8 @@
 
 A real-time, peer-to-peer estimation tool for agile teams that replaces discrete card-based planning poker with a **two-dimensional continuous input**:
 
-- **X-axis (Estimate):** Unscaled effort/size — left is small, right is large
-- **Y-axis (Certainty):** How confident the estimator is — bottom is uncertain, top is certain
+- **X-axis (Estimate):** Effort/size in configurable units (points or days) — left is small, right is large, with numeric tick marks
+- **Y-axis (Certainty):** How confident the estimator is — 0% (uncertain) at bottom to 100% (certain) at top
 
 The user doesn't place a single point. Instead, they are given a **fixed-area shape** (a "blob") that they position on the 2D plane. The shape is drawn from a **log-normal distribution**, reflecting how software estimates actually behave: bounded at zero, right-skewed, with a long tail for overruns.
 
@@ -116,11 +116,12 @@ The goal is **zero server infrastructure** for the core experience.
                    └─────────┘
 ```
 
-**Signaling**: WebRTC requires an initial signaling step to exchange connection offers. Options (in order of preference for "serverless"):
+**Signaling**: WebRTC requires an initial signaling step to exchange connection offers. The app uses a **dual-strategy** approach for reliability:
 
-1. **Trystero** — library that uses BitTorrent trackers, IPFS, or Nostr relays as the signaling layer. No custom server needed.
-2. **Manual exchange** — copy-paste connection strings (fallback, clunky but truly zero-infrastructure)
-3. **PeerJS cloud** — free hosted signaling server (simple, but adds a dependency)
+1. **Trystero via Nostr relays** — WebSocket connections to public Nostr relays (relay.damus.io, nos.lol, etc.)
+2. **Trystero via MQTT** — WebSocket connections to public MQTT brokers (HiveMQ)
+
+Both strategies run simultaneously. Peers connect via whichever succeeds first. Messages are broadcast on all connected channels with deduplication, so the app works even if one transport is blocked by corporate firewalls.
 
 **Data exchanged**: Only small JSON messages (~100 bytes per update):
 ```json
@@ -136,40 +137,51 @@ The goal is **zero server infrastructure** for the core experience.
 
 | Layer | Choice | Rationale |
 |---|---|---|
-| **UI framework** | Vanilla JS + Canvas/SVG | Minimal deps, fast load, single HTML file possible |
-| **P2P communication** | Trystero (WebRTC) | Serverless signaling via BitTorrent/Nostr/IPFS |
-| **Math/rendering** | Canvas 2D API | Log-normal PDF rendering, blob interaction |
-| **Bundling** | None initially (ES modules) | Keep it simple; add Vite if needed |
+| **Language** | TypeScript (strict mode) | Catches shape-math bugs before runtime |
+| **UI framework** | Svelte 5 (runes) | ~2 KB runtime, compiled reactivity, minimal boilerplate |
+| **Canvas** | Canvas 2D API (native) | Full control over log-normal rendering and sketchy style |
+| **P2P communication** | Trystero (Nostr + MQTT) | Dual-strategy serverless signaling for reliability |
+| **Build** | Vite | Near-instant HMR, native TS/ESM support |
+| **Lint + Format** | Biome | Single tool replaces ESLint + Prettier |
+| **Unit tests** | Vitest | Vite-native, Jest-compatible API |
+| **Single-file output** | vite-plugin-singlefile | Inlines all JS/CSS into one HTML file |
 
 ### Target: Single HTML File
 
-The MVP should be deployable as a **single HTML file** — open it in a browser, share the session code, done. No build step, no server, no install.
+The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — open it in a browser, share the session code, done. Built with `vite-plugin-singlefile`.
 
 ---
 
 ## Scope
 
-### MVP (v0.1)
+### MVP — Implemented ✅
 
-- [ ] 2D canvas with log-normal blob interaction
-- [ ] Drag to position estimate (μ) and certainty (σ)
-- [ ] Fixed-area constraint with real-time blob reshaping
-- [ ] P2P session creation and joining (via Trystero)
-- [ ] Hidden estimates until facilitator reveal
-- [ ] Overlay all team estimates after reveal
-- [ ] Session naming (what are we estimating?)
-- [ ] Works on desktop browsers (Chrome, Firefox, Edge, Safari)
+- [x] 2D canvas with log-normal blob interaction
+- [x] Drag to position estimate (μ) and certainty (σ)
+- [x] Fixed-area constraint with real-time blob reshaping
+- [x] P2P session creation and joining (via Trystero, dual Nostr + MQTT)
+- [x] Hidden estimates until reveal (auto-reveal when all ready, or force reveal)
+- [x] Overlay all team estimates after reveal
+- [x] Session naming (inline editable topic)
+- [x] Works on desktop browsers (Chrome, Firefox, Edge, Safari)
+- [x] Composite "combined estimate" overlay (precision-weighted Bayesian)
+- [x] Re-estimation rounds (Next → flow with history)
+- [x] X-axis units (points or days, chosen at session creation)
+- [x] Y-axis 0–100% certainty labels
+- [x] Participant names and ready indicators
+- [x] Sketchy hand-drawn visual theme (Caveat font, hatched fills, paper background)
+- [x] History scribbles showing past combined estimates
+- [x] Explicit "Done" button → auto-reveal → "Next" flow
+- [x] Connection error detection and display
 
-### Post-MVP
+### Post-MVP (Not Yet Implemented)
 
-- [ ] Composite "team distribution" overlay
-- [ ] Statistics: mean, median, spread, agreement score
-- [ ] Re-estimation rounds
 - [ ] Export session results (JSON/CSV)
-- [ ] Mobile-friendly touch interaction
-- [ ] Named reference points on X-axis (e.g., "past stories" as calibration anchors)
+- [ ] Mobile-optimized touch interaction
+- [ ] Named reference points on X-axis (calibration anchors)
 - [ ] QR code for session joining
 - [ ] Optional: map final consensus back to Fibonacci scale for Jira compatibility
+- [ ] Color-blind accessibility (patterns already used for fills, but needs testing)
 
 ### Non-Goals (for now)
 
@@ -180,19 +192,25 @@ The MVP should be deployable as a **single HTML file** — open it in a browser,
 
 ---
 
+## Resolved Design Decisions
+
+1. **X-axis scale**: Configurable units — the session creator chooses "points" or "days" at creation time. This is synced to all peers and displayed on the axis. Range is 0–20.
+
+2. **Facilitator role**: No designated facilitator. Any participant can force-reveal or advance to the next round. The P2P model treats all peers equally.
+
+3. **Blob interaction feel**: The blob follows the cursor exactly (no inertia). Horizontal position controls mode (peak), vertical position controls sigma (certainty). The peak always tracks the cursor position precisely via `muFromMode`.
+
+4. **Color-blind accessibility**: Blobs use diagonal hatch-fill patterns (not just color) to distinguish participants. Muted earthy tones used as colored-pencil palette.
+
+5. **P2P mesh limits**: WebRTC full-mesh via Trystero. Practical limit ~10-15 peers — acceptable for typical scrum teams (5-9 people).
+
+6. **After reveal**: A combined estimate is computed automatically using precision-weighted Bayesian combination (more certain estimates get more weight). The combined estimate is shown as a dashed outline. Clicking "Next" saves the combined result to history and starts a new round.
+
 ## Open Questions
 
-1. **X-axis scale**: Should it be purely abstract, or anchored to something (story points, hours, T-shirt sizes)? Keeping it abstract preserves the tool's philosophy but may confuse teams used to discrete scales.
+1. **Statistics panel**: Should we show numerical statistics (mean, median, spread, agreement score) alongside the visual blobs?
 
-2. **Facilitator role**: Is there a designated facilitator, or can anyone trigger reveal? P2P model makes "roles" harder — simplest is anyone can reveal.
-
-3. **Blob interaction feel**: Should the blob follow the cursor exactly, or have physics-based inertia? Exact = precise, inertia = playful.
-
-4. **Color-blind accessibility**: Overlaid blobs need more than just color differentiation — patterns, labels, or opacity variations.
-
-5. **P2P mesh limits**: WebRTC full-mesh scales poorly past ~10-15 peers. Is this acceptable for typical scrum teams (5-9 people)?
-
-6. **What happens after reveal?** Just visual inspection, or do we compute a "team estimate" (e.g., weighted median where certainty = weight)?
+2. **Touch optimization**: The current pointer-event model works on touch but hasn't been optimized for mobile screen sizes.
 
 ---
 

@@ -2,13 +2,14 @@
 	import { generateRoomId } from '../lib/peer'
 
 	interface Props {
-		onJoin: (roomId: string, userName: string) => void
+		onJoin: (roomId: string, userName: string, unit: string | null) => void
 	}
 
 	let { onJoin }: Props = $props()
 
 	let roomId = $state('')
 	let userName = $state('')
+	let unit = $state('points')
 	let mode = $state<'choose' | 'create' | 'join'>('choose')
 
 	function handleCreate() {
@@ -25,7 +26,7 @@
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
 		if (trimmedRoom.length > 0 && trimmedName.length > 0) {
-			onJoin(trimmedRoom, trimmedName)
+			onJoin(trimmedRoom, trimmedName, mode === 'create' ? unit : null)
 		}
 	}
 
@@ -59,6 +60,13 @@
 		<div class="room-info">
 			<p>Share this code with your team:</p>
 			<div class="room-code">{roomId}</div>
+			<div class="unit-picker">
+				<label for="unit-select">Unit:</label>
+				<select id="unit-select" bind:value={unit}>
+					<option value="points">points</option>
+					<option value="days">days</option>
+				</select>
+			</div>
 			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>
 			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
 		</div>
@@ -87,17 +95,21 @@
 		align-items: center;
 		justify-content: center;
 		height: 100vh;
-		gap: 16px;
+		gap: 18px;
 	}
 
 	h1 {
 		margin: 0;
-		font-size: 3rem;
+		font-size: 4rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #3a3530;
 	}
 
 	.subtitle {
-		color: #94a3b8;
+		color: #8a8070;
 		margin: 0 0 24px;
+		font-size: 1.3rem;
 	}
 
 	.actions {
@@ -113,8 +125,8 @@
 	}
 
 	label {
-		font-size: 0.875rem;
-		color: #94a3b8;
+		font-size: 1.1rem;
+		color: #8a8070;
 	}
 
 	.room-info {
@@ -125,70 +137,102 @@
 	}
 
 	.room-code {
-		font-size: 2.5rem;
-		font-family: monospace;
+		font-size: 3rem;
+		font-family: 'Caveat', cursive;
 		letter-spacing: 0.3em;
-		background: #1e293b;
+		background: rgba(210, 200, 180, 0.4);
 		padding: 12px 32px;
-		border-radius: 8px;
+		border: 2px dashed #b0a890;
+		border-radius: 3px;
 		user-select: all;
+		color: #3a3530;
+	}
+
+	.unit-picker {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 1.2rem;
+	}
+
+	.unit-picker select {
+		font-family: 'Caveat', cursive;
+		font-size: 1.2rem;
+		padding: 4px 8px;
+		border: 2px dashed #c0b89a;
+		border-radius: 3px;
+		background: rgba(245, 240, 230, 0.5);
+		color: #3a3530;
+		cursor: pointer;
 	}
 
 	input {
-		font-size: 1.5rem;
+		font-family: 'Caveat', cursive;
+		font-size: 1.8rem;
 		text-align: center;
-		letter-spacing: 0.2em;
-		padding: 10px 20px;
-		border: 2px solid #334155;
-		border-radius: 8px;
-		background: #1e293b;
-		color: #e2e8f0;
+		letter-spacing: 0.15em;
+		padding: 8px 20px;
+		border: 2px dashed #c0b89a;
+		border-radius: 3px;
+		background: rgba(245, 240, 230, 0.5);
+		color: #3a3530;
 		outline: none;
-		width: 200px;
+		width: 220px;
 	}
 
 	input:focus {
-		border-color: #3b82f6;
+		border-color: #3b7dd8;
+	}
+
+	input::placeholder {
+		color: #a09880;
 	}
 
 	button {
 		padding: 10px 28px;
-		border: none;
-		border-radius: 6px;
-		font-size: 1rem;
+		border: 1px dashed #8a9ab0;
+		border-radius: 3px;
+		font-family: 'Caveat', cursive;
+		font-size: 1.3rem;
+		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.15s;
 	}
 
 	.primary {
-		background: #3b82f6;
-		color: white;
+		background: rgba(59, 125, 216, 0.2);
+		color: #2a5090;
 	}
 
 	.primary:hover {
-		background: #2563eb;
+		background: rgba(59, 125, 216, 0.35);
 	}
 
 	.primary:disabled {
-		background: #334155;
+		background: rgba(160, 150, 130, 0.2);
+		border-color: #c0b89a;
 		cursor: not-allowed;
+		color: #a09880;
 	}
 
 	.secondary {
-		background: #334155;
-		color: #e2e8f0;
+		background: rgba(160, 150, 130, 0.2);
+		color: #5a5040;
+		border-color: #b0a890;
 	}
 
 	.secondary:hover {
-		background: #475569;
+		background: rgba(160, 150, 130, 0.35);
 	}
 
 	.back {
 		background: transparent;
-		color: #94a3b8;
-		font-size: 0.875rem;
+		color: #8a8070;
+		font-size: 1rem;
+		border-color: transparent;
 	}
 
 	.back:hover {
-		color: #e2e8f0;
+		color: #3a3530;
 	}
 </style>

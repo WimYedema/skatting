@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+	combineEstimates,
 	generateBlobPoints,
 	lognormalMean,
 	lognormalMode,
@@ -134,3 +135,78 @@ function computeArea(points: Array<{ x: number; y: number }>): number {
 	}
 	return area
 }
+
+describe('combineEstimates', () => {
+	it('returns null for empty array', () => {
+		expect(combineEstimates([])).toBeNull()
+	})
+
+	it('returns the single estimate unchanged', () => {
+		const result = combineEstimates([{ mu: 2, sigma: 0.5 }])
+		expect(result).toEqual({ mu: 2, sigma: 0.5 })
+	})
+
+	it('combined sigma is narrower than any individual', () => {
+		const result = combineEstimates([
+			{ mu: 1, sigma: 0.5 },
+			{ mu: 2, sigma: 0.8 },
+		])
+		expect(result).not.toBeNull()
+		expect(result?.sigma).toBeLessThan(0.5)
+	})
+
+	it('weights toward more certain estimates', () => {
+		const result = combineEstimates([
+			{ mu: 1, sigma: 0.2 }, // very certain
+			{ mu: 3, sigma: 2.0 }, // very uncertain
+		])
+		expect(result).not.toBeNull()
+		// Combined mu should be much closer to 1 than to 3
+		expect(result?.mu).toBeCloseTo(1, 0)
+	})
+
+	it('identical estimates yield the same mu', () => {
+		const result = combineEstimates([
+			{ mu: 2, sigma: 0.6 },
+			{ mu: 2, sigma: 0.6 },
+		])
+		expect(result).not.toBeNull()
+		expect(result?.mu).toBeCloseTo(2, 5)
+	})
+
+	it('filters out sigma=0 estimates (division by zero guard)', () => {
+		const result = combineEstimates([
+			{ mu: 2, sigma: 0 },
+			{ mu: 3, sigma: 0.5 },
+		])
+		expect(result).not.toBeNull()
+		expect(result?.mu).toBeCloseTo(3)
+		expect(result?.sigma).toBeCloseTo(0.5)
+	})
+
+	it('returns null if all estimates have sigma=0', () => {
+		const result = combineEstimates([
+			{ mu: 1, sigma: 0 },
+			{ mu: 2, sigma: 0 },
+		])
+		expect(result).toBeNull()
+	})
+
+	it('handles negative sigma by filtering', () => {
+		const result = combineEstimates([
+			{ mu: 1, sigma: -1 },
+			{ mu: 2, sigma: 0.5 },
+		])
+		expect(result).not.toBeNull()
+		expect(result?.mu).toBeCloseTo(2)
+	})
+
+	it('handles Infinity sigma by filtering', () => {
+		const result = combineEstimates([
+			{ mu: 1, sigma: Infinity },
+			{ mu: 2, sigma: 0.5 },
+		])
+		expect(result).not.toBeNull()
+		expect(result?.mu).toBeCloseTo(2)
+	})
+})

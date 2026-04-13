@@ -3,6 +3,7 @@ import {
 	canvasToMathX,
 	canvasYToSigmaFromPeak,
 	DEFAULT_CONFIG,
+	hitTestBlob,
 	mathToCanvasX,
 	peakCanvasY,
 } from './canvas'
@@ -73,7 +74,7 @@ describe('canvasYToSigmaFromPeak', () => {
 
 	it('cursor at top → min sigma', () => {
 		const sigma = canvasYToSigmaFromPeak(DEFAULT_CONFIG.padding, canvasHeight, mode)
-		expect(sigma).toBe(0.1)
+		expect(sigma).toBe(0.01)
 	})
 
 	it('peak reaches the target cursorY', () => {
@@ -82,5 +83,44 @@ describe('canvasYToSigmaFromPeak', () => {
 		const mu = muFromMode(mode, sigma)
 		const actualPeakY = peakCanvasY(mu, sigma, canvasHeight)
 		expect(actualPeakY).toBeCloseTo(targetY, 0)
+	})
+})
+
+describe('hitTestBlob', () => {
+	const width = 800
+	const height = 600
+	const mode = 5
+	const sigma = 0.5
+	const mu = muFromMode(mode, sigma)
+
+	it('hits inside the blob at peak position', () => {
+		const peakX = mathToCanvasX(mode, width)
+		const peakY = peakCanvasY(mu, sigma, height)
+		// Midway between peak and baseline should be inside
+		const midY = (peakY + height - DEFAULT_CONFIG.padding) / 2
+		expect(hitTestBlob(mu, sigma, peakX, midY, width, height)).toBe(true)
+	})
+
+	it('misses above the blob peak', () => {
+		const peakX = mathToCanvasX(mode, width)
+		const peakY = peakCanvasY(mu, sigma, height)
+		expect(hitTestBlob(mu, sigma, peakX, peakY - 50, width, height)).toBe(false)
+	})
+
+	it('misses far to the left of the blob', () => {
+		const baselineY = height - DEFAULT_CONFIG.padding - 10
+		expect(hitTestBlob(mu, sigma, DEFAULT_CONFIG.padding + 2, baselineY, width, height)).toBe(false)
+	})
+
+	it('misses below the baseline', () => {
+		const peakX = mathToCanvasX(mode, width)
+		expect(hitTestBlob(mu, sigma, peakX, height - DEFAULT_CONFIG.padding + 5, width, height)).toBe(
+			false,
+		)
+	})
+
+	it('misses above the padding', () => {
+		const peakX = mathToCanvasX(mode, width)
+		expect(hitTestBlob(mu, sigma, peakX, DEFAULT_CONFIG.padding - 5, width, height)).toBe(false)
 	})
 })
