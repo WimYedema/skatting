@@ -2,14 +2,13 @@
 	import { generateRoomId } from '../lib/peer'
 
 	interface Props {
-		onJoin: (roomId: string, userName: string, topic: string) => void
+		onJoin: (roomId: string, userName: string) => void
 	}
 
 	let { onJoin }: Props = $props()
 
 	let roomId = $state('')
 	let userName = $state('')
-	let topic = $state('')
 	let mode = $state<'choose' | 'create' | 'join'>('choose')
 
 	function handleCreate() {
@@ -26,7 +25,7 @@
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
 		if (trimmedRoom.length > 0 && trimmedName.length > 0) {
-			onJoin(trimmedRoom, trimmedName, topic.trim())
+			onJoin(trimmedRoom, trimmedName)
 		}
 	}
 
@@ -58,16 +57,6 @@
 		</div>
 	{:else if mode === 'create'}
 		<div class="room-info">
-			<div class="form-group">
-				<label for="topic">What are we estimating?</label>
-				<input
-					id="topic"
-					type="text"
-					bind:value={topic}
-					placeholder="e.g. User login feature"
-					maxlength="100"
-				/>
-			</div>
 			<p>Share this code with your team:</p>
 			<div class="room-code">{roomId}</div>
 			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>

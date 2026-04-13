@@ -53,9 +53,12 @@
 		session?.sendReveal({ revealed })
 	}
 
-	function handleJoin(roomId: string, name: string, sessionTopic: string) {
+	function handleTopicChange() {
+		session?.sendTopic({ topic: topic.trim() })
+	}
+
+	function handleJoin(roomId: string, name: string) {
 		userName = name
-		topic = sessionTopic
 
 		session = createSession(roomId, {
 			onPeerJoin(peerId) {
@@ -136,9 +139,14 @@
 			<h1>Estimate</h1>
 			<div class="stats">
 				<span class="room-badge">{session.roomId}</span>
-				{#if topic}
-					<span class="topic">📋 {topic}</span>
-				{/if}
+				<input
+					class="topic-input"
+					type="text"
+					bind:value={topic}
+					placeholder="What are we estimating?"
+					maxlength="100"
+					onchange={handleTopicChange}
+				/>
 				<span>Mode: {mode}</span>
 				<span>Mean: {mean}</span>
 				<span>σ: {sigma.toFixed(2)}</span>
@@ -215,12 +223,31 @@
 		min-width: 0;
 	}
 
-	.topic {
+	.topic-input {
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 4px;
 		color: #e2e8f0;
+		font-size: 0.875rem;
 		font-weight: 500;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		padding: 2px 6px;
+		flex: 1;
+		min-width: 80px;
+		outline: none;
+	}
+
+	.topic-input::placeholder {
+		color: #475569;
+		font-style: italic;
+	}
+
+	.topic-input:hover {
+		border-color: #334155;
+	}
+
+	.topic-input:focus {
+		border-color: #3b82f6;
+		background: #1e293b;
 	}
 
 	.room-badge {
