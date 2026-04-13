@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
 	combineEstimates,
 	generateBlobPoints,
+	lognormalCdf,
 	lognormalMean,
 	lognormalMode,
 	lognormalPdf,
+	lognormalQuantile,
 	muFromMode,
 } from './lognormal'
 
@@ -208,5 +210,66 @@ describe('combineEstimates', () => {
 		])
 		expect(result).not.toBeNull()
 		expect(result?.mu).toBeCloseTo(2)
+	})
+})
+
+describe('lognormalCdf', () => {
+	it('returns 0 for x <= 0', () => {
+		expect(lognormalCdf(0, 1, 0.5)).toBe(0)
+		expect(lognormalCdf(-1, 1, 0.5)).toBe(0)
+	})
+
+	it('returns ~0.5 at the median (exp(mu))', () => {
+		const mu = 1
+		const sigma = 0.5
+		const median = Math.exp(mu)
+		expect(lognormalCdf(median, mu, sigma)).toBeCloseTo(0.5, 2)
+	})
+
+	it('approaches 1 for large x', () => {
+		expect(lognormalCdf(1000, 1, 0.5)).toBeCloseTo(1, 4)
+	})
+
+	it('is monotonically increasing', () => {
+		const mu = 1
+		const sigma = 0.5
+		const prev = lognormalCdf(1, mu, sigma)
+		const next = lognormalCdf(2, mu, sigma)
+		expect(next).toBeGreaterThan(prev)
+	})
+})
+
+describe('lognormalQuantile', () => {
+	it('returns 0 for p=0', () => {
+		expect(lognormalQuantile(0, 1, 0.5)).toBe(0)
+	})
+
+	it('returns Infinity for p=1', () => {
+		expect(lognormalQuantile(1, 1, 0.5)).toBe(Number.POSITIVE_INFINITY)
+	})
+
+	it('returns the median at p=0.5', () => {
+		const mu = 1
+		const sigma = 0.5
+		const median = Math.exp(mu)
+		expect(lognormalQuantile(0.5, mu, sigma)).toBeCloseTo(median, 1)
+	})
+
+	it('is the inverse of lognormalCdf', () => {
+		const mu = 1.5
+		const sigma = 0.8
+		const x = 5
+		const p = lognormalCdf(x, mu, sigma)
+		expect(lognormalQuantile(p, mu, sigma)).toBeCloseTo(x, 1)
+	})
+
+	it('P10 < P50 < P90', () => {
+		const mu = 1
+		const sigma = 0.5
+		const p10 = lognormalQuantile(0.1, mu, sigma)
+		const p50 = lognormalQuantile(0.5, mu, sigma)
+		const p90 = lognormalQuantile(0.9, mu, sigma)
+		expect(p10).toBeLessThan(p50)
+		expect(p50).toBeLessThan(p90)
 	})
 })

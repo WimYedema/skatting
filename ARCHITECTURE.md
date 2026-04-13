@@ -28,12 +28,14 @@ estimate/
 │   │   ├── SessionLobby.svelte     ← create/join session, user name, unit selection
 │   │   └── EstimationCanvas.svelte ← canvas wrapper, pointer events, resize observer
 │   └── lib/
-│       ├── lognormal.ts            ← PDF math, area normalization, combine estimates
-│       ├── lognormal.test.ts       ← 24 tests
-│       ├── canvas.ts               ← all Canvas 2D drawing, coordinate mapping, hit testing
+│       ├── lognormal.ts            ← PDF math, CDF/quantile, area normalization, combine estimates
+│       ├── lognormal.test.ts       ← 33 tests
+│       ├── canvas.ts               ← all Canvas 2D drawing, annotations, coordinate mapping, hit testing
 │       ├── canvas.test.ts          ← 15 tests
 │       ├── peer.ts                 ← Trystero wrapper, dual-strategy P2P, room management
 │       ├── peer.test.ts            ← 7 tests
+│       ├── session-store.ts        ← localStorage session persistence, recent-room management
+│       ├── session-store.test.ts   ← 10 tests
 │       └── types.ts                ← message types, peer colors
 ├── index.html                      ← HTML shell with Google Fonts (Caveat)
 ├── vite.config.ts
@@ -75,10 +77,20 @@ MQTT uses Trystero's default HiveMQ broker.
 All drawing logic lives in `src/lib/canvas.ts` — components never call Canvas API directly.
 
 - `drawScene()` is the single entry point, called synchronously inside a Svelte `$effect`
-- Draw order: paper background → history scribbles → axes → mode line → own blob → peer blobs (revealed) → combined blob (revealed)
+- Draw order: paper background → history scribbles → axes → mode line → own blob → annotations (pre-reveal) → peer blobs (revealed) → combined blob + annotations (revealed)
 - Coordinate mapping: `mathToCanvasX`/`canvasToMathX` map between math space [0, 20] and canvas pixels
 - Y-axis maps sigma (certainty) via `canvasYToSigmaFromPeak` — binary search finding which sigma makes the peak reach the cursor Y
 - Sketchy visual style: seeded PRNG (`mulberry32`) produces deterministic jitter for hand-drawn feel
+- Annotations: `drawAnnotations()` shows median and P10–P90 range with elastic arrows (bow scales quadratically with distance) and dashed vertical range lines. Labels are semi-anchored to the chart center, creating a rubber-band drag feel as the blob moves
+
+### Session Persistence
+
+Recent sessions are stored in `localStorage` via `src/lib/session-store.ts`:
+
+- Up to 10 sessions saved, sorted by most recent
+- Each session records: room ID, user name, topic, unit, peer names, creator flag
+- The lobby displays saved sessions as clickable room cards for quick rejoin
+- Last-used user name is pre-filled in the name input
 
 ### State Management
 
@@ -144,7 +156,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (46 tests)
+npm run test         # vitest run (65 tests)
 ```
 
 ---

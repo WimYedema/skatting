@@ -1,4 +1,10 @@
-import { combineEstimates, generateBlobPoints, lognormalPdf, muFromMode } from './lognormal'
+import {
+	combineEstimates,
+	generateBlobPoints,
+	lognormalPdf,
+	lognormalQuantile,
+	muFromMode,
+} from './lognormal'
 
 /**
  * Seeded pseudo-random number generator (mulberry32).
@@ -496,6 +502,157 @@ function drawHistoryScribbles(
 	}
 }
 
+/**
+ * Draw a sketchy curvy arrow from (x0,y0) to (x1,y1).
+ * The arrow curves via a control point offset from the midpoint.
+ */
+/**
+ * Draw an elastic-looking arrow from (x0,y0) to (x1,y1).
+ * Single cubic bezier whose bow increases with distance —
+ * short = nearly straight, long = stretched rubber-band curve.
+ * Fully deterministic, no RNG.
+ */
+function drawSketchyArrow(
+	ctx: CanvasRenderingContext2D,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+): void {
+	const dx = x1 - x0
+	const dy = y1 - y0
+	const len = Math.sqrt(dx * dx + dy * dy)
+	if (len < 5) return
+
+	const perpX = -dy / len
+	const perpY = dx / len
+
+	// Bow grows quadratically with length — elastic rubber-band feel
+	const bow = Math.min(len * len * 0.0008, 30)
+
+	// Asymmetric S-curve: first CP bows out more, second less
+	const cp1x = x0 + dx * 0.3 + perpX * bow
+	const cp1y = y0 + dy * 0.3 + perpY * bow
+	const cp2x = x0 + dx * 0.7 - perpX * bow * 0.3
+	const cp2y = y0 + dy * 0.7 - perpY * bow * 0.3
+
+	ctx.beginPath()
+	ctx.moveTo(x0, y0)
+	ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x1, y1)
+	ctx.stroke()
+
+	// Arrowhead from tangent at t=1: derivative = 3*(P3-P2)
+	const angle = Math.atan2(y1 - cp2y, x1 - cp2x)
+	const headLen = 7
+	ctx.beginPath()
+	ctx.moveTo(x1, y1)
+	ctx.lineTo(x1 - headLen * Math.cos(angle - 0.4), y1 - headLen * Math.sin(angle - 0.4))
+	ctx.moveTo(x1, y1)
+	ctx.lineTo(x1 - headLen * Math.cos(angle + 0.4), y1 - headLen * Math.sin(angle + 0.4))
+	ctx.stroke()
+}
+
+/** Format a number nicely: show 1 decimal if < 10, otherwise integer */
+function formatValue(v: number): string {
+	if (v < 10) return v.toFixed(1)
+	return Math.round(v).toString()
+}
+
+/**
+ * Draw annotations near the blob with an elastic-drag feel.
+ * Note labels are anchored toward the chart center and only partially
+ * follow the blob — so the arrow stretches and bows when you drag far.
+ */
+function drawAnnotations(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	width: number,
+	height: number,
+	unit: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const pad = config.padding
+
+	const median = lognormalQuantile(0.5, mu, sigma)
+	const p10 = lognormalQuantile(0.1, mu, sigma)
+	const p90 = lognormalQuantile(0.9, mu, sigma)
+
+	const medianCx = mathToCanvasX(median, width, config)
+	const p10Cx = mathToCanvasX(p10, width, config)
+	const p90Cx = mathToCanvasX(p90, width, config)
+
+	// Abort if median is off-screen
+	if (medianCx < pad + 20 || medianCx > width - pad - 20) return
+
+	const blobPeakY = peakCanvasY(mu, sigma, height, config)
+	const noteAnchorY = Math.max(blobPeakY, pad + 40)
+
+	// "Rest" position: center of the drawable area.
+	// Notes lerp only partway toward the blob → they lag behind.
+	const restX = width / 2
+	const drag = 0.35 // 0 = pinned to center, 1 = tracks blob exactly
+
+	ctx.save()
+	ctx.globalAlpha = 0.75
+	ctx.strokeStyle = '#4a4030'
+	ctx.lineWidth = 1.0
+
+	// -- Median annotation --
+	const medianText = `~${formatValue(median)} ${unit}`
+	const medianNoteX = restX + (medianCx - restX) * drag
+	const medianNoteY = noteAnchorY - 45
+
+	ctx.font = '18px Caveat, cursive'
+	ctx.fillStyle = '#2a2520'
+	ctx.textAlign = 'center'
+	ctx.fillText(medianText, medianNoteX, medianNoteY)
+	ctx.font = '13px Caveat, cursive'
+	ctx.fillStyle = '#6a6050'
+	ctx.fillText('most likely', medianNoteX, medianNoteY + 16)
+
+	// Arrow from note to peak — stretches and bows the further apart they are
+	drawSketchyArrow(ctx, medianNoteX, medianNoteY + 19, medianCx, noteAnchorY - 2)
+
+	// -- Range annotation (P10–P90) --
+	const rangeText = `${formatValue(p10)}–${formatValue(p90)} ${unit}`
+	const rangeMidX = (medianCx + p90Cx) / 2
+	const rangeNoteX = restX + (rangeMidX - restX) * drag
+	const clampedRangeNoteX = Math.min(Math.max(rangeNoteX, pad + 80), width - pad - 60)
+	const rangeNoteY = noteAnchorY - 75
+
+	ctx.font = '16px Caveat, cursive'
+	ctx.fillStyle = '#3a3530'
+	ctx.textAlign = 'center'
+	ctx.fillText(rangeText, clampedRangeNoteX, rangeNoteY)
+	ctx.font = '12px Caveat, cursive'
+	ctx.fillStyle = '#7a7060'
+	ctx.fillText('80% falls here', clampedRangeNoteX, rangeNoteY + 14)
+
+	// Arrows to P10 and P90 — long stretch = big bow
+	const curveTargetY = noteAnchorY + (height - pad - noteAnchorY) * 0.4
+	drawSketchyArrow(ctx, clampedRangeNoteX - 20, rangeNoteY + 17, p10Cx, curveTargetY)
+	drawSketchyArrow(ctx, clampedRangeNoteX + 20, rangeNoteY + 17, p90Cx, curveTargetY)
+
+	// -- Vertical dashed lines at P10 and P90 range limits --
+	const baselineY = height - pad
+	const rangeLineTop = noteAnchorY - (baselineY - noteAnchorY) * 0.1
+	const rangeLineBottom = baselineY - 2
+	ctx.globalAlpha = 0.55
+	ctx.strokeStyle = '#5a5040'
+	ctx.lineWidth = 1.2
+	ctx.setLineDash([4, 5])
+	ctx.beginPath()
+	ctx.moveTo(p10Cx, rangeLineTop)
+	ctx.lineTo(p10Cx, rangeLineBottom)
+	ctx.moveTo(p90Cx, rangeLineTop)
+	ctx.lineTo(p90Cx, rangeLineBottom)
+	ctx.stroke()
+	ctx.setLineDash([])
+
+	ctx.restore()
+}
+
 /** Clear the canvas and draw the full scene */
 export function drawScene(
 	ctx: CanvasRenderingContext2D,
@@ -536,6 +693,11 @@ export function drawScene(
 	// Always draw the user's own blob
 	drawBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a', 0.5)
 
+	// Annotations: show on own blob pre-reveal, on combined blob post-reveal
+	if (!revealed) {
+		drawAnnotations(ctx, myEstimate.mu, myEstimate.sigma, width, height, unit)
+	}
+
 	// Draw peer blobs only when revealed
 	if (revealed) {
 		for (const peer of peerEstimates) {
@@ -550,6 +712,7 @@ export function drawScene(
 		const combined = combineEstimates(allEstimates)
 		if (combined) {
 			drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
+			drawAnnotations(ctx, combined.mu, combined.sigma, width, height, unit)
 		}
 	}
 }

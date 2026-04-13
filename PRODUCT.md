@@ -173,6 +173,8 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 - [x] History scribbles showing past combined estimates
 - [x] Explicit "Done" button → auto-reveal → "Next" flow
 - [x] Connection error detection and display
+- [x] Session persistence (localStorage) with recent-room cards in lobby
+- [x] Chart annotations: median label, P10–P90 range with elastic arrows and dashed range lines
 
 ### Post-MVP (Not Yet Implemented)
 
@@ -208,7 +210,7 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 
 ## Open Questions
 
-1. **Statistics panel**: Should we show numerical statistics (mean, median, spread, agreement score) alongside the visual blobs?
+1. **Statistics panel**: Partially addressed — the canvas now shows inline annotations (median with "most likely" label, P10–P90 range with "80% falls here") that appear on the user's blob pre-reveal and on the combined blob post-reveal. A separate numerical panel may still be useful for export or detailed comparison.
 
 2. **Touch optimization**: The current pointer-event model works on touch but hasn't been optimized for mobile screen sizes.
 

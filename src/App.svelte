@@ -3,6 +3,7 @@
 	import SessionLobby from './components/SessionLobby.svelte'
 	import { combineEstimates } from './lib/lognormal'
 	import { createSession, getPeerColor, selfId, type PeerSession } from './lib/peer'
+	import { saveSession } from './lib/session-store'
 	import type { PeerEstimate } from './lib/types'
 
 	interface HistoryEntry {
@@ -70,6 +71,20 @@
 
 	function handleTopicChange() {
 		session?.sendTopic({ topic: topic.trim() })
+		persistSession()
+	}
+
+	function persistSession() {
+		if (!session) return
+		saveSession({
+			roomId: session.roomId,
+			userName,
+			topic: topic.trim(),
+			unit,
+			isCreator,
+			peerNames: Array.from(peerNames.values()),
+			lastUsed: Date.now(),
+		})
 	}
 
 	function handleForceReveal() {
@@ -115,6 +130,16 @@
 		if (selectedUnit) unit = selectedUnit
 		connectionError = ''
 
+		saveSession({
+			roomId,
+			userName: name,
+			topic: '',
+			unit: selectedUnit ?? unit,
+			isCreator,
+			peerNames: [],
+			lastUsed: Date.now(),
+		})
+
 		session = createSession(roomId, {
 			onPeerJoin(peerId) {
 				peerIds = [...peerIds, peerId]
@@ -151,6 +176,7 @@
 			},
 			onName(peerId, name) {
 				peerNames.set(peerId, name)
+				persistSession()
 			},
 			onTopic(newTopic) {
 				if (newTopic) {

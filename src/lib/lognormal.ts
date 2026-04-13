@@ -66,6 +66,51 @@ export function muFromMode(mode: number, sigma: number): number {
 }
 
 /**
+ * Approximation of the error function erf(x).
+ * Abramowitz & Stegun formula 7.1.26, max error ~1.5×10⁻⁷.
+ */
+function erf(x: number): number {
+	const sign = x >= 0 ? 1 : -1
+	const a = Math.abs(x)
+	const t = 1 / (1 + 0.3275911 * a)
+	const y =
+		1 -
+		((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+			t *
+			Math.exp(-a * a)
+	return sign * y
+}
+
+/**
+ * Log-normal CDF: P(X ≤ x) for a log-normal distribution with parameters mu, sigma.
+ * Returns the probability that a value is at most x.
+ */
+export function lognormalCdf(x: number, mu: number, sigma: number): number {
+	if (x <= 0) return 0
+	return 0.5 * (1 + erf((Math.log(x) - mu) / (sigma * Math.SQRT2)))
+}
+
+/**
+ * Inverse log-normal CDF (quantile function): returns x such that P(X ≤ x) = p.
+ */
+export function lognormalQuantile(p: number, mu: number, sigma: number): number {
+	if (p <= 0) return 0
+	if (p >= 1) return Number.POSITIVE_INFINITY
+	// Use the inverse normal CDF: quantile = exp(mu + sigma * Φ⁻¹(p))
+	// Rational approximation of Φ⁻¹(p) (Abramowitz & Stegun 26.2.23)
+	const t = p < 0.5 ? Math.sqrt(-2 * Math.log(p)) : Math.sqrt(-2 * Math.log(1 - p))
+	const c0 = 2.515517
+	const c1 = 0.802853
+	const c2 = 0.010328
+	const d1 = 1.432788
+	const d2 = 0.189269
+	const d3 = 0.001308
+	let z = t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t * t)
+	if (p < 0.5) z = -z
+	return Math.exp(mu + sigma * z)
+}
+
+/**
  * Combine multiple log-normal estimates using precision weighting (Bayesian product of experts).
  * More certain estimates (lower σ) get more weight. Combined σ is always narrower.
  */

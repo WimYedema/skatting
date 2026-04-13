@@ -60,7 +60,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (46 tests)
+npm run test         # vitest run (65 tests)
 ```
 
 ## Deployment
