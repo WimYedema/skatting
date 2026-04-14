@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	deleteSession,
+	getBacklog,
 	getLastUserName,
+	getPreEstimates,
 	getSavedSessions,
 	getVerdictHistory,
 	type HistoryVerdict,
 	type SavedSession,
+	saveBacklog,
+	savePreEstimate,
 	saveSession,
 	saveVerdict,
 } from './session-store'
@@ -136,6 +140,7 @@ describe('verdict history', () => {
 			mu: 2.0,
 			sigma: 0.5,
 			unit: 'points',
+			roomId: 'room-1',
 			timestamp: Date.now(),
 			...overrides,
 		}
@@ -152,7 +157,7 @@ describe('verdict history', () => {
 		expect(results[0].label).toBe('Task A')
 	})
 
-	it('replaces existing verdict with same label and unit', () => {
+	it('replaces existing verdict with same label, unit, and roomId', () => {
 		saveVerdict(makeVerdict({ mu: 1.0 }))
 		saveVerdict(makeVerdict({ mu: 3.0 }))
 		const results = getVerdictHistory()
@@ -180,6 +185,29 @@ describe('verdict history', () => {
 		expect(getVerdictHistory('days')).toHaveLength(1)
 	})
 
+	it('filters by roomId — sessions do not mix', () => {
+		saveVerdict(makeVerdict({ label: 'A', roomId: 'room-1' }))
+		saveVerdict(makeVerdict({ label: 'B', roomId: 'room-2' }))
+		expect(getVerdictHistory(undefined, 'room-1')).toHaveLength(1)
+		expect(getVerdictHistory(undefined, 'room-1')[0].label).toBe('A')
+		expect(getVerdictHistory(undefined, 'room-2')).toHaveLength(1)
+		expect(getVerdictHistory(undefined, 'room-2')[0].label).toBe('B')
+	})
+
+	it('filters by both unit and roomId', () => {
+		saveVerdict(makeVerdict({ label: 'A', unit: 'points', roomId: 'room-1' }))
+		saveVerdict(makeVerdict({ label: 'B', unit: 'days', roomId: 'room-1' }))
+		saveVerdict(makeVerdict({ label: 'C', unit: 'points', roomId: 'room-2' }))
+		expect(getVerdictHistory('points', 'room-1')).toHaveLength(1)
+		expect(getVerdictHistory('points', 'room-1')[0].label).toBe('A')
+	})
+
+	it('keeps same label in different rooms separate', () => {
+		saveVerdict(makeVerdict({ label: 'Task A', roomId: 'room-1' }))
+		saveVerdict(makeVerdict({ label: 'Task A', roomId: 'room-2' }))
+		expect(getVerdictHistory()).toHaveLength(2)
+	})
+
 	it('limits to 50 entries', () => {
 		for (let i = 0; i < 60; i++) {
 			saveVerdict(makeVerdict({ label: `Task ${i}`, timestamp: i }))
@@ -197,5 +225,136 @@ describe('verdict history', () => {
 	it('filters out invalid entries', () => {
 		store['estimate-history'] = JSON.stringify([makeVerdict(), { bad: true }, null])
 		expect(getVerdictHistory()).toHaveLength(1)
+	})
+})
+
+describe('pre-estimate persistence', () => {
+	let store: Record<string, string>
+
+	beforeEach(() => {
+		store = {}
+		vi.stubGlobal('localStorage', {
+			getItem: (key: string) => store[key] ?? null,
+			setItem: (key: string, value: string) => {
+				store[key] = value
+			},
+			removeItem: (key: string) => {
+				delete store[key]
+			},
+		})
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('returns empty map when nothing saved', () => {
+		expect(getPreEstimates('room-1').size).toBe(0)
+	})
+
+	it('saves and retrieves a pre-estimate', () => {
+		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
+		const estimates = getPreEstimates('room-1')
+		expect(estimates.size).toBe(1)
+		expect(estimates.get('T-1')).toEqual({ mu: 2.0, sigma: 0.5 })
+	})
+
+	it('overwrites existing pre-estimate', () => {
+		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
+		savePreEstimate('room-1', 'T-1', 3.0, 0.3)
+		const estimates = getPreEstimates('room-1')
+		expect(estimates.size).toBe(1)
+		expect(estimates.get('T-1')).toEqual({ mu: 3.0, sigma: 0.3 })
+	})
+
+	it('keeps pre-estimates per room separate', () => {
+		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
+		savePreEstimate('room-2', 'T-1', 4.0, 0.8)
+		expect(getPreEstimates('room-1').get('T-1')?.mu).toBe(2.0)
+		expect(getPreEstimates('room-2').get('T-1')?.mu).toBe(4.0)
+	})
+
+	it('stores multiple tickets per room', () => {
+		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
+		savePreEstimate('room-1', 'T-2', 3.0, 0.6)
+		expect(getPreEstimates('room-1').size).toBe(2)
+	})
+
+	it('handles corrupted localStorage gracefully', () => {
+		store['estimate-pre-estimates'] = 'bad json{'
+		expect(getPreEstimates('room-1').size).toBe(0)
+	})
+
+	it('filters out invalid entries', () => {
+		store['estimate-pre-estimates'] = JSON.stringify({
+			'room-1': { 'T-1': { mu: 2.0, sigma: 0.5 }, 'T-2': 'bad', 'T-3': null },
+		})
+		expect(getPreEstimates('room-1').size).toBe(1)
+	})
+})
+
+describe('backlog persistence', () => {
+	let store: Record<string, string>
+
+	beforeEach(() => {
+		store = {}
+		vi.stubGlobal('localStorage', {
+			getItem: (key: string) => store[key] ?? null,
+			setItem: (key: string, value: string) => {
+				store[key] = value
+			},
+			removeItem: (key: string) => {
+				delete store[key]
+			},
+		})
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('returns empty array when nothing saved', () => {
+		expect(getBacklog('room-1')).toEqual([])
+	})
+
+	it('saves and retrieves a backlog', () => {
+		const tickets = [
+			{ id: 'T-1', title: 'First task' },
+			{ id: 'T-2', title: 'Second task', url: 'http://example.com' },
+		]
+		saveBacklog('room-1', tickets)
+		const result = getBacklog('room-1')
+		expect(result).toHaveLength(2)
+		expect(result[0].id).toBe('T-1')
+		expect(result[1].url).toBe('http://example.com')
+	})
+
+	it('keeps backlogs per room separate', () => {
+		saveBacklog('room-1', [{ id: 'A', title: 'Task A' }])
+		saveBacklog('room-2', [{ id: 'B', title: 'Task B' }])
+		expect(getBacklog('room-1')[0].id).toBe('A')
+		expect(getBacklog('room-2')[0].id).toBe('B')
+	})
+
+	it('overwrites existing backlog for same room', () => {
+		saveBacklog('room-1', [{ id: 'A', title: 'Old' }])
+		saveBacklog('room-1', [{ id: 'B', title: 'New' }])
+		const result = getBacklog('room-1')
+		expect(result).toHaveLength(1)
+		expect(result[0].id).toBe('B')
+	})
+
+	it('handles corrupted localStorage gracefully', () => {
+		store['estimate-backlogs'] = 'bad{'
+		expect(getBacklog('room-1')).toEqual([])
+	})
+
+	it('filters out invalid entries', () => {
+		store['estimate-backlogs'] = JSON.stringify({
+			'room-1': [{ id: 'T-1', title: 'Valid' }, { bad: true }, null, 42],
+		})
+		const result = getBacklog('room-1')
+		expect(result).toHaveLength(1)
+		expect(result[0].id).toBe('T-1')
 	})
 })

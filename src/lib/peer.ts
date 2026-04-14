@@ -1,7 +1,7 @@
 import type { Room } from '@trystero-p2p/core'
 import { selfId } from '@trystero-p2p/core'
-import { joinRoom as joinMqttRoom } from '@trystero-p2p/mqtt'
-import { joinRoom as joinNostrRoom } from '@trystero-p2p/nostr'
+import { joinRoom as joinMqttRoom, getRelaySockets as getMqttSockets } from '@trystero-p2p/mqtt'
+import { joinRoom as joinNostrRoom, getRelaySockets as getNostrSockets } from '@trystero-p2p/nostr'
 import type {
 	BacklogMessage,
 	EstimateMessage,
@@ -18,11 +18,8 @@ import { PEER_COLORS } from './types'
 const APP_ID = 'estimate-p2p-tool'
 
 const NOSTR_RELAY_URLS = [
-	'wss://relay.damus.io',
 	'wss://nos.lol',
-	'wss://purplerelay.com',
-	'wss://relay.nostr.band',
-	'wss://relay.snort.social',
+	'wss://relay.primal.net',
 ]
 
 export interface PeerSession {
@@ -62,7 +59,21 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	// Track which strategies each peer is connected through
 	const peerStrategies = new Map<string, Set<string>>()
 
+	// Buffer peer joins during construction — trystero replays existing peers
+	// synchronously before createSession returns, so the caller's `session`
+	// variable is still null. We replay them after a microtask.
+	let ready = false
+	const pendingJoins: Array<{ strategy: string; peerId: string }> = []
+
 	function handlePeerJoin(strategy: string, peerId: string) {
+		if (!ready) {
+			pendingJoins.push({ strategy, peerId })
+			return
+		}
+		processPeerJoin(strategy, peerId)
+	}
+
+	function processPeerJoin(strategy: string, peerId: string) {
 		let strategies = peerStrategies.get(peerId)
 		if (!strategies) {
 			strategies = new Set()
@@ -88,18 +99,41 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 
 	try {
 		rooms.push(joinNostrRoom({ appId: APP_ID, relayUrls: NOSTR_RELAY_URLS }, roomId))
-	} catch {
-		/* nostr unavailable */
+		console.log('[estimate] Nostr strategy initialized')
+	} catch (e) {
+		console.warn('[estimate] Nostr strategy failed to init:', e)
 	}
 
 	try {
 		rooms.push(joinMqttRoom({ appId: APP_ID }, roomId))
-	} catch {
-		/* mqtt unavailable */
+		console.log('[estimate] MQTT strategy initialized')
+	} catch (e) {
+		console.warn('[estimate] MQTT strategy failed to init:', e)
 	}
 
 	if (rooms.length === 0) {
 		callbacks.onConnectionError?.('Unable to initialize any connection strategy.')
+	}
+
+	// Monitor relay health — report disconnected relays after a short delay
+	let healthTimer: ReturnType<typeof setInterval> | undefined
+	if (rooms.length > 0) {
+		healthTimer = setInterval(() => {
+			const nostrSockets = getNostrSockets()
+			const mqttSockets = getMqttSockets()
+			const allSockets = { ...nostrSockets, ...mqttSockets }
+			const entries = Object.entries(allSockets)
+			if (entries.length === 0) return
+
+			const connected = entries.filter(
+				([, ws]) => (ws as WebSocket).readyState === WebSocket.OPEN,
+			)
+			if (connected.length === 0) {
+				callbacks.onConnectionError?.(
+					'All relays disconnected — retrying…',
+				)
+			}
+		}, 8000)
 	}
 
 	// Wire up actions on all rooms
@@ -160,6 +194,15 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onBacklog((data) => callbacks.onBacklog?.(data.tickets))
 	}
 
+	// Flush buffered peer joins after caller has assigned the return value
+	queueMicrotask(() => {
+		ready = true
+		for (const { strategy, peerId } of pendingJoins) {
+			processPeerJoin(strategy, peerId)
+		}
+		pendingJoins.length = 0
+	})
+
 	return {
 		roomId,
 		selfId,
@@ -171,6 +214,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		sendUnit: broadcastAll(unitSenders),
 		sendBacklog: broadcastAll(backlogSenders),
 		leave() {
+			if (healthTimer) clearInterval(healthTimer)
 			for (const room of rooms) room.leave()
 		},
 	}

@@ -48,7 +48,7 @@ See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../.
 - Use pointer events (`pointerdown`, `pointermove`, `pointerup`) not mouse events — supports touch
 - Canvas buffer size set imperatively (`canvas.width = w`) in the draw effect, **not** via HTML attributes — prevents layout feedback loops
 - ResizeObserver should observe the **container div**, not the canvas itself
-- Svelte 5 tracks `Map.set()`/`Map.delete()`/`Set.add()` mutations directly — no need to clone-and-reassign
+- Svelte 5 tracks `Map.set()`/`Map.delete()`/`Set.add()` mutations directly only within Svelte's own reactive context; mutations inside **external callbacks** (P2P, WebSocket, setTimeout) require clone-and-reassign: `map = new Map(map).set(k, v)`
 - Unit selection (points/days) is set by creator only; joiners receive it via P2P — use `isCreator` flag to guard
 - Sketchy visual style uses seeded PRNG (`mulberry32`) for deterministic jitter — same seed = same hand-drawn look
 

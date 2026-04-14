@@ -7,33 +7,88 @@
 		isCreator: boolean
 		myEstimates: Map<string, { mu: number; sigma: number }>
 		onSelect: (index: number) => void
+		onReorder: (fromIndex: number, toIndex: number) => void
+		onRemove: (index: number) => void
 	}
 
-	let { tickets, currentIndex, isCreator, myEstimates, onSelect }: Props = $props()
+	let { tickets, currentIndex, isCreator, myEstimates, onSelect, onReorder, onRemove }: Props = $props()
 
-	let collapsed = $state(false)
+	let collapsed = $state(window.innerWidth < 768)
+	let dragIndex = $state(-1)
+	let dropIndex = $state(-1)
 
 	function isEstimated(ticket: EstimatedTicket): boolean {
 		return ticket.median != null || myEstimates.has(ticket.id)
 	}
+
+	function isPrepared(ticket: EstimatedTicket): boolean {
+		return myEstimates.has(ticket.id) && ticket.median == null
+	}
+
+	let preparedCount = $derived(tickets.filter((t) => myEstimates.has(t.id)).length)
+	let estimatedCount = $derived(tickets.filter((t) => t.median != null).length)
 </script>
 
 <aside class="backlog-panel" class:collapsed>
 	<button class="toggle" onclick={() => (collapsed = !collapsed)}>
 		{collapsed ? '▶' : '◀'} Backlog
+		{#if !collapsed}
+			<span class="prep-count">
+				{#if estimatedCount > 0}
+					{estimatedCount}/{tickets.length} done
+				{:else if preparedCount > 0}
+					{preparedCount}/{tickets.length} prepared
+				{/if}
+			</span>
+		{/if}
 	</button>
 	{#if !collapsed}
 		<ul class="ticket-list">
 			{#each tickets as ticket, i}
-				<li class="ticket" class:current={i === currentIndex} class:estimated={isEstimated(ticket)}>
+				<li
+					class="ticket"
+					class:current={i === currentIndex}
+					class:estimated={isEstimated(ticket)}
+					class:prepared={isPrepared(ticket)}
+					class:drag-over={dropIndex === i && dragIndex !== i}
+					draggable={isCreator}
+					ondragstart={(e) => {
+						dragIndex = i
+						e.dataTransfer?.setData('text/plain', String(i))
+						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+					}}
+					ondragover={(e) => {
+						if (dragIndex < 0) return
+						e.preventDefault()
+						if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+						dropIndex = i
+					}}
+					ondragleave={() => {
+						if (dropIndex === i) dropIndex = -1
+					}}
+					ondrop={(e) => {
+						e.preventDefault()
+						if (dragIndex >= 0 && dragIndex !== i) {
+							onReorder(dragIndex, i)
+						}
+						dragIndex = -1
+						dropIndex = -1
+					}}
+					ondragend={() => {
+						dragIndex = -1
+						dropIndex = -1
+					}}
+				>
 					<button
 						class="ticket-btn"
 						disabled={!isCreator}
 						onclick={() => onSelect(i)}
 					>
 						<span class="ticket-status">
-							{#if isEstimated(ticket)}
+							{#if ticket.median != null}
 								✓
+							{:else if isPrepared(ticket)}
+								●
 							{:else if i === currentIndex}
 								▸
 							{:else}
@@ -46,6 +101,13 @@
 							<span class="ticket-verdict">{ticket.median.toFixed(1)}</span>
 						{/if}
 					</button>
+					{#if isCreator}
+						<button
+							class="remove-btn"
+							title="Remove ticket"
+							onclick={() => onRemove(i)}
+						>×</button>
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -88,6 +150,12 @@
 		background: rgba(210, 200, 180, 0.3);
 	}
 
+	.prep-count {
+		margin-left: auto;
+		font-size: 0.8rem;
+		color: #8a8070;
+	}
+
 	.ticket-list {
 		list-style: none;
 		margin: 0;
@@ -97,6 +165,8 @@
 	}
 
 	.ticket {
+		display: flex;
+		align-items: center;
 		border-bottom: 1px solid rgba(176, 168, 144, 0.2);
 	}
 
@@ -145,6 +215,10 @@
 		color: #a09880;
 	}
 
+	.ticket.prepared .ticket-status {
+		color: #5b7b9a;
+	}
+
 	.ticket-status {
 		width: 14px;
 		flex-shrink: 0;
@@ -171,5 +245,43 @@
 		padding: 1px 5px;
 		border-radius: 2px;
 		flex-shrink: 0;
+	}
+
+	.ticket.drag-over {
+		border-top: 2px solid #5b7b9a;
+		background: rgba(91, 123, 154, 0.08);
+	}
+
+	.remove-btn {
+		flex-shrink: 0;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: none;
+		background: none;
+		color: #b0a890;
+		font-size: 0.9rem;
+		cursor: pointer;
+		border-radius: 3px;
+		line-height: 1;
+		opacity: 0;
+		transition: opacity 0.15s;
+	}
+
+	.ticket:hover .remove-btn {
+		opacity: 1;
+	}
+
+	.remove-btn:hover {
+		background: rgba(180, 60, 60, 0.15);
+		color: #a04040;
+	}
+
+	li[draggable='true'] {
+		cursor: grab;
+	}
+
+	li[draggable='true']:active {
+		cursor: grabbing;
 	}
 </style>

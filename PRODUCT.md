@@ -604,8 +604,7 @@ The post-MVP features are organized into **sprints** (scrum-style). Each sprint 
 |---|---|---|---|
 | 5.1 | **Backlog reorder (PO only)** | `BacklogPanel.svelte` | Drag-to-reorder tickets. Reorder synced via `BacklogMessage` |
 | 5.2 | **Skip / remove ticket** | `BacklogPanel.svelte`, `App.svelte` | PO can skip or remove a ticket from the backlog mid-session |
-| 5.3 | **Progress indicator** | `App.svelte` | "3 of 12 estimated" progress bar in header |
-| 5.4 | **Backlog collapsed by default** | `BacklogPanel.svelte` | On small screens, backlog panel collapses to a minimal strip. Tap to expand |
+| 5.3 | **Backlog collapsed by default** | `BacklogPanel.svelte` | On small screens, backlog panel collapses to a minimal strip. Tap to expand |
 | 5.5 | **End-of-session summary** | `App.svelte` | When all tickets estimated, show a summary view: table of tickets with verdicts, export button prominent |
 | 5.6 | **Bundle size check** | Build config | Verify SheetJS impact on single-file output. Consider lazy-loading or CSV-only mode if too large |
 

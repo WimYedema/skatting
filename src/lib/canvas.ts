@@ -802,12 +802,30 @@ function drawVerdict(
 	const median = lognormalQuantile(0.5, mu, sigma)
 	const verdict = snapVerdict(median, unit)
 
-	// Place at top-right third intersection of the chart area
 	const baselineY = height - pad
 	const chartHeight = baselineY - pad
 	const chartWidth = width - pad * 2
-	const labelX = pad + chartWidth * (2 / 3)
-	const labelY = pad + chartHeight * (1 / 3)
+
+	// Default position: top-right third intersection
+	let labelX = pad + chartWidth * (2 / 3)
+	let labelY = pad + chartHeight * (1 / 3)
+
+	// Check if the blob peak is too close — if so, move the label
+	const blobPeakX = mathToCanvasX(Math.exp(mu - sigma ** 2), width, config)
+	const blobPeakY = peakCanvasY(mu, sigma, height, config)
+	const dx = Math.abs(labelX - blobPeakX)
+	const dy = Math.abs(labelY - blobPeakY)
+
+	if (dx < 120 && dy < 60) {
+		// Move to top-left third instead
+		labelX = pad + chartWidth * (1 / 3)
+		labelY = pad + chartHeight * (1 / 4)
+		// If that also overlaps, push further up
+		if (Math.abs(labelX - blobPeakX) < 120 && Math.abs(labelY - blobPeakY) < 60) {
+			labelX = pad + chartWidth * (1 / 5)
+			labelY = pad + chartHeight * (1 / 6)
+		}
+	}
 
 	ctx.save()
 	ctx.font = '22px Caveat, cursive'

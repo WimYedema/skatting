@@ -4,7 +4,7 @@
 	import SessionLobby from './components/SessionLobby.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import { createSession, getPeerColor, selfId, type PeerSession } from './lib/peer'
-	import { saveSession, getVerdictHistory, saveVerdict } from './lib/session-store'
+	import { saveSession, getVerdictHistory, saveVerdict, savePreEstimate, getPreEstimates, saveBacklog, getBacklog } from './lib/session-store'
 	import type { EstimatedTicket, HistoryEntry, ImportedTicket, PeerEstimate } from './lib/types'
 	import { applyVerdict, computeVerdict, upsertHistory } from './lib/verdict'
 
@@ -42,6 +42,7 @@
 
 	/** Prep mode: each person goes through backlog independently. Meeting mode: Ready/Reveal flow. */
 	let prepMode = $state(false)
+	let showSummary = $state(false)
 
 	let peerEstimates = $derived(
 		Array.from(peerEstimateMap.values()).map((pe) => ({
@@ -117,8 +118,10 @@
 
 	function addOrUpdateHistory(entry: HistoryEntry) {
 		history = upsertHistory(history, entry)
-		saveVerdict({ ...entry, unit, timestamp: Date.now() })
-		persistentHistory = getVerdictHistory(unit)
+		if (session) {
+			saveVerdict({ ...entry, unit, roomId: session.roomId, timestamp: Date.now() })
+			persistentHistory = getVerdictHistory(unit, session.roomId)
+		}
 	}
 
 	function saveRoundToHistory() {
@@ -152,6 +155,7 @@
 		// Save personal estimate for this ticket
 		if (currentTicket) {
 			myEstimates.set(currentTicket.id, { mu, sigma })
+			if (session) savePreEstimate(session.roomId, currentTicket.id, mu, sigma)
 		}
 		saveRoundToHistory()
 		resetRound()
@@ -162,6 +166,9 @@
 		// Auto-advance to next backlog ticket (skip save — already done above)
 		if (backlog.length > 0 && backlogIndex < backlog.length - 1) {
 			selectTicket(backlogIndex + 1, true)
+		} else if (backlog.length > 0) {
+			// Last ticket — show summary
+			showSummary = true
 		}
 	}
 
@@ -171,6 +178,7 @@
 		// Save current personal estimate and verdict before switching
 		if (!skipSave && currentTicket) {
 			myEstimates.set(currentTicket.id, { mu, sigma })
+			if (session) savePreEstimate(session.roomId, currentTicket.id, mu, sigma)
 			saveRoundToHistory()
 		}
 
@@ -185,11 +193,22 @@
 		topic = ticket.title
 		topicUrl = ticket.url ?? ''
 
-		// Restore personal estimate if previously made
+		// Restore personal estimate: in-memory first, then localStorage
 		const saved = myEstimates.get(ticket.id)
 		if (saved) {
 			mu = saved.mu
 			sigma = saved.sigma
+		} else if (session) {
+			const stored = getPreEstimates(session.roomId)
+			const pre = stored.get(ticket.id)
+			if (pre) {
+				mu = pre.mu
+				sigma = pre.sigma
+				myEstimates.set(ticket.id, pre)
+			} else {
+				mu = 2.0
+				sigma = 0.6
+			}
 		} else {
 			mu = 2.0
 			sigma = 0.6
@@ -211,6 +230,7 @@
 			backlog = tickets.map((t) => ({ ...t }))
 			backlogIndex = -1
 			prepMode = true
+			if (session) saveBacklog(session.roomId, tickets)
 			session?.sendBacklog({ tickets })
 			// Auto-select first ticket
 			selectTicket(0)
@@ -230,14 +250,55 @@
 		downloadFile(xls, `estimates-${timestamp}.xls`, 'application/vnd.ms-excel')
 	}
 
+	function handleReorder(fromIndex: number, toIndex: number) {
+		const item = backlog[fromIndex]
+		backlog.splice(fromIndex, 1)
+		backlog.splice(toIndex, 0, item)
+		// Update current index to follow the current ticket
+		if (backlogIndex === fromIndex) {
+			backlogIndex = toIndex
+		} else if (fromIndex < backlogIndex && toIndex >= backlogIndex) {
+			backlogIndex--
+		} else if (fromIndex > backlogIndex && toIndex <= backlogIndex) {
+			backlogIndex++
+		}
+		// Sync reordered backlog to peers and localStorage
+		if (session) {
+			session.sendBacklog({ tickets: backlog })
+			saveBacklog(session.roomId, backlog)
+		}
+	}
+
+	function handleRemove(index: number) {
+		if (index < 0 || index >= backlog.length) return
+		backlog.splice(index, 1)
+		// Adjust current index
+		if (backlog.length === 0) {
+			backlogIndex = -1
+			topic = ''
+			topicUrl = ''
+		} else if (index < backlogIndex) {
+			backlogIndex--
+		} else if (index === backlogIndex) {
+			// Current ticket was removed — select next (or last)
+			const newIndex = Math.min(backlogIndex, backlog.length - 1)
+			selectTicket(newIndex)
+		}
+		// Sync to peers and localStorage
+		if (session) {
+			session.sendBacklog({ tickets: backlog })
+			saveBacklog(session.roomId, backlog)
+		}
+	}
+
 	function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
 		userName = name
 		isCreator = selectedUnit !== null
 		if (selectedUnit) unit = selectedUnit
 		connectionError = ''
 
-		// Load persistent history for the current unit
-		persistentHistory = getVerdictHistory(unit)
+		// Load persistent history for this room and unit
+		persistentHistory = getVerdictHistory(unit, roomId)
 
 		saveSession({
 			roomId,
@@ -248,6 +309,20 @@
 			peerNames: [],
 			lastUsed: Date.now(),
 		})
+
+		// Restore persisted backlog and pre-estimates for this room
+		const savedBacklog = getBacklog(roomId)
+		if (savedBacklog.length > 0 && backlog.length === 0) {
+			backlog = savedBacklog.map((t) => ({ ...t }))
+			prepMode = true
+			// Load pre-estimates into in-memory map
+			const savedEstimates = getPreEstimates(roomId)
+			for (const [ticketId, est] of savedEstimates) {
+				myEstimates.set(ticketId, est)
+			}
+			// Auto-select first ticket
+			selectTicket(0)
+		}
 
 		session = createSession(roomId, {
 			onPeerJoin(peerId) {
@@ -274,12 +349,18 @@
 			},
 			onPeerLeave(peerId) {
 				peerIds = peerIds.filter((id) => id !== peerId)
-				peerEstimateMap.delete(peerId)
-				peerNames.delete(peerId)
-				readyPeers.delete(peerId)
+				const em = new Map(peerEstimateMap)
+				em.delete(peerId)
+				peerEstimateMap = em
+				const pn = new Map(peerNames)
+				pn.delete(peerId)
+				peerNames = pn
+				const rp = new Set(readyPeers)
+				rp.delete(peerId)
+				readyPeers = rp
 			},
 			onEstimate(estimate) {
-				peerEstimateMap.set(estimate.peerId, estimate)
+				peerEstimateMap = new Map(peerEstimateMap).set(estimate.peerId, estimate)
 			},
 			onReveal(rev) {
 				revealed = rev
@@ -291,7 +372,7 @@
 				}
 			},
 			onName(peerId, name) {
-				peerNames.set(peerId, name)
+				peerNames = new Map(peerNames).set(peerId, name)
 				persistSession()
 			},
 			onTopic(newTopic, url, ticketId) {
@@ -307,15 +388,17 @@
 			},
 			onReady(peerId, ready) {
 				if (ready) {
-					readyPeers.add(peerId)
+					readyPeers = new Set(readyPeers).add(peerId)
 				} else {
-					readyPeers.delete(peerId)
+					const rp = new Set(readyPeers)
+					rp.delete(peerId)
+					readyPeers = rp
 				}
 			},
 			onUnit(peerUnit) {
 				if (!isCreator) {
 					unit = peerUnit
-					persistentHistory = getVerdictHistory(unit)
+					if (session) persistentHistory = getVerdictHistory(unit, session.roomId)
 				}
 			},
 			onBacklog(tickets) {
@@ -453,6 +536,8 @@
 				onSelect={(index) => {
 					if (isCreator) selectTicket(index)
 				}}
+				onReorder={handleReorder}
+				onRemove={handleRemove}
 			/>
 		{:else if isCreator}
 			<div class="import-prompt">
@@ -471,6 +556,38 @@
 			</div>
 		{/if}
 	</main>
+	{#if showSummary}
+		<div class="summary-overlay" role="dialog" aria-label="Session summary">
+			<div class="summary-panel">
+				<h2>Session Summary</h2>
+				<table class="summary-table">
+					<thead>
+						<tr>
+							<th>ID</th>
+							<th>Title</th>
+							<th>Estimate</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each backlog as ticket}
+							<tr class:unestimated={ticket.median == null}>
+								<td class="summary-id">{ticket.id}</td>
+								<td class="summary-title">{ticket.title}</td>
+								<td class="summary-verdict">
+									{ticket.median != null ? `${ticket.median.toFixed(1)} ${unit}` : '—'}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+				<div class="summary-actions">
+					<button class="export" onclick={handleExportCsv}>Export CSV ↓</button>
+					<button class="export" onclick={handleExportExcel}>Export Excel ↓</button>
+					<button class="summary-close" onclick={() => (showSummary = false)}>Back to session</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 {/if}
 
 <style>
@@ -770,5 +887,95 @@
 
 	.file-input {
 		display: none;
+	}
+
+	.summary-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(58, 53, 48, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 20;
+	}
+
+	.summary-panel {
+		background: #f0e8d8;
+		border: 1px dashed #b0a890;
+		border-radius: 6px;
+		padding: 24px 32px;
+		max-width: 640px;
+		width: 90%;
+		max-height: 80vh;
+		overflow-y: auto;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+	}
+
+	.summary-panel h2 {
+		margin: 0 0 16px;
+		font-size: 1.6rem;
+		font-weight: 700;
+		color: #3a3530;
+	}
+
+	.summary-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-family: 'Caveat', cursive;
+		font-size: 1rem;
+		margin-bottom: 20px;
+	}
+
+	.summary-table th {
+		text-align: left;
+		padding: 6px 10px;
+		border-bottom: 1px dashed #b0a890;
+		color: #8a8070;
+		font-weight: 400;
+		font-size: 0.9rem;
+	}
+
+	.summary-table td {
+		padding: 6px 10px;
+		border-bottom: 1px solid rgba(176, 168, 144, 0.2);
+	}
+
+	.summary-id {
+		color: #8a8070;
+		font-size: 0.9rem;
+		white-space: nowrap;
+	}
+
+	.summary-title {
+		max-width: 300px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.summary-verdict {
+		font-weight: 600;
+		color: #4a6a40;
+		white-space: nowrap;
+	}
+
+	tr.unestimated .summary-verdict {
+		color: #a09880;
+	}
+
+	.summary-actions {
+		display: flex;
+		gap: 12px;
+		justify-content: center;
+	}
+
+	.summary-close {
+		background: rgba(160, 150, 130, 0.25);
+		border-color: #b0a890;
+		color: #6a6050;
+	}
+
+	.summary-close:hover {
+		background: rgba(160, 150, 130, 0.4);
 	}
 </style>
