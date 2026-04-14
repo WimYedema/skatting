@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exportToCsv, parseCsv, parseCsvLine } from './csv'
+import { exportToCsv, exportToXls, parseCsv, parseCsvLine } from './csv'
 import type { EstimatedTicket } from './types'
 
 describe('parseCsvLine', () => {
@@ -170,5 +170,48 @@ describe('exportToCsv', () => {
 		expect(parsed[0].id).toBe('PROJ-1')
 		expect(parsed[0].title).toBe('Task one')
 		expect(parsed[0].url).toBe('http://example.com')
+	})
+})
+
+describe('exportToXls', () => {
+	it('generates valid XML Spreadsheet with headers', () => {
+		const tickets: EstimatedTicket[] = [
+			{ id: 'T-1', title: 'Test ticket', median: 5.0, p10: 2.0, p90: 9.0, estimateUnit: 'points' },
+		]
+		const xls = exportToXls(tickets)
+		expect(xls).toContain('<?xml version="1.0"')
+		expect(xls).toContain('mso-application progid="Excel.Sheet"')
+		expect(xls).toContain('<Data ss:Type="String">ID</Data>')
+		expect(xls).toContain('<Data ss:Type="String">T-1</Data>')
+		expect(xls).toContain('<Data ss:Type="Number">5.0</Data>')
+	})
+
+	it('escapes XML special characters', () => {
+		const tickets: EstimatedTicket[] = [{ id: '1', title: 'Fix <input> & "form"' }]
+		const xls = exportToXls(tickets)
+		expect(xls).toContain('Fix &lt;input&gt; &amp; &quot;form&quot;')
+		expect(xls).not.toContain('Fix <input>')
+	})
+
+	it('handles tickets without estimates', () => {
+		const tickets: EstimatedTicket[] = [{ id: '1', title: 'No estimate' }]
+		const xls = exportToXls(tickets)
+		// Empty estimate cells should be String type with empty value
+		expect(xls).toContain('<Data ss:Type="String">No estimate</Data>')
+		// Should have 9 cells per data row (header count)
+		const dataRowMatch = xls.match(/<Row>.*?<Data ss:Type="String">1<\/Data>.*?<\/Row>/s)
+		expect(dataRowMatch).not.toBeNull()
+	})
+
+	it('includes all tickets', () => {
+		const tickets: EstimatedTicket[] = [
+			{ id: 'A', title: 'First' },
+			{ id: 'B', title: 'Second' },
+			{ id: 'C', title: 'Third' },
+		]
+		const xls = exportToXls(tickets)
+		// 1 header row + 3 data rows
+		const rowCount = (xls.match(/<Row>/g) ?? []).length
+		expect(rowCount).toBe(4)
 	})
 })

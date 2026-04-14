@@ -2,17 +2,11 @@
 	import BacklogPanel from './components/BacklogPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
-	import { parseCsv, exportToCsv, downloadFile } from './lib/csv'
-	import { combineEstimates, lognormalQuantile } from './lib/lognormal'
+	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import { createSession, getPeerColor, selfId, type PeerSession } from './lib/peer'
-	import { saveSession } from './lib/session-store'
-	import type { EstimatedTicket, ImportedTicket, PeerEstimate } from './lib/types'
-
-	interface HistoryEntry {
-		label: string
-		mu: number
-		sigma: number
-	}
+	import { saveSession, getVerdictHistory, saveVerdict } from './lib/session-store'
+	import type { EstimatedTicket, HistoryEntry, ImportedTicket, PeerEstimate } from './lib/types'
+	import { applyVerdict, computeVerdict, upsertHistory } from './lib/verdict'
 
 	let mu = $state(2.0)
 	let sigma = $state(0.6)
@@ -28,6 +22,8 @@
 	let readyPeers = $state<Set<string>>(new Set())
 	let selfReady = $state(false)
 	let history = $state<HistoryEntry[]>([])
+	let persistentHistory = $state<HistoryEntry[]>([])
+	let showPersistentHistory = $state(true)
 	let unit = $state('points')
 	let isCreator = $state(false)
 	let connectionError = $state('')
@@ -119,51 +115,25 @@
 		session?.sendReveal({ revealed: true })
 	}
 
-	function addOrUpdateHistory(label: string, mu: number, sigma: number) {
-		const idx = history.findIndex((h) => h.label === label)
-		if (idx >= 0) {
-			history[idx] = { label, mu, sigma }
-			history = [...history] // trigger reactivity
-		} else {
-			history = [...history, { label, mu, sigma }]
-		}
+	function addOrUpdateHistory(entry: HistoryEntry) {
+		history = upsertHistory(history, entry)
+		saveVerdict({ ...entry, unit, timestamp: Date.now() })
+		persistentHistory = getVerdictHistory(unit)
 	}
 
 	function saveRoundToHistory() {
 		const label = topic.trim() || `Item ${history.length + 1}`
-		const allEstimates = [
-			{ mu, sigma },
-			...Array.from(peerEstimateMap.values()).map((pe) => ({
-				mu: pe.mu,
-				sigma: pe.sigma,
-			})),
-		]
-		const combined = combineEstimates(allEstimates)
+		const peerEsts = Array.from(peerEstimateMap.values()).map((pe) => ({
+			mu: pe.mu,
+			sigma: pe.sigma,
+		}))
+		const verdict = computeVerdict(label, { mu, sigma }, peerEsts)
 
-		// Record verdict on the current backlog ticket
-		if (currentTicket) {
-			if (combined) {
-				const median = lognormalQuantile(0.5, combined.mu, combined.sigma)
-				const p10 = lognormalQuantile(0.1, combined.mu, combined.sigma)
-				const p90 = lognormalQuantile(0.9, combined.mu, combined.sigma)
-				currentTicket.median = median
-				currentTicket.p10 = p10
-				currentTicket.p90 = p90
-				currentTicket.estimateUnit = unit
-				addOrUpdateHistory(label, combined.mu, combined.sigma)
-			} else {
-				// Solo estimate — record personal values as the verdict
-				const median = lognormalQuantile(0.5, mu, sigma)
-				const p10 = lognormalQuantile(0.1, mu, sigma)
-				const p90 = lognormalQuantile(0.9, mu, sigma)
-				currentTicket.median = median
-				currentTicket.p10 = p10
-				currentTicket.p90 = p90
-				currentTicket.estimateUnit = unit
-				addOrUpdateHistory(label, mu, sigma)
-			}
-		} else if (combined && allEstimates.length > 1) {
-			addOrUpdateHistory(label, combined.mu, combined.sigma)
+		if (currentTicket && verdict) {
+			applyVerdict(currentTicket, verdict, unit)
+			addOrUpdateHistory(verdict.historyEntry)
+		} else if (verdict && peerEsts.length > 0) {
+			addOrUpdateHistory(verdict.historyEntry)
 		}
 	}
 
@@ -248,10 +218,16 @@
 		reader.readAsText(file)
 	}
 
-	function handleExportResults() {
+	function handleExportCsv() {
 		const csv = exportToCsv(backlog)
 		const timestamp = new Date().toISOString().slice(0, 10)
 		downloadFile(csv, `estimates-${timestamp}.csv`, 'text/csv')
+	}
+
+	function handleExportExcel() {
+		const xls = exportToXls(backlog)
+		const timestamp = new Date().toISOString().slice(0, 10)
+		downloadFile(xls, `estimates-${timestamp}.xls`, 'application/vnd.ms-excel')
 	}
 
 	function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
@@ -259,6 +235,9 @@
 		isCreator = selectedUnit !== null
 		if (selectedUnit) unit = selectedUnit
 		connectionError = ''
+
+		// Load persistent history for the current unit
+		persistentHistory = getVerdictHistory(unit)
 
 		saveSession({
 			roomId,
@@ -334,7 +313,10 @@
 				}
 			},
 			onUnit(peerUnit) {
-				if (!isCreator) unit = peerUnit
+				if (!isCreator) {
+					unit = peerUnit
+					persistentHistory = getVerdictHistory(unit)
+				}
 			},
 			onBacklog(tickets) {
 				if (!isCreator && tickets.length > 0) {
@@ -400,8 +382,13 @@
 				{/if}
 			</div>
 			{#if isCreator && backlog.length > 0 && estimatedCount > 0}
-				<button class="export" onclick={handleExportResults}>Export ↓</button>
+				<button class="export" onclick={handleExportCsv}>CSV ↓</button>
+				<button class="export" onclick={handleExportExcel}>Excel ↓</button>
 			{/if}
+			<label class="history-toggle">
+				<input type="checkbox" bind:checked={showPersistentHistory} />
+				Past
+			</label>
 			<button class="leave" onclick={handleLeave}>Leave</button>
 			{#if prepMode}
 				<button class="next" onclick={handleNext}>
@@ -451,6 +438,7 @@
 			{revealed}
 			{userName}
 			{history}
+			persistentHistory={showPersistentHistory ? persistentHistory : []}
 			{unit}
 			{currentTicket}
 			onEstimateChange={handleEstimateChange}
@@ -661,6 +649,20 @@
 
 	.leave:hover {
 		background: rgba(160, 150, 130, 0.4);
+	}
+
+	.history-toggle {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.8em;
+		color: #7a7060;
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.history-toggle input {
+		cursor: pointer;
 	}
 
 	.next {

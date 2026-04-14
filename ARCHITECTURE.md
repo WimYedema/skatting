@@ -26,17 +26,23 @@ estimate/
 │   ├── main.ts                     ← entry point
 │   ├── components/
 │   │   ├── SessionLobby.svelte     ← create/join session, user name, unit selection
-│   │   └── EstimationCanvas.svelte ← canvas wrapper, pointer events, resize observer
+│   │   ├── EstimationCanvas.svelte ← canvas wrapper, pointer events, resize observer
+│   │   └── BacklogPanel.svelte     ← collapsible sidebar with ticket list
 │   └── lib/
 │       ├── lognormal.ts            ← PDF math, CDF/quantile, area normalization, combine estimates
-│       ├── lognormal.test.ts       ← 33 tests
+│       ├── lognormal.test.ts       ← 40 tests
 │       ├── canvas.ts               ← all Canvas 2D drawing, annotations, coordinate mapping, hit testing
-│       ├── canvas.test.ts          ← 15 tests
+│       ├── canvas.test.ts          ← 24 tests
+│       ├── csv.ts                  ← CSV/Excel import/export (flexible column matching)
+│       ├── csv.test.ts             ← 26 tests
 │       ├── peer.ts                 ← Trystero wrapper, dual-strategy P2P, room management
 │       ├── peer.test.ts            ← 7 tests
-│       ├── session-store.ts        ← localStorage session persistence, recent-room management
-│       ├── session-store.test.ts   ← 10 tests
-│       └── types.ts                ← message types, peer colors
+│       ├── session-store.ts        ← localStorage: session persistence, verdict history
+│       ├── session-store.test.ts   ← 19 tests
+│       ├── verdict.ts              ← verdict computation, history upsert (pure functions)
+│       ├── verdict.test.ts         ← 11 tests
+│       └── types.ts                ← message types, SceneState, HistoryEntry, peer colors
+├── example-backlog.csv             ← sample CSV for testing import
 ├── index.html                      ← HTML shell with Google Fonts (Caveat)
 ├── vite.config.ts
 ├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
@@ -101,11 +107,17 @@ All session state lives as `$state` variables in `App.svelte`:
 | `mu`, `sigma` | `number` | User's current estimate |
 | `peerEstimateMap` | `Map<string, PeerEstimate>` | Peer estimates by peer ID |
 | `revealed` | `boolean` | Whether estimates are visible |
-| `selfReady` | `boolean` | User has clicked "Done" |
+| `selfReady` | `boolean` | User has clicked "Ready" |
 | `readyPeers` | `Set<string>` | Peer IDs that are ready |
-| `history` | `HistoryEntry[]` | Past round combined estimates |
+| `history` | `HistoryEntry[]` | Current-session combined estimates |
+| `persistentHistory` | `HistoryEntry[]` | Cross-session verdicts from localStorage |
 | `unit` | `string` | "points" or "days" (set by creator) |
 | `isCreator` | `boolean` | Whether this user created the room |
+| `backlog` | `EstimatedTicket[]` | Imported ticket list |
+| `backlogIndex` | `number` | Currently selected ticket (-1 = none) |
+| `myEstimates` | `Map<string, Estimate>` | Personal estimates per ticket ID |
+| `prepMode` | `boolean` | Solo prep mode vs meeting mode |
+| `showPersistentHistory` | `boolean` | Toggle for cross-session history scribbles |
 
 Auto-reveal triggers via `$effect` when all participants are ready.
 
@@ -118,9 +130,25 @@ Defined in `src/lib/types.ts`:
 | `EstimateMessage` | `{ mu, sigma }` | On pointer drag, on peer join |
 | `RevealMessage` | `{ revealed }` | On auto-reveal, force-reveal, or "Next" (`false`) |
 | `NameMessage` | `{ name }` | On peer join |
-| `TopicMessage` | `{ topic }` | On topic change |
-| `ReadyMessage` | `{ ready }` | On "Done" click |
+| `TopicMessage` | `{ topic, url?, ticketId? }` | On topic change, on ticket select |
+| `ReadyMessage` | `{ ready }` | On "Ready" click |
 | `UnitMessage` | `{ unit }` | On peer join (creator only) |
+| `BacklogMessage` | `{ tickets }` | On backlog import (creator → peers) |
+
+### Backlog & Prep Mode
+
+The creator can import a CSV backlog (`src/lib/csv.ts` with flexible column matching for Jira/GitHub/generic formats). The flow:
+
+1. **Import** → `prepMode` activates. Creator goes through tickets solo, placing estimates.
+2. **Personal estimates** are saved per ticket in a `myEstimates` Map and restored on re-selection.
+3. **P2P sync** → backlog is broadcast to peers via `BacklogMessage`. Peers enter prep mode too.
+4. **Meeting mode** → Creator clicks "Start meeting". Ready/Reveal flow resumes for consensus.
+5. **Verdict recording** → `verdict.ts` computes combined estimate, applies to `EstimatedTicket`, records in session and persistent history.
+6. **Export** → CSV or Excel (XML Spreadsheet 2003 format, no binary dependency) download.
+
+### Persistent History
+
+Verdicts are stored in `localStorage` via `session-store.ts` (`estimate-history` key, max 50 entries). On session join, persistent history is loaded filtered by unit. Rendered on canvas as faded scribbles (`0.5` alpha, 13px) under the brighter current-session scribbles (`0.75` alpha, 15px). Toggleable via "Past" checkbox in the header.
 
 ### Combined Estimates
 
@@ -156,7 +184,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (65 tests)
+npm run test         # vitest run (127 tests)
 ```
 
 ---

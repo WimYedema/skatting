@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
 	canvasToMathX,
 	canvasYToSigmaFromPeak,
 	DEFAULT_CONFIG,
+	drawScene,
 	hitTestBlob,
+	jitter,
 	mathToCanvasX,
 	peakCanvasY,
+	seededRng,
 } from './canvas'
 import { muFromMode } from './lognormal'
 
@@ -122,5 +125,176 @@ describe('hitTestBlob', () => {
 	it('misses above the padding', () => {
 		const peakX = mathToCanvasX(mode, width)
 		expect(hitTestBlob(mu, sigma, peakX, DEFAULT_CONFIG.padding - 5, width, height)).toBe(false)
+	})
+})
+
+describe('seededRng', () => {
+	it('returns values in [0, 1)', () => {
+		const rng = seededRng(42)
+		for (let i = 0; i < 100; i++) {
+			const v = rng()
+			expect(v).toBeGreaterThanOrEqual(0)
+			expect(v).toBeLessThan(1)
+		}
+	})
+
+	it('is deterministic — same seed produces same sequence', () => {
+		const a = seededRng(123)
+		const b = seededRng(123)
+		for (let i = 0; i < 20; i++) {
+			expect(a()).toBe(b())
+		}
+	})
+
+	it('different seeds produce different sequences', () => {
+		const a = seededRng(1)
+		const b = seededRng(2)
+		const valuesA = Array.from({ length: 5 }, () => a())
+		const valuesB = Array.from({ length: 5 }, () => b())
+		expect(valuesA).not.toEqual(valuesB)
+	})
+})
+
+describe('jitter', () => {
+	it('returns values within [-amount, +amount]', () => {
+		const rng = seededRng(99)
+		for (let i = 0; i < 100; i++) {
+			const v = jitter(rng, 2.0)
+			expect(v).toBeGreaterThanOrEqual(-2.0)
+			expect(v).toBeLessThanOrEqual(2.0)
+		}
+	})
+
+	it('uses default amount of 1.5', () => {
+		const rng = seededRng(99)
+		for (let i = 0; i < 100; i++) {
+			const v = jitter(rng)
+			expect(v).toBeGreaterThanOrEqual(-1.5)
+			expect(v).toBeLessThanOrEqual(1.5)
+		}
+	})
+})
+
+describe('drawScene', () => {
+	function createMockCtx(): CanvasRenderingContext2D {
+		return new Proxy({} as CanvasRenderingContext2D, {
+			get(_target, prop) {
+				if (typeof prop === 'string') {
+					// createPattern returns null (no actual pattern in test)
+					if (prop === 'createPattern') return () => null
+					// measureText returns a minimal TextMetrics
+					if (prop === 'measureText') return () => ({ width: 0 })
+					// Return no-op for all other methods
+					return () => {}
+				}
+			},
+			set() {
+				return true
+			},
+		})
+	}
+
+	// Path2D and OffscreenCanvas are not available in Node.js — provide minimal stubs
+	const OriginalPath2D = globalThis.Path2D
+	const OriginalOffscreenCanvas = globalThis.OffscreenCanvas
+	class MockPath2D {
+		moveTo() {}
+		lineTo() {}
+		quadraticCurveTo() {}
+		closePath() {}
+	}
+	class MockOffscreenCanvas {
+		getContext() {
+			return createMockCtx()
+		}
+	}
+
+	beforeAll(() => {
+		// biome-ignore lint: test setup
+		;(globalThis as any).Path2D = MockPath2D
+		// biome-ignore lint: test setup
+		;(globalThis as any).OffscreenCanvas = MockOffscreenCanvas
+	})
+
+	afterAll(() => {
+		if (OriginalPath2D) {
+			globalThis.Path2D = OriginalPath2D
+		} else {
+			// biome-ignore lint: test teardown
+			delete (globalThis as any).Path2D
+		}
+		if (OriginalOffscreenCanvas) {
+			globalThis.OffscreenCanvas = OriginalOffscreenCanvas
+		} else {
+			// biome-ignore lint: test teardown
+			delete (globalThis as any).OffscreenCanvas
+		}
+	})
+
+	it('does not throw with minimal scene state', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [],
+				revealed: false,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with peers and revealed state', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [{ mu: 1.8, sigma: 0.4, color: '#b56b6b' }],
+				revealed: true,
+				history: [{ label: 'Past item', mu: 1.5, sigma: 0.3 }],
+				unit: 'days',
+				persistentHistory: [{ label: 'Old item', mu: 2.5, sigma: 0.6 }],
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with currentTicket', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [],
+				revealed: false,
+				history: [],
+				unit: 'points',
+				currentTicket: { id: 'T-1', title: 'Fix bug', labels: ['bug'], assignee: 'Alice' },
+				persistentHistory: [],
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with extreme sigma values', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 0.01, sigma: 0.01 },
+				peerEstimates: [],
+				revealed: false,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+			}),
+		).not.toThrow()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 5.0, sigma: 2.5 },
+				peerEstimates: [],
+				revealed: false,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+			}),
+		).not.toThrow()
 	})
 })

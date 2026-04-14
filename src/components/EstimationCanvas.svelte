@@ -7,6 +7,7 @@
 		mathToCanvasX,
 	} from '../lib/canvas'
 	import { muFromMode } from '../lib/lognormal'
+	import type { HistoryEntry, ImportedTicket } from '../lib/types'
 
 	interface Props {
 		mu: number
@@ -14,13 +15,14 @@
 		peerEstimates: Array<{ mu: number; sigma: number; color: string; name: string }>
 		revealed: boolean
 		userName: string
-		history: Array<{ label: string; mu: number; sigma: number }>
+		history: HistoryEntry[]
+		persistentHistory: HistoryEntry[]
 		unit: string
-		currentTicket?: { id: string; title: string; labels?: string[]; assignee?: string; description?: string }
+		currentTicket?: ImportedTicket
 		onEstimateChange: (mu: number, sigma: number) => void
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, unit, currentTicket, onEstimateChange }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
@@ -121,11 +123,6 @@
 		const ctx = canvas.getContext('2d')
 		if (!ctx) return
 
-		const currentMu = mu
-		const currentSigma = sigma
-		const currentPeers = peerEstimates
-		const currentRevealed = revealed
-		const currentHistory = history
 		const w = width
 		const h = height
 
@@ -134,17 +131,15 @@
 		if (canvas.width !== w) canvas.width = w
 		if (canvas.height !== h) canvas.height = h
 
-		drawScene(
-			ctx,
-			w,
-			h,
-			{ mu: currentMu, sigma: currentSigma },
-			currentPeers,
-			currentRevealed,
-			currentHistory,
+		drawScene(ctx, w, h, {
+			myEstimate: { mu, sigma },
+			peerEstimates,
+			revealed,
+			history,
 			unit,
 			currentTicket,
-		)
+			persistentHistory,
+		})
 	})
 </script>
 

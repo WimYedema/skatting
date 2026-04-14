@@ -6,12 +6,14 @@ import {
 	muFromMode,
 	snapVerdict,
 } from './lognormal'
+import type { SceneState } from './types'
 
 /**
  * Seeded pseudo-random number generator (mulberry32).
  * Produces deterministic jitter so blobs don't wobble on every redraw.
  */
-function seededRng(seed: number): () => number {
+/** @internal Seeded pseudo-random number generator (mulberry32). */
+export function seededRng(seed: number): () => number {
 	return () => {
 		seed = (seed + 0x6d2b79f5) | 0
 		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
@@ -20,8 +22,8 @@ function seededRng(seed: number): () => number {
 	}
 }
 
-/** Small random offset for sketchy lines. Deterministic per seed. */
-function jitter(rng: () => number, amount = 1.5): number {
+/** @internal Small random offset for sketchy lines. Deterministic per seed. */
+export function jitter(rng: () => number, amount = 1.5): number {
 	return (rng() - 0.5) * 2 * amount
 }
 
@@ -548,6 +550,7 @@ function drawHistoryScribbles(
 	width: number,
 	height: number,
 	history: Array<{ label: string; mu: number; sigma: number }>,
+	persistentHistory: Array<{ label: string; mu: number; sigma: number }> = [],
 	config: CanvasConfig = DEFAULT_CONFIG,
 ): void {
 	const pad = config.padding
@@ -555,6 +558,43 @@ function drawHistoryScribbles(
 	const yScale = drawHeight * 0.6
 	const baselineY = height - pad
 
+	// Draw persistent history first (faded, smaller)
+	const currentLabels = new Set(history.map((h) => h.label))
+	// Sample up to 10 entries with spatial diversity
+	const persistent = persistentHistory.filter((h) => !currentLabels.has(h.label)).slice(-10)
+
+	for (let i = 0; i < persistent.length; i++) {
+		const entry = persistent[i]
+		const points = generateBlobPoints(entry.mu, entry.sigma, config.blobArea)
+		if (points.length === 0) continue
+		const maxIdx = points.reduce((best, p, idx) => (p.y > points[best].y ? idx : best), 0)
+		const peakX = mathToCanvasX(points[maxIdx].x, width, config)
+		const peakY = baselineY - points[maxIdx].y * yScale
+
+		const rng = seededRng(i * 7777 + entry.label.length)
+		const rotation = (rng() - 0.5) * 0.15
+
+		ctx.save()
+		ctx.translate(peakX, peakY)
+		ctx.rotate(rotation)
+		ctx.globalAlpha = 0.5
+		ctx.font = '13px Caveat, cursive'
+		ctx.fillStyle = '#5a5040'
+		ctx.textAlign = 'center'
+		ctx.fillText(entry.label, 0, -4)
+
+		ctx.strokeStyle = '#5a5040'
+		ctx.lineWidth = 1.2
+		ctx.beginPath()
+		ctx.moveTo(-3, -3)
+		ctx.lineTo(3, 3)
+		ctx.moveTo(3, -3)
+		ctx.lineTo(-3, 3)
+		ctx.stroke()
+		ctx.restore()
+	}
+
+	// Draw current-session history
 	for (let i = 0; i < history.length; i++) {
 		const entry = history[i]
 		const points = generateBlobPoints(entry.mu, entry.sigma, config.blobArea)
@@ -572,15 +612,15 @@ function drawHistoryScribbles(
 		ctx.save()
 		ctx.translate(peakX, peakY)
 		ctx.rotate(rotation)
-		ctx.globalAlpha = 0.5
-		ctx.font = '13px Caveat, cursive'
-		ctx.fillStyle = '#5a5040'
+		ctx.globalAlpha = 0.75
+		ctx.font = '15px Caveat, cursive'
+		ctx.fillStyle = '#2a1f10'
 		ctx.textAlign = 'center'
-		ctx.fillText(entry.label, 0, -4)
+		ctx.fillText(entry.label, 0, -5)
 
 		// Small × mark at the exact point
-		ctx.strokeStyle = '#5a5040'
-		ctx.lineWidth = 1.2
+		ctx.strokeStyle = '#2a1f10'
+		ctx.lineWidth = 1.5
 		ctx.beginPath()
 		ctx.moveTo(-3, -3)
 		ctx.lineTo(3, 3)
@@ -687,7 +727,7 @@ function drawAnnotations(
 
 	ctx.save()
 	ctx.globalAlpha = 0.75
-	ctx.strokeStyle = '#4a4030'
+	ctx.strokeStyle = '#1a6b5a'
 	ctx.lineWidth = 1.0
 
 	// -- Median annotation (left, slightly lower) --
@@ -696,11 +736,11 @@ function drawAnnotations(
 	const medianNoteY = noteY + 8
 
 	ctx.font = '18px Caveat, cursive'
-	ctx.fillStyle = '#2a2520'
+	ctx.fillStyle = '#1a6b5a'
 	ctx.textAlign = 'center'
 	ctx.fillText(medianText, medianNoteX, medianNoteY)
 	ctx.font = '13px Caveat, cursive'
-	ctx.fillStyle = '#6a6050'
+	ctx.fillStyle = '#3a8b7a'
 	ctx.fillText('most likely', medianNoteX, medianNoteY + 16)
 
 	// Arrow from note to peak — stretches and bows the further apart they are
@@ -714,11 +754,11 @@ function drawAnnotations(
 	const rangeNoteY = noteY
 
 	ctx.font = '16px Caveat, cursive'
-	ctx.fillStyle = '#3a3530'
+	ctx.fillStyle = '#1a6b5a'
 	ctx.textAlign = 'center'
 	ctx.fillText(rangeText, clampedRangeNoteX, rangeNoteY)
 	ctx.font = '12px Caveat, cursive'
-	ctx.fillStyle = '#7a7060'
+	ctx.fillStyle = '#3a8b7a'
 	ctx.fillText('80% falls here', clampedRangeNoteX, rangeNoteY + 14)
 
 	// Arrows to P10 and P90 — long stretch = big bow
@@ -791,13 +831,11 @@ export function drawScene(
 	ctx: CanvasRenderingContext2D,
 	width: number,
 	height: number,
-	myEstimate: { mu: number; sigma: number },
-	peerEstimates: Array<{ mu: number; sigma: number; color: string }>,
-	revealed: boolean,
-	history: Array<{ label: string; mu: number; sigma: number }> = [],
-	unit: string = 'points',
-	currentTicket?: { id: string; title: string; labels?: string[]; assignee?: string; description?: string },
+	scene: SceneState,
 ): void {
+	const { myEstimate, peerEstimates, revealed, history, unit, currentTicket, persistentHistory } =
+		scene
+
 	ctx.clearRect(0, 0, width, height)
 
 	// Paper background with subtle noise
@@ -809,8 +847,8 @@ export function drawScene(
 	}
 
 	// Draw scribbled history labels before axes so they feel like underlayer
-	if (history.length > 0) {
-		drawHistoryScribbles(ctx, width, height, history)
+	if (history.length > 0 || persistentHistory.length > 0) {
+		drawHistoryScribbles(ctx, width, height, history, persistentHistory)
 	}
 
 	drawAxes(ctx, width, height, unit)

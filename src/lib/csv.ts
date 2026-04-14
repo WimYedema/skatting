@@ -150,6 +150,63 @@ function escapeCsvField(value: string): string {
 	return value
 }
 
+function escapeXml(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+}
+
+/**
+ * Export estimated tickets to XML Spreadsheet 2003 format (.xls).
+ * Opens natively in Excel, LibreOffice, and Google Sheets — no binary dependency needed.
+ */
+export function exportToXls(tickets: EstimatedTicket[]): string {
+	const headers = ['ID', 'Title', 'URL', 'Labels', 'Assignee', 'Median', 'P10', 'P90', 'Unit']
+
+	let rows = ''
+	// Header row
+	rows += '<Row>'
+	for (const h of headers) {
+		rows += `<Cell><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`
+	}
+	rows += '</Row>\n'
+
+	// Data rows
+	for (const t of tickets) {
+		const values: Array<{ value: string; type: string }> = [
+			{ value: t.id, type: 'String' },
+			{ value: t.title, type: 'String' },
+			{ value: t.url ?? '', type: 'String' },
+			{ value: (t.labels ?? []).join('; '), type: 'String' },
+			{ value: t.assignee ?? '', type: 'String' },
+			{
+				value: t.median != null ? t.median.toFixed(1) : '',
+				type: t.median != null ? 'Number' : 'String',
+			},
+			{ value: t.p10 != null ? t.p10.toFixed(1) : '', type: t.p10 != null ? 'Number' : 'String' },
+			{ value: t.p90 != null ? t.p90.toFixed(1) : '', type: t.p90 != null ? 'Number' : 'String' },
+			{ value: t.estimateUnit ?? '', type: 'String' },
+		]
+		rows += '<Row>'
+		for (const v of values) {
+			rows += `<Cell><Data ss:Type="${v.type}">${escapeXml(v.value)}</Data></Cell>`
+		}
+		rows += '</Row>\n'
+	}
+
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Worksheet ss:Name="Estimates">
+<Table>
+${rows}</Table>
+</Worksheet>
+</Workbook>`
+}
+
 /**
  * Trigger a file download in the browser.
  */

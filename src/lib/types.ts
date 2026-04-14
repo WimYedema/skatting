@@ -55,6 +55,22 @@ export type BacklogMessage = {
 	tickets: ImportedTicket[]
 }
 
+export interface HistoryEntry {
+	label: string
+	mu: number
+	sigma: number
+}
+
+export interface SceneState {
+	myEstimate: Estimate
+	peerEstimates: Array<Estimate & { color: string }>
+	revealed: boolean
+	history: HistoryEntry[]
+	unit: string
+	currentTicket?: ImportedTicket
+	persistentHistory: HistoryEntry[]
+}
+
 /** Muted colors assigned to peers — like colored pencils on paper */
 export const PEER_COLORS = [
 	'#b56b6b', // dusty rose

@@ -191,15 +191,19 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 - [x] Connection error detection and display
 - [x] Session persistence (localStorage) with recent-room cards in lobby
 - [x] Chart annotations: median label, P10–P90 range with elastic arrows and dashed range lines
+- [x] CSV import — upload a backlog file, estimate tickets in sequence
+- [x] CSV/Excel export — download results with median, P10–P90, unit columns
+- [x] Ticket links — clickable link to original ticket in topic header
+- [x] Ticket info drawn on canvas (ID, title, labels, assignee) in sketchbook style
+- [x] Prep mode — go through backlog independently before meeting, toggle to meeting mode
+- [x] Personal estimate persistence — saved/restored per ticket when switching
+- [x] Persistent history scribbles — past session verdicts appear as faded pencil marks (toggleable)
+- [x] Backlog panel — collapsible sidebar with ticket list, strikethrough for estimated items
+- [x] P2P backlog sync — creator broadcasts backlog to joining peers
 
 ### Post-MVP (Not Yet Implemented)
 
-- [ ] CSV/Excel import — upload a backlog file, estimate tickets in sequence
-- [ ] CSV/Excel export — download results with median, P10–P90, unit columns
-- [ ] Ticket links — clickable link to original ticket in topic header
-- [ ] Async pre-estimation — prepare estimates before the meeting, auto-load in session
-- [ ] Persistent history scribbles — past session verdicts appear as faded pencil marks on the canvas
-- [ ] Export session results (JSON/CSV)
+- [ ] Async pre-estimation with localStorage persistence — save pre-estimates offline, auto-load in session
 - [ ] Mobile-optimized touch interaction
 - [ ] Named reference points on X-axis (calibration anchors)
 - [ ] QR code for session joining
