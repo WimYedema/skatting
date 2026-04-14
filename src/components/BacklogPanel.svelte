@@ -5,13 +5,17 @@
 		tickets: EstimatedTicket[]
 		currentIndex: number
 		isCreator: boolean
+		prepMode: boolean
 		myEstimates: Map<string, { mu: number; sigma: number }>
+		estimatedCount: number
 		onSelect: (index: number) => void
 		onReorder: (fromIndex: number, toIndex: number) => void
 		onRemove: (index: number) => void
+		onExportCsv: () => void
+		onExportExcel: () => void
 	}
 
-	let { tickets, currentIndex, isCreator, myEstimates, onSelect, onReorder, onRemove }: Props = $props()
+	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, onSelect, onReorder, onRemove, onExportCsv, onExportExcel }: Props = $props()
 
 	let collapsed = $state(window.innerWidth < 768)
 	let dragIndex = $state(-1)
@@ -26,7 +30,6 @@
 	}
 
 	let preparedCount = $derived(tickets.filter((t) => myEstimates.has(t.id)).length)
-	let estimatedCount = $derived(tickets.filter((t) => t.median != null).length)
 </script>
 
 <aside class="backlog-panel" class:collapsed>
@@ -81,7 +84,7 @@
 				>
 					<button
 						class="ticket-btn"
-						disabled={!isCreator}
+						disabled={!isCreator && !prepMode}
 						onclick={() => onSelect(i)}
 					>
 						<span class="ticket-status">
@@ -111,6 +114,12 @@
 				</li>
 			{/each}
 		</ul>
+		{#if isCreator && estimatedCount > 0}
+			<div class="export-bar">
+				<button class="export-btn" onclick={onExportCsv}>CSV ↓</button>
+				<button class="export-btn" onclick={onExportExcel}>Excel ↓</button>
+			</div>
+		{/if}
 	{/if}
 </aside>
 
@@ -284,4 +293,28 @@
 	li[draggable='true']:active {
 		cursor: grabbing;
 	}
+
+  .export-bar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 10px;
+    border-top: 1px dashed #c0b89a;
+  }
+
+  .export-btn {
+    flex: 1;
+    padding: 5px 10px;
+    border: 1px dashed #8a9ab0;
+    border-radius: 3px;
+    background: rgba(59, 125, 216, 0.12);
+    color: #2a5090;
+    font-family: 'Caveat', cursive;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .export-btn:hover {
+    background: rgba(59, 125, 216, 0.25);
+  }
 </style>

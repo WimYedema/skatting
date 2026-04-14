@@ -35,7 +35,9 @@ export function getSavedSessions(): SavedSession[] {
 }
 
 export function saveSession(session: SavedSession): void {
-	const sessions = getSavedSessions().filter((s) => s.roomId !== session.roomId)
+	const sessions = getSavedSessions().filter(
+		(s) => !(s.roomId === session.roomId && s.userName === session.userName),
+	)
 	sessions.unshift(session)
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, MAX_SESSIONS)))
 }

@@ -40,11 +40,11 @@ export interface PeerCallbacks {
 	onPeerLeave: (peerId: string) => void
 	onEstimate: (estimate: PeerEstimate) => void
 	onReveal: (revealed: boolean) => void
-	onName: (peerId: string, name: string) => void
+	onName: (peerId: string, name: string, isCreator: boolean) => void
 	onTopic: (topic: string, url?: string, ticketId?: string) => void
 	onReady: (peerId: string, ready: boolean) => void
 	onUnit: (unit: string) => void
-	onBacklog?: (tickets: ImportedTicket[]) => void
+	onBacklog?: (tickets: ImportedTicket[], prepMode?: boolean) => void
 	onConnectionError?: (message: string) => void
 }
 
@@ -187,11 +187,11 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 			callbacks.onEstimate({ peerId, mu: data.mu, sigma: data.sigma })
 		})
 		onReveal((data) => callbacks.onReveal(data.revealed))
-		onName((data, peerId) => callbacks.onName(peerId, data.name))
+		onName((data, peerId) => callbacks.onName(peerId, data.name, !!data.isCreator))
 		onTopic((data) => callbacks.onTopic(data.topic, data.url, data.ticketId))
 		onReady((data, peerId) => callbacks.onReady(peerId, data.ready))
 		onUnit((data) => callbacks.onUnit(data.unit))
-		onBacklog((data) => callbacks.onBacklog?.(data.tickets))
+		onBacklog((data) => callbacks.onBacklog?.(data.tickets, data.prepMode))
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value

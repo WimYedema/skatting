@@ -19,6 +19,7 @@
 	let topic = $state('')
 	let topicUrl = $state('')
 	let peerNames = $state<Map<string, string>>(new Map())
+	let creatorPeerId = $state<string | null>(null)
 	let readyPeers = $state<Set<string>>(new Set())
 	let selfReady = $state(false)
 	let history = $state<HistoryEntry[]>([])
@@ -64,9 +65,9 @@
 
 	let allReady = $derived(readyCount === allParticipants.length && allParticipants.length > 0)
 
-	// Auto-reveal when everyone has placed their estimate
+	// Auto-reveal when everyone has placed their estimate (meeting mode only)
 	$effect(() => {
-		if (allReady && !revealed) {
+		if (!prepMode && allReady && !revealed) {
 			revealed = true
 			session?.sendReveal({ revealed: true })
 		}
@@ -75,7 +76,10 @@
 	function handleEstimateChange(newMu: number, newSigma: number) {
 		mu = newMu
 		sigma = newSigma
-		session?.sendEstimate({ mu: newMu, sigma: newSigma })
+		// In prep mode, estimates are personal — don't broadcast
+		if (!prepMode) {
+			session?.sendEstimate({ mu: newMu, sigma: newSigma })
+		}
 	}
 
 	function handleDone() {
@@ -125,7 +129,7 @@
 	}
 
 	function saveRoundToHistory() {
-		const label = topic.trim() || `Item ${history.length + 1}`
+		const label = currentTicket?.title || topic.trim() || `Item ${history.length + 1}`
 		const peerEsts = Array.from(peerEstimateMap.values()).map((pe) => ({
 			mu: pe.mu,
 			sigma: pe.sigma,
@@ -145,7 +149,6 @@
 		selfReady = false
 		readyPeers = new Set()
 		peerEstimateMap = new Map()
-		topic = ''
 		mu = 2.0
 		sigma = 0.6
 	}
@@ -190,8 +193,6 @@
 
 		backlogIndex = index
 		const ticket = backlog[index]
-		topic = ticket.title
-		topicUrl = ticket.url ?? ''
 
 		// Restore personal estimate: in-memory first, then localStorage
 		const saved = myEstimates.get(ticket.id)
@@ -214,11 +215,14 @@
 			sigma = 0.6
 		}
 
-		session?.sendTopic({
-			topic: ticket.title,
-			url: ticket.url,
-			ticketId: ticket.id,
-		})
+		// In meeting mode, sync ticket navigation to peers
+		if (!prepMode) {
+			session?.sendTopic({
+				topic: '',
+				url: ticket.url,
+				ticketId: ticket.id,
+			})
+		}
 	}
 
 	function handleBacklogImport(file: File) {
@@ -231,7 +235,7 @@
 			backlogIndex = -1
 			prepMode = true
 			if (session) saveBacklog(session.roomId, tickets)
-			session?.sendBacklog({ tickets })
+			session?.sendBacklog({ tickets, prepMode })
 			// Auto-select first ticket
 			selectTicket(0)
 		}
@@ -264,7 +268,7 @@
 		}
 		// Sync reordered backlog to peers and localStorage
 		if (session) {
-			session.sendBacklog({ tickets: backlog })
+			session.sendBacklog({ tickets: backlog, prepMode })
 			saveBacklog(session.roomId, backlog)
 		}
 	}
@@ -286,7 +290,7 @@
 		}
 		// Sync to peers and localStorage
 		if (session) {
-			session.sendBacklog({ tickets: backlog })
+			session.sendBacklog({ tickets: backlog, prepMode })
 			saveBacklog(session.roomId, backlog)
 		}
 	}
@@ -329,11 +333,11 @@
 				peerIds = [...peerIds, peerId]
 				// Send current state to the new peer
 				session?.sendEstimate({ mu, sigma })
-				session?.sendName({ name: userName })
+				session?.sendName({ name: userName, isCreator })
 				if (isCreator) {
 					session?.sendUnit({ unit })
 					if (backlog.length > 0) {
-						session?.sendBacklog({ tickets: backlog })
+						session?.sendBacklog({ tickets: backlog, prepMode })
 					}
 				}
 				if (topic) {
@@ -371,19 +375,21 @@
 					resetRound()
 				}
 			},
-			onName(peerId, name) {
+			onName(peerId, name, peerIsCreator) {
 				peerNames = new Map(peerNames).set(peerId, name)
+				if (peerIsCreator) creatorPeerId = peerId
 				persistSession()
 			},
 			onTopic(newTopic, url, ticketId) {
+				// If it's a ticket navigation, sync the backlog index
+				if (ticketId && backlog.length > 0) {
+					const idx = backlog.findIndex((t) => t.id === ticketId)
+					if (idx >= 0) backlogIndex = idx
+				}
+				// Only update session topic if an actual topic was sent
 				if (newTopic) {
 					topic = newTopic
 					topicUrl = url ?? ''
-					// If we have a backlog and received a ticketId, sync the index
-					if (ticketId && backlog.length > 0) {
-						const idx = backlog.findIndex((t) => t.id === ticketId)
-						if (idx >= 0) backlogIndex = idx
-					}
 				}
 			},
 			onReady(peerId, ready) {
@@ -401,11 +407,13 @@
 					if (session) persistentHistory = getVerdictHistory(unit, session.roomId)
 				}
 			},
-			onBacklog(tickets) {
+			onBacklog(tickets, peerPrepMode) {
 				if (!isCreator && tickets.length > 0) {
 					backlog = tickets.map((t) => ({ ...t }))
 					backlogIndex = -1
-					prepMode = true
+					prepMode = peerPrepMode ?? true
+				} else if (!isCreator && peerPrepMode !== undefined) {
+					prepMode = peerPrepMode
 				}
 			},
 			onConnectionError(message) {
@@ -419,6 +427,7 @@
 		session = null
 		peerIds = []
 		peerNames = new Map()
+		creatorPeerId = null
 		resetRound()
 		history = []
 		unit = 'points'
@@ -437,9 +446,26 @@
 {:else}
 	<main style:padding-right="{backlog.length > 0 ? '276px' : '16px'}">
 		<header>
-			<h1>Estimate</h1>
-			<div class="stats">
-				<span class="room-badge">{session.roomId}</span>
+			<div class="header-left">
+				<h1 class="logo">
+				<svg class="logo-bg" viewBox="0 0 180 48" aria-hidden="true">
+					<rect width="180" height="48" fill="#f5f0e6" rx="2"/>
+					<!-- Ruled lines -->
+					<line x1="0" y1="12" x2="180" y2="12" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<line x1="0" y1="24" x2="180" y2="24" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<line x1="0" y1="36" x2="180" y2="36" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<!-- Red margin line -->
+					<line x1="10" y1="0" x2="10" y2="48" stroke="rgba(200,120,120,0.3)" stroke-width="0.8"/>
+					<!-- Axes -->
+					<line x1="24" y1="42" x2="170" y2="42" stroke="#5a5040" stroke-width="0.8"/>
+					<line x1="24" y1="8" x2="24" y2="42" stroke="#5a5040" stroke-width="0.8"/>
+					<!-- Lognormal curve -->
+					<path d="M28,41 C38,41 48,39 58,32 C65,27 70,20 78,16 C90,11 108,18 128,30 C142,38 156,41 170,42"
+						fill="none" stroke="rgba(91,123,154,0.3)" stroke-width="1.2" stroke-linecap="round"/>
+				</svg>
+				<span class="logo-text">Skatting</span>
+			</h1>
+				<span class="room-badge" role="button" tabindex="0" title="Copy room code" onclick={() => navigator.clipboard.writeText(session!.roomId)}>{session.roomId} <span class="copy-icon">⎘</span></span>
 				{#if topicUrl}
 					<a
 						class="topic-link"
@@ -455,38 +481,62 @@
 						class="topic-input"
 						type="text"
 						bind:value={topic}
-						placeholder="What are we estimating?"
+						placeholder="Session name…"
 						maxlength="100"
 						onchange={handleTopicChange}
 					/>
 				{/if}
-				{#if backlog.length > 0}
-					<span class="backlog-progress">{estimatedCount}/{backlog.length}</span>
-				{/if}
 			</div>
-			{#if isCreator && backlog.length > 0 && estimatedCount > 0}
-				<button class="export" onclick={handleExportCsv}>CSV ↓</button>
-				<button class="export" onclick={handleExportExcel}>Excel ↓</button>
-			{/if}
-			<label class="history-toggle">
-				<input type="checkbox" bind:checked={showPersistentHistory} />
-				Past
-			</label>
-			<button class="leave" onclick={handleLeave}>Leave</button>
-			{#if prepMode}
-				<button class="next" onclick={handleNext}>
-					{backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
+			<div class="header-center">
+				{#if isCreator && backlog.length === 0}
+					<label class="import-label">
+						<input
+							type="file"
+							accept=".csv"
+							class="file-input"
+							onchange={(e) => {
+								const file = (e.target as HTMLInputElement).files?.[0]
+								if (file) handleBacklogImport(file)
+							}}
+						/>
+						📋 Import CSV
+					</label>
+				{/if}
+				<button
+					class="past-toggle"
+					class:past-active={showPersistentHistory}
+					onclick={() => (showPersistentHistory = !showPersistentHistory)}
+				>
+					{showPersistentHistory ? '↩ Hide past' : '↪ Show past'}
 				</button>
-				<button class="mode-toggle" onclick={() => (prepMode = false)}>Start meeting</button>
-			{:else if revealed}
-				<button class="next" onclick={handleNext}>
-					{backlog.length > 0 && backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Next →'}
-				</button>
-			{:else if !selfReady}
-				<button class="done" onclick={handleDone}>Ready ✓</button>
-			{:else if !allReady}
-				<button class="force-reveal" onclick={handleForceReveal}>Reveal anyway</button>
-			{/if}
+			</div>
+			<div class="header-right">
+				{#if prepMode}
+					<button class="next" onclick={handleNext}>
+						{backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
+					</button>
+					{#if isCreator}
+						<button class="mode-toggle" onclick={() => {
+							prepMode = false
+							session?.sendBacklog({ tickets: backlog, prepMode: false })
+							// Sync current ticket and estimate now that we're in meeting mode
+							session?.sendEstimate({ mu, sigma })
+							if (currentTicket) {
+								session?.sendTopic({ topic: '', url: currentTicket.url, ticketId: currentTicket.id })
+							}
+						}}>Start meeting</button>
+					{/if}
+				{:else if revealed}
+					<button class="next" onclick={handleNext}>
+						{backlog.length > 0 && backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Next →'}
+					</button>
+				{:else if !selfReady}
+					<button class="done" onclick={handleDone}>Ready ✓</button>
+				{:else if !allReady}
+					<button class="force-reveal" onclick={handleForceReveal}>Reveal anyway</button>
+				{/if}
+				<button class="leave" onclick={handleLeave}>Leave</button>
+			</div>
 		</header>
 
 		{#if connectionError}
@@ -499,7 +549,7 @@
 		<div class="participants">
 			<div class="participant" class:is-ready={selfReady}>
 				<span class="ready-dot" class:ready={selfReady}></span>
-				<span class="name">{userName} (you)</span>
+				<span class="name">{userName} (you){#if isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 			</div>
 			{#each peerIds as peerId}
 				<div class="participant" class:is-ready={readyPeers.has(peerId)}>
@@ -508,7 +558,7 @@
 						class:ready={readyPeers.has(peerId)}
 						style="--peer-color: {getPeerColor(peerId, peerIds)}"
 					></span>
-					<span class="name">{peerNames.get(peerId) ?? 'Connecting…'}</span>
+					<span class="name">{peerNames.get(peerId) ?? 'Connecting…'}{#if peerId === creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 				</div>
 			{/each}
 			<span class="ready-count">{readyCount}/{allParticipants.length} ready</span>
@@ -532,28 +582,17 @@
 				tickets={backlog}
 				currentIndex={backlogIndex}
 				{isCreator}
+				{prepMode}
 				{myEstimates}
+				{estimatedCount}
 				onSelect={(index) => {
-					if (isCreator) selectTicket(index)
+					if (isCreator || prepMode) selectTicket(index)
 				}}
 				onReorder={handleReorder}
 				onRemove={handleRemove}
+				onExportCsv={handleExportCsv}
+				onExportExcel={handleExportExcel}
 			/>
-		{:else if isCreator}
-			<div class="import-prompt">
-				<label class="import-label">
-					<input
-						type="file"
-						accept=".csv"
-						class="file-input"
-						onchange={(e) => {
-							const file = (e.target as HTMLInputElement).files?.[0]
-							if (file) handleBacklogImport(file)
-						}}
-					/>
-					📋 Import backlog (CSV)
-				</label>
-			</div>
 		{/if}
 	</main>
 	{#if showSummary}
@@ -611,24 +650,51 @@
 	header {
 		display: flex;
 		align-items: center;
-		gap: 16px;
-	}
-
-	h1 {
-		margin: 0;
-		font-size: 1.8rem;
-		font-weight: 700;
-		letter-spacing: 0.02em;
-	}
-
-	.stats {
-		display: flex;
 		gap: 12px;
-		font-size: 1.05rem;
-		color: #6a6050;
-		font-variant-numeric: tabular-nums;
+	}
+
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 10px;
 		flex: 1;
 		min-width: 0;
+	}
+
+	.header-center {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.header-right {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	h1, .logo {
+		margin: 0;
+		position: relative;
+		white-space: nowrap;
+		line-height: 1;
+	}
+
+	.logo-bg {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	.logo-text {
+		position: relative;
+		font-family: 'Caveat', cursive;
+		font-size: 1.8rem;
+		font-weight: 700;
+		color: #3a3530;
+		padding: 4px 12px 4px 20px;
 	}
 
 	.topic-input {
@@ -692,6 +758,22 @@
 		border: 1px dashed #b0a890;
 		color: #3a3530;
 		letter-spacing: 0.1em;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.room-badge:hover {
+		background: rgba(210, 200, 180, 0.7);
+	}
+
+	.copy-icon {
+		opacity: 0.4;
+		font-size: 0.9em;
+		transition: opacity 0.15s;
+	}
+
+	.room-badge:hover .copy-icon {
+		opacity: 0.8;
 	}
 
 	.participants {
@@ -758,7 +840,6 @@
 	}
 
 	.leave {
-		margin-left: auto;
 		background: rgba(160, 150, 130, 0.25);
 		border-color: #b0a890;
 		color: #6a6050;
@@ -768,18 +849,35 @@
 		background: rgba(160, 150, 130, 0.4);
 	}
 
-	.history-toggle {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		font-size: 0.8em;
-		color: #7a7060;
+	.past-toggle {
+		padding: 4px 12px;
+		border: 1px dashed #b0a890;
+		border-radius: 3px;
+		background: rgba(210, 200, 180, 0.15);
+		color: #9a9080;
+		font-family: 'Caveat', cursive;
+		font-size: 0.95rem;
 		cursor: pointer;
-		user-select: none;
+		transition: background 0.15s, color 0.15s;
+		white-space: nowrap;
 	}
 
-	.history-toggle input {
-		cursor: pointer;
+	.past-toggle:hover {
+		background: rgba(210, 200, 180, 0.35);
+		color: #6a6050;
+	}
+
+	.past-toggle.past-active {
+		background: rgba(210, 200, 180, 0.4);
+		color: #5a5040;
+		border-style: solid;
+	}
+
+	.leader-tag {
+		font-family: 'Caveat', cursive;
+		font-size: 0.85em;
+		color: #8a7a60;
+		font-style: italic;
 	}
 
 	.next {
@@ -860,25 +958,20 @@
 		background: rgba(90, 140, 80, 0.3);
 	}
 
-	.import-prompt {
-		display: flex;
-		justify-content: center;
-		padding: 8px;
-	}
-
 	.import-label {
 		display: inline-flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px 20px;
+		gap: 4px;
+		padding: 4px 12px;
 		border: 1px dashed #b0a890;
 		border-radius: 3px;
 		background: rgba(210, 200, 180, 0.25);
 		color: #6a6050;
 		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		font-size: 1rem;
 		cursor: pointer;
 		transition: background 0.15s;
+		white-space: nowrap;
 	}
 
 	.import-label:hover {

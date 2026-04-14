@@ -18,6 +18,10 @@
 	let unit = $state('points')
 	let mode = $state<'choose' | 'create' | 'join'>('choose')
 	let recentSessions = $state(getSavedSessions())
+	// Deduplicate by roomId for display — show the most recent per room
+	let displaySessions = $derived(
+		recentSessions.filter((s, i) => recentSessions.findIndex((r) => r.roomId === s.roomId) === i)
+	)
 
 	function handleCreate() {
 		roomId = generateRoomId()
@@ -39,7 +43,13 @@
 
 	function handleRejoin(saved: SavedSession) {
 		const trimmedName = userName.trim() || saved.userName
-		onJoin(saved.roomId, trimmedName, saved.isCreator ? saved.unit : null)
+		// Find the session entry matching this user's name (preserves isCreator)
+		const match = recentSessions.find(
+			(s) => s.roomId === saved.roomId && s.userName === trimmedName,
+		)
+		// If no match for this name, join as non-creator (don't inherit someone else's role)
+		const selectedUnit = match?.isCreator ? match.unit : null
+		onJoin(saved.roomId, trimmedName, selectedUnit)
 	}
 
 	function handleDelete(roomId: string) {
@@ -60,8 +70,68 @@
 </script>
 
 <div class="lobby">
-	<h1>Estimate</h1>
-	<p class="subtitle">2D continuous estimation for agile teams</p>
+	<h1 class="logo">
+		<svg class="logo-bg" viewBox="0 0 660 118" aria-hidden="true">
+			<defs>
+				<clipPath id="torn-clip">
+					<path d="M0,0 L660,0 L660,104
+						L656,106 L652,103 L648,107 L643,104 L638,108 L633,105 L628,107 L623,103
+						L618,106 L613,104 L608,108 L603,105 L598,107 L593,104 L588,106 L583,103
+						L578,107 L573,105 L568,108 L563,104 L558,106 L553,103 L548,107 L543,105
+						L538,108 L533,104 L528,106 L523,103 L518,107 L513,105 L508,108 L503,104
+						L498,106 L493,103 L488,107 L483,105 L478,108 L473,104 L468,106 L463,103
+						L458,107 L453,105 L448,108 L443,104 L438,106 L433,103 L428,107 L423,105
+						L418,108 L413,104 L408,106 L403,103 L398,107 L393,105 L388,108 L383,104
+						L378,106 L373,103 L368,107 L363,105 L358,108 L353,104 L348,106 L343,103
+						L338,107 L333,105 L328,108 L323,104 L318,106 L313,103 L308,107 L303,105
+						L298,108 L293,104 L288,106 L283,103 L278,107 L273,105 L268,108 L263,104
+						L258,106 L253,103 L248,107 L243,105 L238,108 L233,104 L228,106 L223,103
+						L218,107 L213,105 L208,108 L203,104 L198,106 L193,103 L188,107 L183,105
+						L178,108 L173,104 L168,106 L163,103 L158,107 L153,105 L148,108 L143,104
+						L138,106 L133,103 L128,107 L123,105 L118,108 L113,104 L108,106 L103,103
+						L98,107 L93,105 L88,108 L83,104 L78,106 L73,103 L68,107 L63,105
+						L58,108 L53,104 L48,106 L43,103 L38,107 L33,105 L28,108 L23,104
+						L18,106 L13,103 L8,107 L4,104 L0,105 Z"/>
+				</clipPath>
+				<filter id="paper-shadow" x="-1%" y="-2%" width="102%" height="116%">
+					<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#8a8070" flood-opacity="0.18"/>
+				</filter>
+				<pattern id="hatch-lobby" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+					<line x1="0" y1="0" x2="0" y2="3" stroke="#5a5040" stroke-width="0.7"/>
+				</pattern>
+				<pattern id="hatch-red" width="2.5" height="2.5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+					<line x1="0" y1="0" x2="0" y2="2.5" stroke="#b04040" stroke-width="0.6"/>
+				</pattern>
+			</defs>
+			<g filter="url(#paper-shadow)">
+				<g clip-path="url(#torn-clip)">
+					<rect width="660" height="110" fill="#f5f0e6"/>
+					<!-- Ruled lines -->
+					<line x1="0" y1="22" x2="660" y2="22" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<line x1="0" y1="44" x2="660" y2="44" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<line x1="0" y1="66" x2="660" y2="66" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<line x1="0" y1="88" x2="660" y2="88" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
+					<!-- Red margin line -->
+					<line x1="28" y1="0" x2="28" y2="110" stroke="rgba(200,120,120,0.3)" stroke-width="0.8"/>
+				</g>
+			</g>
+			<!-- Lognormal curve -->
+			<path d="M256,76 C270,76 284,73 298,60 C308,50 314,38 324,32 C340,22 364,34 392,56 C404,66 414,74 420,77"
+				fill="none" stroke="rgba(91,123,154,0.25)" stroke-width="1.8" stroke-linecap="round"/>
+			<!-- Pompebled (official Frisian seeblatt shape) -->
+			<g transform="translate(580, 38) scale(0.7)" opacity="0.35">
+				<path d="M0,12A16.143,16.143 0 0,1 -14,-4A7,8 0 0,1 -7,-12A6,8 0 0,1 -1,-5A1,1 0 1,0 1,-5A6,8 0 0,1 7,-12A7,8 0 0,1 14,-4A16.143,16.143 0 0,1 0,12z"
+					fill="url(#hatch-red)" stroke="#b04040" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+					transform="rotate(35)"/>
+			</g>
+			<!-- Hatched text -->
+			<text x="330" y="64" text-anchor="middle" font-family="Caveat, cursive" font-size="54" font-weight="700"
+				fill="url(#hatch-lobby)" stroke="#5a5040" stroke-width="0.6" letter-spacing="2">Skatting</text>
+			<!-- Subtitle -->
+			<text x="330" y="96" text-anchor="middle" font-family="Caveat, cursive" font-size="18"
+				fill="#8a8070">estimate with uncertainty</text>
+		</svg>
+	</h1>
 
 	{#if mode === 'choose'}
 		<div class="name-bar">
@@ -79,9 +149,9 @@
 			/>
 		</div>
 
-		{#if recentSessions.length > 0}
+		{#if displaySessions.length > 0}
 			<div class="rooms">
-				{#each recentSessions as saved (saved.roomId)}
+				{#each displaySessions as saved (saved.roomId)}
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
@@ -167,18 +237,16 @@
 		box-sizing: border-box;
 	}
 
-	h1 {
+	h1, .logo {
 		margin: 0;
-		font-size: 4rem;
-		font-weight: 700;
-		letter-spacing: 0.02em;
-		color: #3a3530;
+		line-height: 0;
+		width: 100%;
+		max-width: 660px;
 	}
 
-	.subtitle {
-		color: #8a8070;
-		margin: 0 0 8px;
-		font-size: 1.3rem;
+	.logo-bg {
+		width: 100%;
+		height: auto;
 	}
 
 	.name-bar {

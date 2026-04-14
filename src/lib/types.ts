@@ -19,6 +19,7 @@ export type RevealMessage = {
 
 export type NameMessage = {
 	name: string
+	isCreator?: boolean
 }
 
 export type TopicMessage = {
@@ -53,6 +54,7 @@ export interface EstimatedTicket extends ImportedTicket {
 
 export type BacklogMessage = {
 	tickets: ImportedTicket[]
+	prepMode?: boolean
 }
 
 export interface HistoryEntry {
