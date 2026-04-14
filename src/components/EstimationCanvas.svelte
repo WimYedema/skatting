@@ -95,7 +95,7 @@
 		const canvasX = (e.clientX - rect.left) / rect.width * width
 		const canvasY = (e.clientY - rect.top) / rect.height * height
 
-		const desiredMode = Math.max(0.1, canvasToMathX(canvasX, width))
+		const desiredMode = Math.max(0.5, canvasToMathX(canvasX, width))
 		const newSigma = canvasYToSigmaFromPeak(canvasY, height, desiredMode)
 		const newMu = muFromMode(desiredMode, newSigma)
 		onEstimateChange(newMu, newSigma)

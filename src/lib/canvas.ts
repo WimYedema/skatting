@@ -1,7 +1,5 @@
 import {
 	combineEstimates,
-	generateBlobPoints,
-	lognormalPdf,
 	lognormalQuantile,
 	muFromMode,
 	snapVerdict,
@@ -38,8 +36,8 @@ export interface CanvasConfig {
 
 export const DEFAULT_CONFIG: CanvasConfig = {
 	padding: 40,
-	xRange: [0, 20],
-	blobArea: 2,
+	xRange: [0.5, 55],
+	blobArea: 0.55,
 }
 
 /** Map from math-space x to canvas pixel x */
@@ -50,7 +48,10 @@ export function mathToCanvasX(
 ): number {
 	const drawWidth = canvasWidth - config.padding * 2
 	const [xMin, xMax] = config.xRange
-	return config.padding + ((mathX - xMin) / (xMax - xMin)) * drawWidth
+	const logMin = Math.log(xMin)
+	const logMax = Math.log(xMax)
+	const logX = Math.log(Math.max(mathX, 1e-6))
+	return config.padding + ((logX - logMin) / (logMax - logMin)) * drawWidth
 }
 
 /** Map from canvas pixel x to math-space x */
@@ -61,13 +62,61 @@ export function canvasToMathX(
 ): number {
 	const drawWidth = canvasWidth - config.padding * 2
 	const [xMin, xMax] = config.xRange
-	return xMin + ((canvasX - config.padding) / drawWidth) * (xMax - xMin)
+	const logMin = Math.log(xMin)
+	const logMax = Math.log(xMax)
+	const frac = (canvasX - config.padding) / drawWidth
+	return Math.exp(logMin + frac * (logMax - logMin))
+}
+
+/**
+ * Compute yScale so the tallest blob point doesn't exceed the drawable area.
+ * Prefers drawHeight * 0.6 but caps to drawHeight * 0.95 / maxY if needed.
+ */
+function computeYScale(drawHeight: number, maxY: number): number {
+	const preferred = drawHeight * 0.6
+	const maxAllowed = drawHeight * 0.98
+	if (maxY * preferred <= maxAllowed) return preferred
+	return maxAllowed / maxY
+}
+
+/**
+ * Generate blob points in log-space where the lognormal becomes a normal distribution.
+ * Returns {x, y} with x in linear math-space and y = normal PDF in log-space,
+ * scaled so visual area in log-space equals targetArea.
+ * Peak height = targetArea / (sigma * sqrt(2pi)) — independent of mu (mode),
+ * giving uniform blob shapes across the entire X axis.
+ */
+function generateLogSpaceBlob(
+	mu: number,
+	sigma: number,
+	targetArea: number,
+	numPoints = 200,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): Array<{ x: number; y: number }> {
+	const uMin = Math.max(mu - 4 * sigma, Math.log(config.xRange[0]))
+	const uMax = Math.min(mu + 4 * sigma, Math.log(config.xRange[1]))
+	const step = (uMax - uMin) / (numPoints - 1)
+
+	const rawPoints: Array<{ x: number; y: number }> = []
+	let rawArea = 0
+
+	for (let i = 0; i < numPoints; i++) {
+		const u = uMin + i * step
+		const y = Math.exp(-((u - mu) ** 2) / (2 * sigma ** 2)) / (sigma * Math.sqrt(2 * Math.PI))
+		rawPoints.push({ x: Math.exp(u), y })
+		if (i > 0) {
+			rawArea += ((rawPoints[i - 1].y + y) / 2) * step
+		}
+	}
+
+	const scale = rawArea > 0 ? targetArea / rawArea : 1
+	return rawPoints.map((p) => ({ x: p.x, y: p.y * scale }))
 }
 
 /**
  * Compute the canvas Y position of the blob peak for a given mu and sigma.
- * Uses analytical peak height of the PDF, scaled by the same area-normalization
- * that generateBlobPoints applies, avoiding the 200-point generation.
+ * In log-space the lognormal is a normal N(mu, sigma²), so peak height depends
+ * only on sigma: blobArea / (sigma * sqrt(2pi)). Independent of mu (mode).
  */
 export function peakCanvasY(
 	mu: number,
@@ -77,33 +126,10 @@ export function peakCanvasY(
 ): number {
 	const pad = config.padding
 	const drawHeight = canvasHeight - pad * 2
-	const yScale = drawHeight * 0.6
 	const baselineY = canvasHeight - pad
 
-	// Analytical peak: PDF evaluated at the mode
-	const mode = Math.exp(mu - sigma ** 2)
-	const rawPeak = lognormalPdf(mode, mu, sigma)
-
-	// Compute raw area over the same truncated range that generateBlobPoints uses
-	const mean = Math.exp(mu + sigma ** 2 / 2)
-	const variance = (Math.exp(sigma ** 2) - 1) * Math.exp(2 * mu + sigma ** 2)
-	const xMax = mean + 4 * Math.sqrt(variance)
-	const xMin = Math.max(mode * 0.01, 1e-6)
-	const numPoints = 200
-	const step = (xMax - xMin) / (numPoints - 1)
-
-	let rawArea = 0
-	let prevY = lognormalPdf(xMin, mu, sigma)
-	for (let i = 1; i < numPoints; i++) {
-		const x = xMin + i * step
-		const y = lognormalPdf(x, mu, sigma)
-		rawArea += ((prevY + y) / 2) * step
-		prevY = y
-	}
-
-	const scale = rawArea > 0 ? config.blobArea / rawArea : 1
-	const scaledPeak = rawPeak * scale
-
+	const scaledPeak = config.blobArea / (sigma * Math.sqrt(2 * Math.PI))
+	const yScale = computeYScale(drawHeight, scaledPeak)
 	return baselineY - scaledPeak * yScale
 }
 
@@ -116,7 +142,7 @@ export function canvasYToSigmaFromPeak(
 	canvasY: number,
 	canvasHeight: number,
 	desiredMode: number,
-	sigmaRange: [number, number] = [0.01, 2.5],
+	sigmaRange: [number, number] = [0.08, 2.5],
 	config: CanvasConfig = DEFAULT_CONFIG,
 ): number {
 	const pad = config.padding
@@ -153,7 +179,6 @@ export function drawAxes(
 	unit: string = 'points',
 ): void {
 	const pad = DEFAULT_CONFIG.padding
-	const [, xMax] = DEFAULT_CONFIG.xRange
 	const rng = seededRng(42)
 
 	ctx.strokeStyle = '#5a5040'
@@ -173,12 +198,12 @@ export function drawAxes(
 	}
 	ctx.stroke()
 
-	// X-axis numeric tick marks
+	// X-axis tick marks — log-spaced at natural estimation values
 	ctx.font = '14px Caveat, cursive'
 	ctx.textAlign = 'center'
 	const tickRng = seededRng(88)
-	const tickStep = xMax <= 20 ? 2 : 5
-	for (let v = tickStep; v < xMax; v += tickStep) {
+	const tickValues = [1, 2, 3, 5, 8, 13, 21, 34]
+	for (const v of tickValues) {
 		const tx = mathToCanvasX(v, width)
 		const baseY = height - pad
 		// Small tick line
@@ -206,25 +231,30 @@ export function drawAxes(
 	}
 	ctx.stroke()
 
-	// Y-axis percentage labels
-	ctx.font = '13px Caveat, cursive'
-	ctx.textAlign = 'right'
+	// Y-axis certainty labels — overlapping the axis in a soft pencil tone
+	ctx.fillStyle = '#b8b0a0'
+	const certaintyLabels: Array<{ frac: number; text: string }> = [
+		{ frac: 0.02, text: "don't ask me…" },
+		{ frac: 0.33, text: 'gut feeling' },
+		{ frac: 0.66, text: 'pretty sure' },
+		{ frac: 0.98, text: 'I know this!' },
+	]
 	const percentRng = seededRng(77)
-	for (const pct of [0, 25, 50, 75, 100]) {
-		// 0% at baseline, 100% at top
-		const py = height - pad - (pct / 100) * (height - pad * 2)
-		// Tick
-		ctx.beginPath()
-		ctx.moveTo(pad, py + jitter(percentRng, 0.5))
-		ctx.lineTo(pad - 5, py + jitter(percentRng, 0.5))
-		ctx.stroke()
-		// Label
-		ctx.fillText(`${pct}%`, pad - 7, py + 4 + jitter(percentRng, 0.5))
+	for (const { frac, text } of certaintyLabels) {
+		const py = height - pad - frac * (height - pad * 2)
+		ctx.save()
+		ctx.font = '14px Caveat, cursive'
+		ctx.translate(pad + 6, py + 4)
+		ctx.rotate(-0.08 + jitter(percentRng, 0.03))
+		ctx.textAlign = 'left'
+		ctx.fillText(text, 0, 0)
+		ctx.restore()
 	}
 
 	// Y-axis title
 	ctx.save()
 	ctx.font = '15px Caveat, cursive'
+	ctx.fillStyle = '#6a6050'
 	ctx.translate(12, height / 2)
 	ctx.rotate(-Math.PI / 2)
 	ctx.textAlign = 'center'
@@ -270,12 +300,13 @@ export function drawBlob(
 	alpha = 0.4,
 	config: CanvasConfig = DEFAULT_CONFIG,
 ): void {
-	const points = generateBlobPoints(mu, sigma, config.blobArea)
+	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
 	if (points.length === 0) return
 
 	const pad = config.padding
 	const drawHeight = canvasHeight - pad * 2
-	const yScale = drawHeight * 0.6
+	const maxY = Math.max(...points.map((p) => p.y))
+	const yScale = computeYScale(drawHeight, maxY)
 	const baselineY = canvasHeight - pad
 
 	// Deterministic jitter seed from mu+sigma so each blob has stable wobble
@@ -337,12 +368,13 @@ function drawCombinedBlob(
 	canvasHeight: number,
 	config: CanvasConfig = DEFAULT_CONFIG,
 ): void {
-	const points = generateBlobPoints(mu, sigma, config.blobArea)
+	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
 	if (points.length === 0) return
 
 	const pad = config.padding
 	const drawHeight = canvasHeight - pad * 2
-	const yScale = drawHeight * 0.6
+	const maxY = Math.max(...points.map((p) => p.y))
+	const yScale = computeYScale(drawHeight, maxY)
 	const baselineY = canvasHeight - pad
 
 	const seed = Math.round(mu * 1000) + Math.round(sigma * 3333)
@@ -429,12 +461,13 @@ export function hitTestBlob(
 	canvasHeight: number,
 	config: CanvasConfig = DEFAULT_CONFIG,
 ): boolean {
-	const points = generateBlobPoints(mu, sigma, config.blobArea)
+	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
 	if (points.length === 0) return false
 
 	const pad = config.padding
 	const drawHeight = canvasHeight - pad * 2
-	const yScale = drawHeight * 0.6
+	const maxY = Math.max(...points.map((p) => p.y))
+	const yScale = computeYScale(drawHeight, maxY)
 	const baselineY = canvasHeight - pad
 
 	// Quick Y check: must be between peak and baseline
@@ -555,7 +588,6 @@ function drawHistoryScribbles(
 ): void {
 	const pad = config.padding
 	const drawHeight = height - pad * 2
-	const yScale = drawHeight * 0.6
 	const baselineY = height - pad
 
 	// Draw persistent history first (faded, smaller)
@@ -565,11 +597,12 @@ function drawHistoryScribbles(
 
 	for (let i = 0; i < persistent.length; i++) {
 		const entry = persistent[i]
-		const points = generateBlobPoints(entry.mu, entry.sigma, config.blobArea)
+		const points = generateLogSpaceBlob(entry.mu, entry.sigma, config.blobArea, 200, config)
 		if (points.length === 0) continue
 		const maxIdx = points.reduce((best, p, idx) => (p.y > points[best].y ? idx : best), 0)
+		const entryYScale = computeYScale(drawHeight, points[maxIdx].y)
 		const peakX = mathToCanvasX(points[maxIdx].x, width, config)
-		const peakY = baselineY - points[maxIdx].y * yScale
+		const peakY = baselineY - points[maxIdx].y * entryYScale
 
 		const rng = seededRng(i * 7777 + entry.label.length)
 		const rotation = (rng() - 0.5) * 0.15
@@ -597,13 +630,14 @@ function drawHistoryScribbles(
 	// Draw current-session history
 	for (let i = 0; i < history.length; i++) {
 		const entry = history[i]
-		const points = generateBlobPoints(entry.mu, entry.sigma, config.blobArea)
+		const points = generateLogSpaceBlob(entry.mu, entry.sigma, config.blobArea, 200, config)
 		if (points.length === 0) continue
 
 		// Find peak position
 		const maxIdx = points.reduce((best, p, idx) => (p.y > points[best].y ? idx : best), 0)
+		const entryYScale = computeYScale(drawHeight, points[maxIdx].y)
 		const peakX = mathToCanvasX(points[maxIdx].x, width, config)
-		const peakY = baselineY - points[maxIdx].y * yScale
+		const peakY = baselineY - points[maxIdx].y * entryYScale
 
 		// Seeded rotation for slight tilt
 		const rng = seededRng(i * 4321 + entry.label.length)
@@ -708,12 +742,12 @@ function drawAnnotations(
 	const p10 = lognormalQuantile(0.1, mu, sigma)
 	const p90 = lognormalQuantile(0.9, mu, sigma)
 
-	const medianCx = mathToCanvasX(median, width, config)
-	const p10Cx = mathToCanvasX(p10, width, config)
-	const p90Cx = mathToCanvasX(p90, width, config)
+	const medianCx = Math.max(pad, Math.min(mathToCanvasX(median, width, config), width - pad))
+	const p10Cx = Math.max(mathToCanvasX(p10, width, config), pad)
+	const p90Cx = Math.min(mathToCanvasX(p90, width, config), width - pad)
 
 	// Abort if median is off-screen
-	if (medianCx < pad + 20 || medianCx > width - pad - 20) return
+	if (medianCx < pad || medianCx > width - pad) return
 
 	const blobPeakY = peakCanvasY(mu, sigma, height, config)
 	const noteAnchorY = Math.max(blobPeakY, pad + 40)

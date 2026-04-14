@@ -16,25 +16,26 @@ describe('mathToCanvasX / canvasToMathX', () => {
 	const width = 800
 
 	it('maps xRange[0] to left padding', () => {
-		expect(mathToCanvasX(0, width)).toBe(DEFAULT_CONFIG.padding)
+		expect(mathToCanvasX(0.5, width)).toBeCloseTo(DEFAULT_CONFIG.padding)
 	})
 
 	it('maps xRange[1] to right edge minus padding', () => {
-		expect(mathToCanvasX(20, width)).toBe(width - DEFAULT_CONFIG.padding)
+		expect(mathToCanvasX(55, width)).toBeCloseTo(width - DEFAULT_CONFIG.padding)
 	})
 
 	it('round-trips: canvasToMathX(mathToCanvasX(x)) ≈ x', () => {
-		for (const x of [0, 5, 10, 15, 20]) {
+		for (const x of [0.5, 1, 2, 5, 10, 20, 55]) {
 			const canvasX = mathToCanvasX(x, width)
 			expect(canvasToMathX(canvasX, width)).toBeCloseTo(x)
 		}
 	})
 
-	it('is linear', () => {
+	it('is logarithmic — equal ratios map to equal distances', () => {
+		const x1 = mathToCanvasX(1, width)
+		const x2 = mathToCanvasX(2, width)
 		const x5 = mathToCanvasX(5, width)
 		const x10 = mathToCanvasX(10, width)
-		const x15 = mathToCanvasX(15, width)
-		expect(x10 - x5).toBeCloseTo(x15 - x10)
+		expect(x2 - x1).toBeCloseTo(x10 - x5)
 	})
 })
 
@@ -55,6 +56,13 @@ describe('peakCanvasY', () => {
 		const peakLowSigma = peakCanvasY(muLow, 0.3, canvasHeight)
 		const peakHighSigma = peakCanvasY(muHigh, 1.5, canvasHeight)
 		expect(peakLowSigma).toBeLessThan(peakHighSigma)
+	})
+
+	it('same sigma, different modes → same peakY (log-space uniformity)', () => {
+		const sigma = 0.5
+		const peak1 = peakCanvasY(muFromMode(1, sigma), sigma, canvasHeight)
+		const peak10 = peakCanvasY(muFromMode(10, sigma), sigma, canvasHeight)
+		expect(peak1).toBeCloseTo(peak10)
 	})
 })
 
@@ -77,11 +85,11 @@ describe('canvasYToSigmaFromPeak', () => {
 
 	it('cursor at top → min sigma', () => {
 		const sigma = canvasYToSigmaFromPeak(DEFAULT_CONFIG.padding, canvasHeight, mode)
-		expect(sigma).toBe(0.01)
+		expect(sigma).toBe(0.08)
 	})
 
 	it('peak reaches the target cursorY', () => {
-		const targetY = 200
+		const targetY = 300
 		const sigma = canvasYToSigmaFromPeak(targetY, canvasHeight, mode)
 		const mu = muFromMode(mode, sigma)
 		const actualPeakY = peakCanvasY(mu, sigma, canvasHeight)
