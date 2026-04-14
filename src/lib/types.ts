@@ -23,6 +23,8 @@ export type NameMessage = {
 
 export type TopicMessage = {
 	topic: string
+	url?: string
+	ticketId?: string
 }
 
 export type ReadyMessage = {
@@ -31,6 +33,26 @@ export type ReadyMessage = {
 
 export type UnitMessage = {
 	unit: string
+}
+
+export type ImportedTicket = {
+	id: string
+	title: string
+	url?: string
+	labels?: string[]
+	assignee?: string
+	description?: string
+}
+
+export interface EstimatedTicket extends ImportedTicket {
+	median?: number
+	p10?: number
+	p90?: number
+	estimateUnit?: string
+}
+
+export type BacklogMessage = {
+	tickets: ImportedTicket[]
 }
 
 /** Muted colors assigned to peers — like colored pencils on paper */

@@ -453,6 +453,95 @@ export function hitTestBlob(
 	return false
 }
 
+/** Ticket info drawn on the paper like handwritten sketchbook notes */
+function drawTicketInfo(
+	ctx: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	ticket: { id: string; title: string; labels?: string[]; assignee?: string; description?: string },
+): void {
+	const rng = seededRng(ticket.id.length * 7 + ticket.title.length)
+
+	// Rule of thirds intersections — rounded to avoid sub-pixel jitter on resize
+	const leftThird = Math.round(width / 3)
+	const rightThird = Math.round((width * 2) / 3)
+	const topThird = Math.round(height / 3)
+
+	// Anchor ticket ID + title near the upper-left third intersection
+	const idX = Math.round(leftThird * 0.35)
+	const idY = Math.round(topThird * 0.45)
+
+	ctx.save()
+
+	// Ticket ID (bold, slightly tilted)
+	const idRotation = (rng() - 0.5) * 0.03 // ±~1°
+	ctx.save()
+	ctx.translate(idX, idY)
+	ctx.rotate(idRotation)
+	ctx.globalAlpha = 0.6
+	ctx.font = 'bold 18px Caveat, cursive'
+	ctx.fillStyle = '#1a3a6a'
+	ctx.textAlign = 'left'
+	ctx.fillText(ticket.id, 0, 0)
+	ctx.restore()
+
+	// Title below the ID
+	const titleRotation = (rng() - 0.5) * 0.02
+	const maxTitleWidth = Math.round(Math.min(rightThird - idX, width * 0.5))
+	ctx.save()
+	ctx.translate(idX, idY + 26)
+	ctx.rotate(titleRotation)
+	ctx.globalAlpha = 0.5
+	ctx.font = '20px Caveat, cursive'
+	ctx.fillStyle = '#1a3a6a'
+	ctx.textAlign = 'left'
+
+	let displayTitle = ticket.title
+	while (ctx.measureText(displayTitle).width > maxTitleWidth && displayTitle.length > 10) {
+		displayTitle = `${displayTitle.slice(0, -4)}…`
+	}
+	ctx.fillText(displayTitle, 0, 0)
+	ctx.restore()
+
+	// Labels + assignee near the upper-right third intersection
+	const tagsX = Math.round(rightThird + (width - rightThird) * 0.5)
+	let tagY = idY - 8
+
+	if (ticket.labels && ticket.labels.length > 0) {
+		ctx.globalAlpha = 0.4
+		ctx.font = '14px Caveat, cursive'
+		ctx.textAlign = 'right'
+
+		for (const label of ticket.labels.slice(0, 4)) {
+			const textWidth = ctx.measureText(label).width
+			const tagPad = 5
+			const tagW = textWidth + tagPad * 2
+			const tagH = 18
+
+			// Tag background
+			ctx.fillStyle = 'rgba(26, 58, 106, 0.08)'
+			ctx.beginPath()
+			ctx.roundRect(tagsX - tagW, tagY - 12, tagW, tagH, 3)
+			ctx.fill()
+
+			// Tag text
+			ctx.fillStyle = '#1a3a6a'
+			ctx.fillText(label, tagsX - tagPad, tagY)
+			tagY += 22
+		}
+	}
+
+	if (ticket.assignee) {
+		ctx.globalAlpha = 0.4
+		ctx.font = '15px Caveat, cursive'
+		ctx.textAlign = 'right'
+		ctx.fillStyle = '#1a3a6a'
+		ctx.fillText(`→ ${ticket.assignee}`, tagsX, tagY)
+	}
+
+	ctx.restore()
+}
+
 /** Draw scribbled labels for past estimates at their combined position */
 function drawHistoryScribbles(
 	ctx: CanvasRenderingContext2D,
@@ -593,16 +682,18 @@ function drawAnnotations(
 	// Notes lerp only partway toward the blob → they lag behind.
 	const restX = width / 2
 	const drag = 0.35 // 0 = pinned to center, 1 = tracks blob exactly
+	const noteY = noteAnchorY - 55
+	const spreadX = 55 // horizontal offset so annotations sit side-by-side
 
 	ctx.save()
 	ctx.globalAlpha = 0.75
 	ctx.strokeStyle = '#4a4030'
 	ctx.lineWidth = 1.0
 
-	// -- Median annotation --
+	// -- Median annotation (left, slightly lower) --
 	const medianText = `~${formatValue(median)} ${unit}`
-	const medianNoteX = restX + (medianCx - restX) * drag
-	const medianNoteY = noteAnchorY - 45
+	const medianNoteX = restX + (medianCx - restX) * drag - spreadX
+	const medianNoteY = noteY + 8
 
 	ctx.font = '18px Caveat, cursive'
 	ctx.fillStyle = '#2a2520'
@@ -615,12 +706,12 @@ function drawAnnotations(
 	// Arrow from note to peak — stretches and bows the further apart they are
 	drawSketchyArrow(ctx, medianNoteX, medianNoteY + 19, medianCx, noteAnchorY - 2)
 
-	// -- Range annotation (P10–P90) --
+	// -- Range annotation (right, side-by-side with median) --
 	const rangeText = `${formatValue(p10)}–${formatValue(p90)} ${unit}`
 	const rangeMidX = (medianCx + p90Cx) / 2
-	const rangeNoteX = restX + (rangeMidX - restX) * drag
+	const rangeNoteX = restX + (rangeMidX - restX) * drag + spreadX
 	const clampedRangeNoteX = Math.min(Math.max(rangeNoteX, pad + 80), width - pad - 60)
-	const rangeNoteY = noteAnchorY - 75
+	const rangeNoteY = noteY
 
 	ctx.font = '16px Caveat, cursive'
 	ctx.fillStyle = '#3a3530'
@@ -705,11 +796,17 @@ export function drawScene(
 	revealed: boolean,
 	history: Array<{ label: string; mu: number; sigma: number }> = [],
 	unit: string = 'points',
+	currentTicket?: { id: string; title: string; labels?: string[]; assignee?: string; description?: string },
 ): void {
 	ctx.clearRect(0, 0, width, height)
 
 	// Paper background with subtle noise
 	drawPaperBackground(ctx, width, height)
+
+	// Ticket info on the paper (sketchbook notes)
+	if (currentTicket) {
+		drawTicketInfo(ctx, width, height, currentTicket)
+	}
 
 	// Draw scribbled history labels before axes so they feel like underlayer
 	if (history.length > 0) {

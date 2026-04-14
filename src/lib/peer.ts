@@ -3,7 +3,9 @@ import { selfId } from '@trystero-p2p/core'
 import { joinRoom as joinMqttRoom } from '@trystero-p2p/mqtt'
 import { joinRoom as joinNostrRoom } from '@trystero-p2p/nostr'
 import type {
+	BacklogMessage,
 	EstimateMessage,
+	ImportedTicket,
 	NameMessage,
 	PeerEstimate,
 	ReadyMessage,
@@ -32,6 +34,7 @@ export interface PeerSession {
 	sendTopic: (topic: TopicMessage) => Promise<void>
 	sendReady: (ready: ReadyMessage) => Promise<void>
 	sendUnit: (unit: UnitMessage) => Promise<void>
+	sendBacklog: (backlog: BacklogMessage) => Promise<void>
 	leave: () => void
 }
 
@@ -41,9 +44,10 @@ export interface PeerCallbacks {
 	onEstimate: (estimate: PeerEstimate) => void
 	onReveal: (revealed: boolean) => void
 	onName: (peerId: string, name: string) => void
-	onTopic: (topic: string) => void
+	onTopic: (topic: string, url?: string, ticketId?: string) => void
 	onReady: (peerId: string, ready: boolean) => void
 	onUnit: (unit: string) => void
+	onBacklog?: (tickets: ImportedTicket[]) => void
 	onConnectionError?: (message: string) => void
 }
 
@@ -105,6 +109,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	const topicSenders: Array<(data: TopicMessage) => Promise<void>> = []
 	const readySenders: Array<(data: ReadyMessage) => Promise<void>> = []
 	const unitSenders: Array<(data: UnitMessage) => Promise<void>> = []
+	const backlogSenders: Array<(data: BacklogMessage) => Promise<void>> = []
 
 	for (let i = 0; i < rooms.length; i++) {
 		const room = rooms[i]
@@ -119,6 +124,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		const [sendTopic, onTopic] = room.makeAction<TopicMessage>('topic')
 		const [sendReady, onReady] = room.makeAction<ReadyMessage>('ready')
 		const [sendUnit, onUnit] = room.makeAction<UnitMessage>('unit')
+		const [sendBacklog, onBacklog] = room.makeAction<BacklogMessage>('backlog')
 
 		estimateSenders.push(async (d) => {
 			await sendEstimate(d)
@@ -138,6 +144,9 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		unitSenders.push(async (d) => {
 			await sendUnit(d)
 		})
+		backlogSenders.push(async (d) => {
+			await sendBacklog(d)
+		})
 
 		// All receivers are idempotent — duplicates just overwrite with same value
 		onEstimate((data, peerId) => {
@@ -145,9 +154,10 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		})
 		onReveal((data) => callbacks.onReveal(data.revealed))
 		onName((data, peerId) => callbacks.onName(peerId, data.name))
-		onTopic((data) => callbacks.onTopic(data.topic))
+		onTopic((data) => callbacks.onTopic(data.topic, data.url, data.ticketId))
 		onReady((data, peerId) => callbacks.onReady(peerId, data.ready))
 		onUnit((data) => callbacks.onUnit(data.unit))
+		onBacklog((data) => callbacks.onBacklog?.(data.tickets))
 	}
 
 	return {
@@ -159,6 +169,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		sendTopic: broadcastAll(topicSenders),
 		sendReady: broadcastAll(readySenders),
 		sendUnit: broadcastAll(unitSenders),
+		sendBacklog: broadcastAll(backlogSenders),
 		leave() {
 			for (const room of rooms) room.leave()
 		},

@@ -1,0 +1,11 @@
+ID,Title,URL,Labels,Assignee,Description
+PROJ-101,User login with SSO,https://jira.example.com/browse/PROJ-101,auth;backend,Alice,Add SAML-based single sign-on to the login flow
+PROJ-102,Search results pagination,https://jira.example.com/browse/PROJ-102,frontend;ux,Bob,Implement infinite scroll or page-based navigation for search results
+PROJ-103,Export dashboard to PDF,https://jira.example.com/browse/PROJ-103,frontend;reporting,,Allow users to download their dashboard as a styled PDF
+PROJ-104,Rate limiting on API,https://jira.example.com/browse/PROJ-104,backend;security,Charlie,Add per-user rate limiting to public API endpoints
+PROJ-105,Dark mode support,https://jira.example.com/browse/PROJ-105,frontend;ux,Alice,Implement dark theme with system preference detection
+PROJ-106,Database migration to PostgreSQL,https://jira.example.com/browse/PROJ-106,backend;infrastructure,Dave,"Migrate from MySQL to PostgreSQL, including schema changes and data migration"
+PROJ-107,Email notification preferences,https://jira.example.com/browse/PROJ-107,backend;ux,,Let users choose which email notifications they receive
+PROJ-108,Mobile responsive navbar,https://jira.example.com/browse/PROJ-108,frontend;mobile,Bob,Hamburger menu and touch-friendly navigation for small screens
+PROJ-109,Audit log for admin actions,https://jira.example.com/browse/PROJ-109,backend;security;compliance,Charlie,Log all admin CRUD operations with timestamp and actor
+PROJ-110,Onboarding wizard for new users,https://jira.example.com/browse/PROJ-110,frontend;ux,Alice,Step-by-step guide on first login to set up profile and preferences

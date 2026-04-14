@@ -1,10 +1,12 @@
 <script lang="ts">
+	import BacklogPanel from './components/BacklogPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
-	import { combineEstimates } from './lib/lognormal'
+	import { parseCsv, exportToCsv, downloadFile } from './lib/csv'
+	import { combineEstimates, lognormalQuantile } from './lib/lognormal'
 	import { createSession, getPeerColor, selfId, type PeerSession } from './lib/peer'
 	import { saveSession } from './lib/session-store'
-	import type { PeerEstimate } from './lib/types'
+	import type { EstimatedTicket, ImportedTicket, PeerEstimate } from './lib/types'
 
 	interface HistoryEntry {
 		label: string
@@ -21,6 +23,7 @@
 
 	let userName = $state('')
 	let topic = $state('')
+	let topicUrl = $state('')
 	let peerNames = $state<Map<string, string>>(new Map())
 	let readyPeers = $state<Set<string>>(new Set())
 	let selfReady = $state(false)
@@ -28,6 +31,21 @@
 	let unit = $state('points')
 	let isCreator = $state(false)
 	let connectionError = $state('')
+
+	// Backlog state
+	let backlog = $state<EstimatedTicket[]>([])
+	let backlogIndex = $state(-1)
+	/** Personal estimates per ticket ID — preserved across ticket switches */
+	let myEstimates = $state<Map<string, { mu: number; sigma: number }>>(new Map())
+
+	let currentTicket = $derived<EstimatedTicket | undefined>(
+		backlogIndex >= 0 && backlogIndex < backlog.length ? backlog[backlogIndex] : undefined,
+	)
+
+	let estimatedCount = $derived(backlog.filter((t) => t.median != null || myEstimates.has(t.id)).length)
+
+	/** Prep mode: each person goes through backlog independently. Meeting mode: Ready/Reveal flow. */
+	let prepMode = $state(false)
 
 	let peerEstimates = $derived(
 		Array.from(peerEstimateMap.values()).map((pe) => ({
@@ -70,7 +88,16 @@
 	}
 
 	function handleTopicChange() {
-		session?.sendTopic({ topic: topic.trim() })
+		// Auto-detect URL typed as topic
+		const trimmed = topic.trim()
+		if (/^https?:\/\//.test(trimmed) && !topicUrl) {
+			topicUrl = trimmed
+		}
+		session?.sendTopic({
+			topic: trimmed,
+			url: topicUrl || undefined,
+			ticketId: currentTicket?.id,
+		})
 		persistSession()
 	}
 
@@ -92,6 +119,16 @@
 		session?.sendReveal({ revealed: true })
 	}
 
+	function addOrUpdateHistory(label: string, mu: number, sigma: number) {
+		const idx = history.findIndex((h) => h.label === label)
+		if (idx >= 0) {
+			history[idx] = { label, mu, sigma }
+			history = [...history] // trigger reactivity
+		} else {
+			history = [...history, { label, mu, sigma }]
+		}
+	}
+
 	function saveRoundToHistory() {
 		const label = topic.trim() || `Item ${history.length + 1}`
 		const allEstimates = [
@@ -102,8 +139,31 @@
 			})),
 		]
 		const combined = combineEstimates(allEstimates)
-		if (combined && allEstimates.length > 1) {
-			history = [...history, { label, mu: combined.mu, sigma: combined.sigma }]
+
+		// Record verdict on the current backlog ticket
+		if (currentTicket) {
+			if (combined) {
+				const median = lognormalQuantile(0.5, combined.mu, combined.sigma)
+				const p10 = lognormalQuantile(0.1, combined.mu, combined.sigma)
+				const p90 = lognormalQuantile(0.9, combined.mu, combined.sigma)
+				currentTicket.median = median
+				currentTicket.p10 = p10
+				currentTicket.p90 = p90
+				currentTicket.estimateUnit = unit
+				addOrUpdateHistory(label, combined.mu, combined.sigma)
+			} else {
+				// Solo estimate — record personal values as the verdict
+				const median = lognormalQuantile(0.5, mu, sigma)
+				const p10 = lognormalQuantile(0.1, mu, sigma)
+				const p90 = lognormalQuantile(0.9, mu, sigma)
+				currentTicket.median = median
+				currentTicket.p10 = p10
+				currentTicket.p90 = p90
+				currentTicket.estimateUnit = unit
+				addOrUpdateHistory(label, mu, sigma)
+			}
+		} else if (combined && allEstimates.length > 1) {
+			addOrUpdateHistory(label, combined.mu, combined.sigma)
 		}
 	}
 
@@ -118,10 +178,80 @@
 	}
 
 	function handleNext() {
-		if (!revealed) return
+		if (!prepMode && !revealed) return
+		// Save personal estimate for this ticket
+		if (currentTicket) {
+			myEstimates.set(currentTicket.id, { mu, sigma })
+		}
 		saveRoundToHistory()
 		resetRound()
-		session?.sendReveal({ revealed: false })
+		if (!prepMode) {
+			session?.sendReveal({ revealed: false })
+		}
+
+		// Auto-advance to next backlog ticket (skip save — already done above)
+		if (backlog.length > 0 && backlogIndex < backlog.length - 1) {
+			selectTicket(backlogIndex + 1, true)
+		}
+	}
+
+	function selectTicket(index: number, skipSave = false) {
+		if (index < 0 || index >= backlog.length) return
+
+		// Save current personal estimate and verdict before switching
+		if (!skipSave && currentTicket) {
+			myEstimates.set(currentTicket.id, { mu, sigma })
+			saveRoundToHistory()
+		}
+
+		// Reset round state for the new ticket
+		revealed = false
+		selfReady = false
+		readyPeers = new Set()
+		peerEstimateMap = new Map()
+
+		backlogIndex = index
+		const ticket = backlog[index]
+		topic = ticket.title
+		topicUrl = ticket.url ?? ''
+
+		// Restore personal estimate if previously made
+		const saved = myEstimates.get(ticket.id)
+		if (saved) {
+			mu = saved.mu
+			sigma = saved.sigma
+		} else {
+			mu = 2.0
+			sigma = 0.6
+		}
+
+		session?.sendTopic({
+			topic: ticket.title,
+			url: ticket.url,
+			ticketId: ticket.id,
+		})
+	}
+
+	function handleBacklogImport(file: File) {
+		const reader = new FileReader()
+		reader.onload = () => {
+			const text = reader.result as string
+			const tickets = parseCsv(text)
+			if (tickets.length === 0) return
+			backlog = tickets.map((t) => ({ ...t }))
+			backlogIndex = -1
+			prepMode = true
+			session?.sendBacklog({ tickets })
+			// Auto-select first ticket
+			selectTicket(0)
+		}
+		reader.readAsText(file)
+	}
+
+	function handleExportResults() {
+		const csv = exportToCsv(backlog)
+		const timestamp = new Date().toISOString().slice(0, 10)
+		downloadFile(csv, `estimates-${timestamp}.csv`, 'text/csv')
 	}
 
 	function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
@@ -148,9 +278,16 @@
 				session?.sendName({ name: userName })
 				if (isCreator) {
 					session?.sendUnit({ unit })
+					if (backlog.length > 0) {
+						session?.sendBacklog({ tickets: backlog })
+					}
 				}
 				if (topic) {
-					session?.sendTopic({ topic })
+					session?.sendTopic({
+						topic,
+						url: topicUrl || undefined,
+						ticketId: currentTicket?.id,
+					})
 				}
 				if (selfReady) {
 					session?.sendReady({ ready: true })
@@ -178,9 +315,15 @@
 				peerNames.set(peerId, name)
 				persistSession()
 			},
-			onTopic(newTopic) {
+			onTopic(newTopic, url, ticketId) {
 				if (newTopic) {
 					topic = newTopic
+					topicUrl = url ?? ''
+					// If we have a backlog and received a ticketId, sync the index
+					if (ticketId && backlog.length > 0) {
+						const idx = backlog.findIndex((t) => t.id === ticketId)
+						if (idx >= 0) backlogIndex = idx
+					}
 				}
 			},
 			onReady(peerId, ready) {
@@ -192,6 +335,13 @@
 			},
 			onUnit(peerUnit) {
 				if (!isCreator) unit = peerUnit
+			},
+			onBacklog(tickets) {
+				if (!isCreator && tickets.length > 0) {
+					backlog = tickets.map((t) => ({ ...t }))
+					backlogIndex = -1
+					prepMode = true
+				}
 			},
 			onConnectionError(message) {
 				connectionError = message
@@ -209,31 +359,61 @@
 		unit = 'points'
 		isCreator = false
 		connectionError = ''
+		backlog = []
+		backlogIndex = -1
+		topicUrl = ''
+		myEstimates = new Map()
+		prepMode = false
 	}
 </script>
 
 {#if !session}
 	<SessionLobby onJoin={handleJoin} />
 {:else}
-	<main>
+	<main style:padding-right="{backlog.length > 0 ? '276px' : '16px'}">
 		<header>
 			<h1>Estimate</h1>
 			<div class="stats">
 				<span class="room-badge">{session.roomId}</span>
-				<input
-					class="topic-input"
-					type="text"
-					bind:value={topic}
-					placeholder="What are we estimating?"
-					maxlength="100"
-					onchange={handleTopicChange}
-				/>
+				{#if topicUrl}
+					<a
+						class="topic-link"
+						href={topicUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						title={topicUrl}
+					>
+						{topic || topicUrl}
+					</a>
+				{:else}
+					<input
+						class="topic-input"
+						type="text"
+						bind:value={topic}
+						placeholder="What are we estimating?"
+						maxlength="100"
+						onchange={handleTopicChange}
+					/>
+				{/if}
+				{#if backlog.length > 0}
+					<span class="backlog-progress">{estimatedCount}/{backlog.length}</span>
+				{/if}
 			</div>
+			{#if isCreator && backlog.length > 0 && estimatedCount > 0}
+				<button class="export" onclick={handleExportResults}>Export ↓</button>
+			{/if}
 			<button class="leave" onclick={handleLeave}>Leave</button>
-			{#if revealed}
-				<button class="next" onclick={handleNext}>Next →</button>
+			{#if prepMode}
+				<button class="next" onclick={handleNext}>
+					{backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
+				</button>
+				<button class="mode-toggle" onclick={() => (prepMode = false)}>Start meeting</button>
+			{:else if revealed}
+				<button class="next" onclick={handleNext}>
+					{backlog.length > 0 && backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Next →'}
+				</button>
 			{:else if !selfReady}
-				<button class="done" onclick={handleDone}>Done ✓</button>
+				<button class="done" onclick={handleDone}>Ready ✓</button>
 			{:else if !allReady}
 				<button class="force-reveal" onclick={handleForceReveal}>Reveal anyway</button>
 			{/if}
@@ -272,8 +452,36 @@
 			{userName}
 			{history}
 			{unit}
+			{currentTicket}
 			onEstimateChange={handleEstimateChange}
 		/>
+
+		{#if backlog.length > 0}
+			<BacklogPanel
+				tickets={backlog}
+				currentIndex={backlogIndex}
+				{isCreator}
+				{myEstimates}
+				onSelect={(index) => {
+					if (isCreator) selectTicket(index)
+				}}
+			/>
+		{:else if isCreator}
+			<div class="import-prompt">
+				<label class="import-label">
+					<input
+						type="file"
+						accept=".csv"
+						class="file-input"
+						onchange={(e) => {
+							const file = (e.target as HTMLInputElement).files?.[0]
+							if (file) handleBacklogImport(file)
+						}}
+					/>
+					📋 Import backlog (CSV)
+				</label>
+			</div>
+		{/if}
 	</main>
 {/if}
 
@@ -292,6 +500,7 @@
 		padding: 16px;
 		box-sizing: border-box;
 		gap: 12px;
+		transition: padding-right 0.2s;
 	}
 
 	header {
@@ -483,5 +692,81 @@
 
 	.force-reveal:hover {
 		background: rgba(180, 140, 60, 0.3);
+	}
+
+	.mode-toggle {
+		background: rgba(90, 140, 80, 0.15);
+		border-color: #8aaa7a;
+		color: #4a6a40;
+		font-size: 0.9rem;
+		padding: 6px 14px;
+	}
+
+	.mode-toggle:hover {
+		background: rgba(90, 140, 80, 0.3);
+	}
+
+	.topic-link {
+		color: #2a5090;
+		font-family: 'Caveat', cursive;
+		font-size: 1.1rem;
+		font-weight: 600;
+		text-decoration: underline;
+		text-decoration-style: dashed;
+		text-underline-offset: 3px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 50%;
+	}
+
+	.topic-link:hover {
+		color: #3b7dd8;
+	}
+
+	.backlog-progress {
+		font-size: 0.9rem;
+		color: #6a6050;
+		white-space: nowrap;
+	}
+
+	.export {
+		background: rgba(90, 140, 80, 0.15);
+		border-color: #8aaa7a;
+		color: #4a6a40;
+		font-size: 0.95rem;
+	}
+
+	.export:hover {
+		background: rgba(90, 140, 80, 0.3);
+	}
+
+	.import-prompt {
+		display: flex;
+		justify-content: center;
+		padding: 8px;
+	}
+
+	.import-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 20px;
+		border: 1px dashed #b0a890;
+		border-radius: 3px;
+		background: rgba(210, 200, 180, 0.25);
+		color: #6a6050;
+		font-family: 'Caveat', cursive;
+		font-size: 1.1rem;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.import-label:hover {
+		background: rgba(210, 200, 180, 0.45);
+	}
+
+	.file-input {
+		display: none;
 	}
 </style>

@@ -16,10 +16,11 @@
 		userName: string
 		history: Array<{ label: string; mu: number; sigma: number }>
 		unit: string
+		currentTicket?: { id: string; title: string; labels?: string[]; assignee?: string; description?: string }
 		onEstimateChange: (mu: number, sigma: number) => void
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, unit, onEstimateChange }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, unit, currentTicket, onEstimateChange }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
@@ -142,6 +143,7 @@
 			currentRevealed,
 			currentHistory,
 			unit,
+			currentTicket,
 		)
 	})
 </script>
