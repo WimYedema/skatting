@@ -34,6 +34,9 @@ import {
 	changeUnit,
 	toggleLiveAdjust,
 	mergeBacklogImport,
+	skipPeer,
+	unskipPeer,
+	getActiveParticipants,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -1881,5 +1884,120 @@ describe('resetRound resets liveAdjust', () => {
 		resetRound(s)
 
 		expect(s.liveAdjust).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Selective Reveal (5.4)
+// ---------------------------------------------------------------------------
+
+describe('skipPeer', () => {
+	it('adds peer to skippedPeers when creator', () => {
+		const s = createInitialState()
+		s.isCreator = true
+		s.peerIds = ['a', 'b']
+
+		skipPeer(s, 'a')
+
+		expect(s.skippedPeers.has('a')).toBe(true)
+		expect(s.skippedPeers.has('b')).toBe(false)
+	})
+
+	it('does nothing when not creator', () => {
+		const s = createInitialState()
+		s.isCreator = false
+		s.peerIds = ['a']
+
+		skipPeer(s, 'a')
+
+		expect(s.skippedPeers.size).toBe(0)
+	})
+})
+
+describe('unskipPeer', () => {
+	it('removes peer from skippedPeers', () => {
+		const s = createInitialState()
+		s.skippedPeers = new Set(['a'])
+
+		unskipPeer(s, 'a')
+
+		expect(s.skippedPeers.has('a')).toBe(false)
+	})
+})
+
+describe('getActiveParticipants', () => {
+	it('excludes skipped peers', () => {
+		const s = createInitialState()
+		s.peerIds = ['a', 'b', 'c']
+		s.skippedPeers = new Set(['b'])
+
+		const active = getActiveParticipants(s, 'self')
+
+		expect(active).toContain('self')
+		expect(active).toContain('a')
+		expect(active).not.toContain('b')
+		expect(active).toContain('c')
+	})
+})
+
+describe('getAllReady with skipped peers', () => {
+	it('returns true when all non-skipped peers are ready', () => {
+		const s = createInitialState()
+		s.peerIds = ['a', 'b']
+		s.selfReady = true
+		s.readyPeers = new Set(['a'])
+		s.skippedPeers = new Set(['b'])
+
+		expect(getAllReady(s, 'self')).toBe(true)
+	})
+
+	it('returns false when a non-skipped peer is not ready', () => {
+		const s = createInitialState()
+		s.peerIds = ['a', 'b']
+		s.selfReady = true
+		s.readyPeers = new Set()
+		s.skippedPeers = new Set(['b'])
+
+		expect(getAllReady(s, 'self')).toBe(false)
+	})
+})
+
+describe('getReadyCount with skipped peers', () => {
+	it('excludes skipped peers from count', () => {
+		const s = createInitialState()
+		s.peerIds = ['a', 'b', 'c']
+		s.selfReady = true
+		s.readyPeers = new Set(['a'])
+		s.skippedPeers = new Set(['b'])
+
+		// active: self + a + c = 3, ready: self + a = 2
+		expect(getReadyCount(s, 'self')).toBe(2)
+	})
+})
+
+describe('onReady un-skips peer', () => {
+	it('removes peer from skippedPeers when they send ready', () => {
+		const s = createInitialState()
+		s.session = mockSession()
+		s.isCreator = true
+		s.peerIds = ['a']
+		s.skippedPeers = new Set(['a'])
+
+		const callbacks = createPeerCallbacks(s, mockDeps())
+		callbacks.onReady('a', true)
+
+		expect(s.skippedPeers.has('a')).toBe(false)
+		expect(s.readyPeers.has('a')).toBe(true)
+	})
+})
+
+describe('resetRound resets skippedPeers', () => {
+	it('clears skippedPeers', () => {
+		const s = createInitialState()
+		s.skippedPeers = new Set(['a', 'b'])
+
+		resetRound(s)
+
+		expect(s.skippedPeers.size).toBe(0)
 	})
 })

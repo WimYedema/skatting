@@ -44,6 +44,8 @@
 		applyNostrState,
 		connectSession,
 		leaveSession,
+		skipPeer,
+		getActiveParticipants,
 		type SessionDeps,
 	} from './lib/session-controller'
 
@@ -105,6 +107,7 @@
 			})),
 	)
 	let allParticipants = $derived(getAllParticipants(s, selfId))
+	let activeCount = $derived(getActiveParticipants(s, selfId).length)
 	let readyCount = $derived(getReadyCount(s, selfId))
 	let allReady = $derived(getAllReady(s, selfId))
 
@@ -320,16 +323,19 @@
 				<span class="name">{s.userName} (you){#if s.selfAbstained} <span class="abstain-tag">🤷</span>{/if}{#if s.isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 			</div>
 			{#each s.peerIds as peerId}
-				<div class="participant" class:is-ready={s.readyPeers.has(peerId)}>
+				<div class="participant" class:is-ready={s.readyPeers.has(peerId)} class:is-skipped={s.skippedPeers.has(peerId)}>
 					<span
 						class="ready-dot"
 						class:ready={s.readyPeers.has(peerId)}
 						style="--peer-color: {getPeerColor(peerId, s.peerIds)}"
 					></span>
-					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if s.skippedPeers.has(peerId)} <span class="skipped-tag">skipped</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+					{#if s.isCreator && !s.prepMode && !s.revealed && !s.readyPeers.has(peerId) && !s.skippedPeers.has(peerId)}
+						<button class="skip-btn" title="Skip this participant" onclick={() => skipPeer(s, peerId)}>✕</button>
+					{/if}
 				</div>
 			{/each}
-			<span class="ready-count">{readyCount}/{allParticipants.length} ready</span>
+			<span class="ready-count">{readyCount}/{activeCount} ready</span>
 			{#if s.prepMode && s.prepDone.length > 0}
 				<span class="prep-done-divider">│</span>
 				{#each s.prepDone as signal}
@@ -641,6 +647,34 @@
 		margin-left: auto;
 		color: #9a9080;
 		font-size: 0.85rem;
+	}
+
+	.participant.is-skipped {
+		opacity: 0.45;
+	}
+
+	.skipped-tag {
+		font-family: 'Caveat', cursive;
+		font-size: 0.8em;
+		color: #b0a090;
+		font-style: italic;
+	}
+
+	.skip-btn {
+		padding: 0 4px;
+		border: none;
+		background: none;
+		color: #b0a090;
+		font-size: 0.85rem;
+		cursor: pointer;
+		line-height: 1;
+		opacity: 0.6;
+		transition: opacity 0.15s, color 0.15s;
+	}
+
+	.skip-btn:hover {
+		opacity: 1;
+		color: #8a6040;
 	}
 
 	.prep-done-divider {

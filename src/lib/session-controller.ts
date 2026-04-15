@@ -22,6 +22,7 @@ export interface SessionState {
 	creatorPeerId: string | null
 	readyPeers: Set<string>
 	abstainedPeers: Set<string>
+	skippedPeers: Set<string>
 	selfReady: boolean
 	selfAbstained: boolean
 	history: HistoryEntry[]
@@ -65,6 +66,7 @@ export function createInitialState(): SessionState {
 		creatorPeerId: null,
 		readyPeers: new Set(),
 		abstainedPeers: new Set(),
+		skippedPeers: new Set(),
 		selfReady: false,
 		selfAbstained: false,
 		history: [],
@@ -141,15 +143,19 @@ export function getAllParticipants(s: SessionState, selfId: string): string[] {
 	return [selfId, ...s.peerIds]
 }
 
+export function getActiveParticipants(s: SessionState, selfId: string): string[] {
+	return getAllParticipants(s, selfId).filter((id) => !s.skippedPeers.has(id))
+}
+
 export function getReadyCount(s: SessionState, selfId: string): number {
-	return getAllParticipants(s, selfId).filter((id) =>
+	return getActiveParticipants(s, selfId).filter((id) =>
 		id === selfId ? s.selfReady : s.readyPeers.has(id),
 	).length
 }
 
 export function getAllReady(s: SessionState, selfId: string): boolean {
-	const all = getAllParticipants(s, selfId)
-	return all.length > 0 && getReadyCount(s, selfId) === all.length
+	const active = getActiveParticipants(s, selfId)
+	return active.length > 0 && getReadyCount(s, selfId) === active.length
 }
 
 // ---------------------------------------------------------------------------
@@ -264,12 +270,24 @@ export function saveRoundToHistory(s: SessionState, verdictOverride: number | nu
 	}
 }
 
+export function skipPeer(s: SessionState, peerId: string): void {
+	if (!s.isCreator) return
+	s.skippedPeers = new Set(s.skippedPeers).add(peerId)
+}
+
+export function unskipPeer(s: SessionState, peerId: string): void {
+	const next = new Set(s.skippedPeers)
+	next.delete(peerId)
+	s.skippedPeers = next
+}
+
 export function resetRound(s: SessionState): void {
 	s.revealed = false
 	s.selfReady = false
 	s.selfAbstained = false
 	s.readyPeers = new Set()
 	s.abstainedPeers = new Set()
+	s.skippedPeers = new Set()
 	s.peerEstimateMap = new Map()
 	s.mu = 2.0
 	s.sigma = 0.6
@@ -331,6 +349,7 @@ export function selectTicket(s: SessionState, index: number, skipSave = false): 
 	s.selfAbstained = false
 	s.readyPeers = new Set()
 	s.abstainedPeers = new Set()
+	s.skippedPeers = new Set()
 	s.peerEstimateMap = new Map()
 
 	s.backlogIndex = index
@@ -565,6 +584,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			const ap = new Set(s.abstainedPeers)
 			ap.delete(peerId)
 			s.abstainedPeers = ap
+			const sp = new Set(s.skippedPeers)
+			sp.delete(peerId)
+			s.skippedPeers = sp
 		},
 		onEstimate(estimate: PeerEstimate) {
 			s.peerEstimateMap = new Map(s.peerEstimateMap).set(estimate.peerId, estimate)
@@ -577,6 +599,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.selfAbstained = false
 				s.readyPeers = new Set()
 				s.abstainedPeers = new Set()
+				s.skippedPeers = new Set()
 			} else if (!rev) {
 				saveRoundToHistory(s)
 				resetRound(s)
@@ -602,6 +625,12 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.readyPeers = new Set(s.readyPeers).add(peerId)
 				if (abstained) {
 					s.abstainedPeers = new Set(s.abstainedPeers).add(peerId)
+				}
+				// Un-skip if they came back and readied up
+				if (s.skippedPeers.has(peerId)) {
+					const sp = new Set(s.skippedPeers)
+					sp.delete(peerId)
+					s.skippedPeers = sp
 				}
 			} else {
 				const rp = new Set(s.readyPeers)
