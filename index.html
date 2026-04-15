@@ -10,6 +10,7 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>if(typeof globalThis.setImmediate==="undefined"){globalThis.setImmediate=function(cb){return setTimeout(cb,0)};globalThis.clearImmediate=clearTimeout}</script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

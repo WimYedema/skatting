@@ -316,6 +316,38 @@ describe('handleNext', () => {
 		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
 	})
 
+	it('auto-abstains when hasMoved is false (no drag)', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.hasMoved = false
+		s.selfAbstained = false
+
+		handleNext(s, deps)
+
+		// After advancing, selfAbstained was set before resetRound clears it,
+		// but the ticket should be in abstainedTickets
+		expect(s.abstainedTickets.has('T1')).toBe(true)
+	})
+
+	it('does not auto-abstain when already explicitly abstained', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.hasMoved = false
+		s.selfAbstained = true
+		s.abstainedTickets.add('T1')
+
+		handleNext(s, deps)
+
+		// Should still be abstained — no double-add or error
+		expect(s.abstainedTickets.has('T1')).toBe(true)
+	})
+
 	it('shows summary on last ticket', () => {
 		const s = createInitialState()
 		const deps = mockDeps()

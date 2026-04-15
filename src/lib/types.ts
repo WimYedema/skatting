@@ -74,6 +74,10 @@ export interface SceneState {
 	currentTicket?: ImportedTicket
 	persistentHistory: HistoryEntry[]
 	selfAbstained?: boolean
+	hasMoved?: boolean
+	hasEverDragged?: boolean
+	/** When set, forces the verdict to this value even if divergent */
+	verdictOverride?: number | null
 }
 
 /** Muted colors assigned to peers — like colored pencils on paper */

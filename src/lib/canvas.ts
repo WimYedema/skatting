@@ -1,5 +1,6 @@
 import {
 	combineEstimates,
+	lognormalPdf,
 	lognormalQuantile,
 	muFromMode,
 	snapVerdict,
@@ -355,6 +356,135 @@ export function drawBlob(
 		}
 		ctx.stroke()
 	}
+
+	ctx.restore()
+}
+
+/** Draw a ghost blob — dotted outline, no fill, "?" in center. Indicates an uncommitted estimate. */
+function drawGhostBlob(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	color: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
+	if (points.length === 0) return
+
+	const pad = config.padding
+	const drawHeight = canvasHeight - pad * 2
+	const maxY = Math.max(...points.map((p) => p.y))
+	const yScale = computeYScale(drawHeight, maxY)
+	const baselineY = canvasHeight - pad
+
+	const seed = Math.round(mu * 1000) + Math.round(sigma * 7777)
+	const rng = seededRng(seed)
+
+	ctx.save()
+
+	// Dotted outline only — no fill
+	ctx.globalAlpha = 0.35
+	ctx.strokeStyle = color
+	ctx.lineWidth = 2
+	ctx.setLineDash([4, 6])
+	ctx.beginPath()
+	for (let i = 0; i < points.length; i++) {
+		const cx = mathToCanvasX(points[i].x, canvasWidth, config) + jitter(rng, 1.0)
+		const cy = baselineY - points[i].y * yScale + jitter(rng, 1.0)
+		if (i === 0) ctx.moveTo(cx, cy)
+		else ctx.lineTo(cx, cy)
+	}
+	ctx.stroke()
+	ctx.setLineDash([])
+
+	// Draw a "?" in the center of the blob
+	const mode = Math.exp(mu - sigma ** 2)
+	const centerX = mathToCanvasX(mode, canvasWidth, config)
+	const peakY = baselineY - maxY * yScale
+	const centerY = peakY + (baselineY - peakY) * 0.45
+	const fontSize = Math.min(Math.max((baselineY - peakY) * 0.5, 20), 48)
+
+	ctx.globalAlpha = 0.4
+	ctx.font = `${fontSize}px 'Caveat', cursive`
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'middle'
+	ctx.fillStyle = color
+	ctx.fillText('?', centerX, centerY)
+
+	ctx.restore()
+}
+
+/** Draw a sketchy "Drag me!" arrow pointing at the ghost blob */
+function drawDragMeArrow(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const mode = Math.exp(mu - sigma ** 2)
+	const blobCenterX = mathToCanvasX(mode, canvasWidth, config)
+	const pad = config.padding
+	const baselineY = canvasHeight - pad
+
+	// Arrow starts from the bottom-right area and curves toward the blob
+	const startX = Math.min(blobCenterX + canvasWidth * 0.18, canvasWidth - pad - 20)
+	const startY = baselineY - canvasHeight * 0.12
+	const endX = blobCenterX + 15
+	const endY = baselineY - canvasHeight * 0.3
+
+	const seed = 42424242
+	const rng = seededRng(seed)
+
+	ctx.save()
+	ctx.globalAlpha = 0.45
+	ctx.strokeStyle = '#5b7b9a'
+	ctx.lineWidth = 2
+
+	// Draw a wobbly curved arrow
+	ctx.beginPath()
+	ctx.moveTo(startX + jitter(rng, 2), startY + jitter(rng, 2))
+	const cpX = (startX + endX) / 2 + canvasWidth * 0.05
+	const cpY = (startY + endY) / 2 - canvasHeight * 0.08
+	ctx.quadraticCurveTo(
+		cpX + jitter(rng, 3),
+		cpY + jitter(rng, 3),
+		endX + jitter(rng, 2),
+		endY + jitter(rng, 2),
+	)
+	ctx.stroke()
+
+	// Arrowhead
+	const angle = Math.atan2(endY - cpY, endX - cpX)
+	const headLen = 12
+	ctx.beginPath()
+	ctx.moveTo(endX, endY)
+	ctx.lineTo(
+		endX - headLen * Math.cos(angle - 0.4) + jitter(rng, 1),
+		endY - headLen * Math.sin(angle - 0.4) + jitter(rng, 1),
+	)
+	ctx.moveTo(endX, endY)
+	ctx.lineTo(
+		endX - headLen * Math.cos(angle + 0.4) + jitter(rng, 1),
+		endY - headLen * Math.sin(angle + 0.4) + jitter(rng, 1),
+	)
+	ctx.stroke()
+
+	// "Drag me!" text at the arrow's tail
+	const fontSize = Math.min(Math.max(canvasHeight * 0.04, 16), 24)
+	ctx.font = `${fontSize}px 'Caveat', cursive`
+	ctx.fillStyle = '#5b7b9a'
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'middle'
+	ctx.globalAlpha = 0.5
+	ctx.save()
+	ctx.translate(startX, startY + fontSize * 0.8)
+	ctx.rotate(0.05 + jitter(rng, 0.02))
+	ctx.fillText('Drag me!', 0, 0)
+	ctx.restore()
 
 	ctx.restore()
 }
@@ -819,6 +949,382 @@ function drawAnnotations(
 	ctx.restore()
 }
 
+export interface BlobCluster {
+	/** Indices into the original estimates array */
+	members: number[]
+	/** Median mode (X-axis value) of this cluster */
+	medianMode: number
+}
+
+/**
+ * Detect clusters in a set of estimates using 1D gap-based splitting on mode (peak) positions.
+ * Returns 1–3 clusters. A gap must be at least `threshold` times the overall range to split.
+ */
+export function detectClusters(
+	estimates: ReadonlyArray<{ mu: number; sigma: number }>,
+	threshold = 0.4,
+): BlobCluster[] {
+	if (estimates.length === 0) return []
+	if (estimates.length === 1) {
+		const mode = Math.exp(estimates[0].mu - estimates[0].sigma ** 2)
+		return [{ members: [0], medianMode: mode }]
+	}
+
+	// Compute mode (peak X position) for each estimate
+	const indexed = estimates.map((e, i) => ({
+		index: i,
+		mode: Math.exp(e.mu - e.sigma ** 2),
+	}))
+	indexed.sort((a, b) => a.mode - b.mode)
+
+	const range = indexed[indexed.length - 1].mode - indexed[0].mode
+	if (range === 0) {
+		return [{ members: indexed.map((e) => e.index), medianMode: indexed[0].mode }]
+	}
+
+	// Find the largest gap
+	let maxGap = 0
+	let maxGapIdx = 0
+	for (let i = 1; i < indexed.length; i++) {
+		const gap = indexed[i].mode - indexed[i - 1].mode
+		if (gap > maxGap) {
+			maxGap = gap
+			maxGapIdx = i
+		}
+	}
+
+	// If the largest gap is below threshold, it's one cluster
+	if (maxGap / range < threshold) {
+		const modes = indexed.map((e) => e.mode)
+		return [{ members: indexed.map((e) => e.index), medianMode: median(modes) }]
+	}
+
+	// Split into two clusters at the largest gap
+	const left = indexed.slice(0, maxGapIdx)
+	const right = indexed.slice(maxGapIdx)
+
+	// Check if either half has a secondary large gap (→ 3 clusters)
+	const trySplit = (group: typeof indexed): typeof indexed[] => {
+		if (group.length < 2) return [group]
+		const r = group[group.length - 1].mode - group[0].mode
+		if (r === 0) return [group]
+		let mg = 0
+		let mi = 0
+		for (let i = 1; i < group.length; i++) {
+			const g = group[i].mode - group[i - 1].mode
+			if (g > mg) {
+				mg = g
+				mi = i
+			}
+		}
+		if (mg / range < threshold) return [group] // Use overall range for threshold
+		return [group.slice(0, mi), group.slice(mi)]
+	}
+
+	const parts = [...trySplit(left), ...trySplit(right)].slice(0, 3)
+	return parts.map((p) => {
+		const modes = p.map((e) => e.mode)
+		return { members: p.map((e) => e.index), medianMode: median(modes) }
+	})
+}
+
+function median(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b)
+	const mid = Math.floor(sorted.length / 2)
+	return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * Draw a sketchy lasso (wobbly dashed ellipse) around a cluster of blobs,
+ * with a small median annotation.
+ */
+function drawClusterLasso(
+	ctx: CanvasRenderingContext2D,
+	estimates: Array<{ mu: number; sigma: number }>,
+	cluster: BlobCluster,
+	canvasWidth: number,
+	canvasHeight: number,
+	color: string,
+	unit: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	if (cluster.members.length === 0) return
+
+	// Compute bounding box of cluster members' modes and peaks
+	const members = cluster.members.map((i) => estimates[i])
+	const modes = members.map((e) => Math.exp(e.mu - e.sigma ** 2))
+	const minMode = Math.min(...modes)
+	const maxMode = Math.max(...modes)
+	const peaks = members.map((e) => peakCanvasY(e.mu, e.sigma, canvasHeight, config))
+	const minPeakY = Math.min(...peaks)
+	const baselineY = canvasHeight - config.padding
+
+	const leftX = mathToCanvasX(minMode, canvasWidth, config)
+	const rightX = mathToCanvasX(maxMode, canvasWidth, config)
+	const centerX = (leftX + rightX) / 2
+	const radiusX = Math.max((rightX - leftX) / 2 + 30, 35)
+	const blobHeight = baselineY - minPeakY
+	const radiusY = Math.max(blobHeight * 0.55, 25)
+	const centerY = minPeakY + blobHeight * 0.45
+
+	const seed = Math.round(cluster.medianMode * 1000) + cluster.members.length * 4321
+	const rng = seededRng(seed)
+
+	ctx.save()
+	ctx.globalAlpha = 0.4
+	ctx.strokeStyle = color
+	ctx.lineWidth = 2
+	ctx.setLineDash([6, 4])
+
+	// Wobbly dashed ellipse
+	ctx.beginPath()
+	const steps = 40
+	for (let i = 0; i <= steps; i++) {
+		const angle = (i / steps) * Math.PI * 2
+		const x = centerX + radiusX * Math.cos(angle) + jitter(rng, 2)
+		const y = centerY + radiusY * Math.sin(angle) + jitter(rng, 2)
+		if (i === 0) ctx.moveTo(x, y)
+		else ctx.lineTo(x, y)
+	}
+	ctx.closePath()
+	ctx.stroke()
+	ctx.setLineDash([])
+
+	// Median annotation below the lasso
+	const medianSnapped = snapVerdict(cluster.medianMode, unit)
+	const fontSize = Math.min(16, Math.max(12, canvasHeight * 0.03))
+	ctx.globalAlpha = 0.6
+	ctx.font = `${fontSize}px 'Caveat', cursive`
+	ctx.fillStyle = color
+	ctx.textAlign = 'center'
+	ctx.fillText(`~${medianSnapped}`, centerX, centerY + radiusY + fontSize + 2)
+
+	ctx.restore()
+}
+
+/**
+ * Compute the overlap area between two lognormal PDFs using numerical integration.
+ * Returns a value in [0, 1] — the integral of min(f₁(x), f₂(x)) dx.
+ * 1 = identical distributions, 0 = no overlap at all.
+ */
+export function lognormalOverlap(
+	mu1: number,
+	sigma1: number,
+	mu2: number,
+	sigma2: number,
+	numSteps = 500,
+): number {
+	// Integration range: from near-zero to well beyond the larger P99
+	const lo = 0.01
+	const hi = Math.max(
+		lognormalQuantile(0.995, mu1, sigma1),
+		lognormalQuantile(0.995, mu2, sigma2),
+	)
+	const dx = (hi - lo) / numSteps
+	let sum = 0
+	for (let i = 0; i <= numSteps; i++) {
+		const x = lo + i * dx
+		sum += Math.min(lognormalPdf(x, mu1, sigma1), lognormalPdf(x, mu2, sigma2))
+	}
+	return sum * dx
+}
+
+/**
+ * Compute convergence state from individual estimates using pairwise overlap.
+ * Overlap area ∈ [0, 1]: high overlap = agreement, low = divergence.
+ * Falls back to combined P90/P10 when no individual estimates are provided.
+ */
+export function convergenceState(
+	mu: number,
+	sigma: number,
+	estimates?: ReadonlyArray<{ mu: number; sigma: number }>,
+): { overlap: number; color: string; converged: boolean } {
+	let overlap: number
+
+	if (estimates && estimates.length >= 2) {
+		// Minimum pairwise overlap — the worst pair drives the score
+		overlap = 1
+		for (let i = 0; i < estimates.length; i++) {
+			for (let j = i + 1; j < estimates.length; j++) {
+				const ov = lognormalOverlap(
+					estimates[i].mu,
+					estimates[i].sigma,
+					estimates[j].mu,
+					estimates[j].sigma,
+				)
+				overlap = Math.min(overlap, ov)
+			}
+		}
+	} else {
+		// Fallback for solo: measure self-consistency via P90/P10 ratio
+		const p10 = lognormalQuantile(0.1, mu, sigma)
+		const p90 = lognormalQuantile(0.9, mu, sigma)
+		const ratio = p10 > 0 ? p90 / p10 : 999
+		// Map ratio to a pseudo-overlap: ratio=1 → 1.0, ratio=3 → 0.5, ratio=5 → 0.25
+		overlap = Math.max(0, 1 - (ratio - 1) / 4)
+	}
+
+	if (overlap > 0.5) return { overlap, color: '#4a8c5c', converged: true } // green
+	if (overlap > 0.25) return { overlap, color: '#c49a3c', converged: false } // amber
+	return { overlap, color: '#b55a5a', converged: false } // red
+}
+
+/**
+ * Detect the estimation pattern from revealed blobs and return a human-friendly prompt.
+ */
+export function detectPattern(
+	estimates: ReadonlyArray<{ mu: number; sigma: number }>,
+	converged: boolean,
+): string {
+	if (estimates.length === 0) return ''
+	if (estimates.length === 1) return ''
+
+	const clusters = detectClusters(estimates)
+	const sigmas = estimates.map((e) => e.sigma)
+	const avgSigma = sigmas.reduce((a, b) => a + b, 0) / sigmas.length
+	const highUncertaintyThreshold = 0.8
+	const lowUncertaintyThreshold = 0.4
+
+	// Check certainty patterns (Y-axis)
+	const allUncertain = sigmas.every((s) => s > highUncertaintyThreshold)
+	const someUncertain = sigmas.some((s) => s > highUncertaintyThreshold)
+	const someCertain = sigmas.some((s) => s < lowUncertaintyThreshold)
+	const mixedCertainty = someUncertain && someCertain
+
+	if (converged) {
+		return "You're all on the same page"
+	}
+
+	// Uncertainty-based patterns override cluster patterns
+	if (allUncertain) {
+		return "Nobody's confident — what don't we know?"
+	}
+	if (mixedCertainty) {
+		return 'Someone knows something — care to share?'
+	}
+
+	// Cluster-based patterns
+	if (clusters.length >= 3) {
+		return 'All over the place — someone start talking'
+	}
+	if (clusters.length === 2) {
+		return 'Two camps — looks like you have something to talk about'
+	}
+
+	// Single cluster but not converged (moderate spread)
+	// Check for single outlier
+	if (estimates.length >= 3) {
+		const modes = estimates.map((e) => Math.exp(e.mu - e.sigma ** 2))
+		const sorted = [...modes].sort((a, b) => a - b)
+		const medianMode = sorted[Math.floor(sorted.length / 2)]
+		const deviations = modes.map((m) => Math.abs(m - medianMode))
+		const maxDev = Math.max(...deviations)
+		const avgDev = deviations.reduce((a, b) => a + b, 0) / deviations.length
+		if (maxDev > avgDev * 2.5) {
+			const outlierIdx = deviations.indexOf(maxDev)
+			const outlierMode = modes[outlierIdx]
+			if (outlierMode > medianMode) {
+				return 'Someone sees dragons here'
+			}
+			return 'Someone thinks this is a walk in the park'
+		}
+	}
+
+	return 'Close enough — or worth a chat?'
+}
+
+/**
+ * Draw a pattern prompt on the canvas — sketchy handwriting style.
+ */
+function drawPatternPrompt(
+	ctx: CanvasRenderingContext2D,
+	text: string,
+	canvasWidth: number,
+	canvasHeight: number,
+	color: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	if (!text) return
+
+	const pad = config.padding
+	const seed = 77889900
+	const rng = seededRng(seed)
+
+	const fontSize = Math.min(Math.max(canvasHeight * 0.035, 14), 20)
+	// Position in top-right to avoid overlapping annotations near the blob
+	const x = canvasWidth - pad - 10
+	const y = pad + 5
+
+	ctx.save()
+	ctx.globalAlpha = 0.6
+	ctx.font = `italic ${fontSize}px 'Caveat', cursive`
+	ctx.fillStyle = color
+	ctx.textAlign = 'right'
+	ctx.textBaseline = 'top'
+	ctx.translate(x + jitter(rng, 1), y + jitter(rng, 1))
+	ctx.rotate(jitter(rng, 0.01))
+	ctx.fillText(text, 0, 0)
+	ctx.restore()
+}
+
+/**
+ * Draw a sketchy agreement ring around the combined blob.
+ * Green = converged, amber = moderate divergence, red = high divergence.
+ */
+function drawAgreementRing(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	ringColor: string,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const mode = Math.exp(mu - sigma ** 2)
+	const centerX = mathToCanvasX(mode, canvasWidth, config)
+	const peakY = peakCanvasY(mu, sigma, canvasHeight, config)
+	const baselineY = canvasHeight - config.padding
+	const blobHeight = baselineY - peakY
+
+	// Ring sized to hug the blob: X radius from P10–P90 span, Y radius capped
+	const p10 = lognormalQuantile(0.1, mu, sigma)
+	const p90 = lognormalQuantile(0.9, mu, sigma)
+	const p10x = mathToCanvasX(p10, canvasWidth, config)
+	const p90x = mathToCanvasX(p90, canvasWidth, config)
+	const spanX = Math.abs(p90x - p10x)
+	const radiusX = Math.max(40, spanX / 2 + 15)
+	const radiusY = Math.max(30, Math.min(blobHeight * 0.55, radiusX * 1.5, 120))
+	const centerY = peakY + blobHeight * 0.4
+
+	const seed = Math.round(mu * 1000) + Math.round(sigma * 5555)
+	const rng = seededRng(seed)
+
+	ctx.save()
+	ctx.globalAlpha = 0.5
+	ctx.strokeStyle = ringColor
+	ctx.lineWidth = 3
+
+	// Draw wobbly ellipse — two passes for hand-drawn feel
+	for (let pass = 0; pass < 2; pass++) {
+		const passRng = seededRng(seed + pass * 777)
+		ctx.lineWidth = pass === 0 ? 3 : 1.5
+		ctx.globalAlpha = pass === 0 ? 0.5 : 0.3
+		ctx.beginPath()
+		const steps = 48
+		for (let i = 0; i <= steps; i++) {
+			const angle = (i / steps) * Math.PI * 2
+			const x = centerX + radiusX * Math.cos(angle) + jitter(passRng, 2)
+			const y = centerY + radiusY * Math.sin(angle) + jitter(passRng, 2)
+			if (i === 0) ctx.moveTo(x, y)
+			else ctx.lineTo(x, y)
+		}
+		ctx.closePath()
+		ctx.stroke()
+	}
+
+	ctx.restore()
+}
+
 /**
  * Draw a prominent verdict label below the combined blob.
  * Shows the snapped value (Fibonacci for points, natural units for days).
@@ -831,10 +1337,11 @@ function drawVerdict(
 	height: number,
 	unit: string,
 	config: CanvasConfig = DEFAULT_CONFIG,
+	verdictOverride: number | null = null,
 ): void {
 	const pad = config.padding
 	const median = lognormalQuantile(0.5, mu, sigma)
-	const verdict = snapVerdict(median, unit)
+	const verdict = verdictOverride != null ? verdictOverride : snapVerdict(median, unit)
 
 	const baselineY = height - pad
 	const chartHeight = baselineY - pad
@@ -905,6 +1412,9 @@ export function drawScene(
 
 	drawAxes(ctx, width, height, unit)
 
+	const hasMoved = scene.hasMoved ?? true
+	const hasEverDragged = scene.hasEverDragged ?? true
+
 	if (!selfAbstained) {
 		// Vertical dashed line at the user's current mode (peak) position
 		const mode = Math.exp(myEstimate.mu - myEstimate.sigma ** 2)
@@ -920,11 +1430,20 @@ export function drawScene(
 		ctx.setLineDash([])
 		ctx.restore()
 
-		// Draw the user's own blob
-		drawBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a', 0.5)
+		if (hasMoved) {
+			// Draw the user's committed blob
+			drawBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a', 0.5)
+		} else {
+			// Draw ghost blob — dotted outline with "?" to invite interaction
+			drawGhostBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a')
+			// Show "Drag me!" arrow for first-timers who haven't dragged in this session
+			if (!hasEverDragged && !revealed) {
+				drawDragMeArrow(ctx, myEstimate.mu, myEstimate.sigma, width, height)
+			}
+		}
 
 		// Annotations: show on own blob pre-reveal, on combined blob post-reveal
-		if (!revealed) {
+		if (!revealed && hasMoved) {
 			drawAnnotations(ctx, myEstimate.mu, myEstimate.sigma, width, height, unit)
 		}
 	} else if (!revealed) {
@@ -973,8 +1492,41 @@ export function drawScene(
 		const combined = combineEstimates(allEstimates)
 		if (combined) {
 			drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
-			drawAnnotations(ctx, combined.mu, combined.sigma, width, height, unit)
-			drawVerdict(ctx, combined.mu, combined.sigma, width, height, unit)
+
+			// Agreement ring — colour-coded by convergence
+			const conv = convergenceState(combined.mu, combined.sigma, allEstimates)
+			drawAgreementRing(ctx, combined.mu, combined.sigma, width, height, conv.color)
+
+			// Cluster lassos — visible when divergent and 2+ clusters exist
+			if (!conv.converged && allEstimates.length >= 2) {
+				const clusters = detectClusters(allEstimates)
+				if (clusters.length >= 2) {
+					for (const cluster of clusters) {
+						drawClusterLasso(ctx, allEstimates, cluster, width, height, conv.color, unit)
+					}
+				}
+			}
+
+			// Pattern prompt — tone-matched facilitation text
+			const prompt = detectPattern(allEstimates, conv.converged)
+			if (prompt) {
+				drawPatternPrompt(ctx, prompt, width, height, conv.color)
+			}
+
+			// Verdict: show only when converged or manually overridden
+			const verdictOverride = scene.verdictOverride ?? null
+			if (conv.converged || verdictOverride != null) {
+				drawVerdict(
+					ctx,
+					combined.mu,
+					combined.sigma,
+					width,
+					height,
+					unit,
+					DEFAULT_CONFIG,
+					verdictOverride,
+				)
+			}
 		}
 	}
 }

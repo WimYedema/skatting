@@ -6,7 +6,7 @@
 		hitTestBlob,
 		mathToCanvasX,
 	} from '../lib/canvas'
-	import { muFromMode } from '../lib/lognormal'
+	import { combineEstimates, lognormalQuantile, muFromMode, snapVerdict } from '../lib/lognormal'
 	import type { HistoryEntry, ImportedTicket } from '../lib/types'
 
 	interface Props {
@@ -22,11 +22,14 @@
 		onEstimateChange: (mu: number, sigma: number) => void
 		dataTour?: string
 		selfAbstained?: boolean
+		hasMoved?: boolean
+		hasEverDragged?: boolean
+		verdictOverride?: number | null
 		showAbstainButton?: boolean
 		onAbstain?: () => void
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour, selfAbstained, showAbstainButton, onAbstain }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour, selfAbstained, hasMoved, hasEverDragged, verdictOverride, showAbstainButton, onAbstain }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
@@ -40,6 +43,7 @@
 	let showTooltip = $state(false)
 
 	function handlePointerDown(e: PointerEvent) {
+		if (revealed) return
 		dragging = true
 		;(e.target as HTMLElement).setPointerCapture(e.pointerId)
 		updateEstimate(e)
@@ -67,6 +71,7 @@
 		// Check own blob first (skip if abstained — no blob to hover)
 		if (!selfAbstained && hitTestBlob(mu, sigma, px, py, width, height)) {
 			tooltipText = userName ? `${userName} (you)` : 'Mine'
+			if (revealed) tooltipText += combinedTooltipSuffix()
 			tooltipX = e.clientX - rect.left
 			tooltipY = e.clientY - rect.top
 			showTooltip = true
@@ -77,16 +82,40 @@
 		if (revealed) {
 			for (const peer of peerEstimates) {
 				if (hitTestBlob(peer.mu, peer.sigma, px, py, width, height)) {
-					tooltipText = peer.name
+					tooltipText = peer.name + combinedTooltipSuffix()
 					tooltipX = e.clientX - rect.left
 					tooltipY = e.clientY - rect.top
 					showTooltip = true
 					return
 				}
 			}
+
+			// Check combined blob outline area (outside individual blobs)
+			const selfEst = selfAbstained ? [] : [{ mu, sigma }]
+			const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
+			const combined = combineEstimates([...selfEst, ...peerEsts])
+			if (combined && hitTestBlob(combined.mu, combined.sigma, px, py, width, height)) {
+				tooltipText = 'Combined' + combinedTooltipSuffix()
+				tooltipX = e.clientX - rect.left
+				tooltipY = e.clientY - rect.top
+				showTooltip = true
+				return
+			}
 		}
 
 		showTooltip = false
+	}
+
+	function combinedTooltipSuffix(): string {
+		const selfEst = selfAbstained ? [] : [{ mu, sigma }]
+		const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
+		const combined = combineEstimates([...selfEst, ...peerEsts])
+		if (!combined) return ''
+		const median = lognormalQuantile(0.5, combined.mu, combined.sigma)
+		const p10 = lognormalQuantile(0.1, combined.mu, combined.sigma)
+		const p90 = lognormalQuantile(0.9, combined.mu, combined.sigma)
+		const fmt = (v: number) => v < 10 ? v.toFixed(1) : Math.round(v).toString()
+		return ` · ~${fmt(median)} ${unit} (80%: ${fmt(p10)}–${fmt(p90)})`
 	}
 
 	function handlePointerLeave() {
@@ -131,6 +160,9 @@
 		const h = height
 		// Read all reactive props before any early return — Svelte only tracks synchronous reads
 		const abstained = selfAbstained ?? false
+		const moved = hasMoved ?? true
+		const everDragged = hasEverDragged ?? true
+		const vOverride = verdictOverride ?? null
 
 		// Set buffer size and draw synchronously to avoid race conditions
 		// between ResizeObserver and requestAnimationFrame
@@ -146,6 +178,9 @@
 			currentTicket,
 			persistentHistory,
 			selfAbstained: abstained,
+			hasMoved: moved,
+			hasEverDragged: everDragged,
+			verdictOverride: vOverride,
 		})
 	})
 </script>
@@ -157,7 +192,7 @@
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
 		onpointerleave={handlePointerLeave}
-		style="cursor: {dragging ? 'grabbing' : 'crosshair'}; touch-action: none;"
+		style="cursor: {revealed ? 'default' : dragging ? 'grabbing' : 'crosshair'}; touch-action: none;"
 	></canvas>
 	{#if showTooltip}
 		<div class="tooltip" style="left: {tooltipX}px; top: {tooltipY - 30}px;">

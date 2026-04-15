@@ -36,6 +36,7 @@ export interface SessionState {
 	myEstimates: Map<string, { mu: number; sigma: number }>
 	abstainedTickets: Set<string>
 	hasMoved: boolean
+	hasEverDragged: boolean
 	prepMode: boolean
 	showSummary: boolean
 	/** Room code (needed for Nostr key derivation and publication) */
@@ -77,6 +78,7 @@ export function createInitialState(): SessionState {
 		myEstimates: new Map(),
 		abstainedTickets: new Set(),
 		hasMoved: false,
+		hasEverDragged: false,
 		prepMode: false,
 		showSummary: false,
 		roomCode: '',
@@ -157,6 +159,7 @@ export function handleEstimateChange(s: SessionState, mu: number, sigma: number)
 	s.mu = mu
 	s.sigma = sigma
 	s.hasMoved = true
+	s.hasEverDragged = true
 	// Dragging clears abstain — user changed their mind
 	if (s.selfAbstained) {
 		s.selfAbstained = false
@@ -230,7 +233,7 @@ export function addOrUpdateHistory(s: SessionState, entry: HistoryEntry): void {
 	}
 }
 
-export function saveRoundToHistory(s: SessionState): void {
+export function saveRoundToHistory(s: SessionState, verdictOverride: number | null = null): void {
 	const currentTicket = getCurrentTicket(s)
 	const label = currentTicket?.title || s.topic.trim() || `Item ${s.history.length + 1}`
 	const peerEsts = Array.from(s.peerEstimateMap.values())
@@ -241,11 +244,16 @@ export function saveRoundToHistory(s: SessionState): void {
 	if (s.selfAbstained && peerEsts.length === 0) return
 
 	const myEstimate = s.selfAbstained ? null : { mu: s.mu, sigma: s.sigma }
-	const verdict = myEstimate
+	let verdict = myEstimate
 		? computeVerdict(label, myEstimate, peerEsts)
 		: peerEsts.length > 0
 			? computeVerdict(label, peerEsts[0], peerEsts.slice(1))
 			: null
+
+	// Override the median if the facilitator manually called it
+	if (verdict && verdictOverride != null) {
+		verdict = { ...verdict, median: verdictOverride }
+	}
 
 	if (currentTicket && verdict) {
 		applyVerdict(currentTicket, verdict, s.unit)
@@ -267,14 +275,19 @@ export function resetRound(s: SessionState): void {
 	s.hasMoved = false
 }
 
-export function handleNext(s: SessionState, deps: SessionDeps): void {
+export function handleNext(s: SessionState, deps: SessionDeps, verdictOverride: number | null = null): void {
 	if (!s.prepMode && !s.revealed) return
 	const currentTicket = getCurrentTicket(s)
 	if (currentTicket && s.hasMoved && !s.selfAbstained) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 	}
-	saveRoundToHistory(s)
+	// Auto-abstain: if user never dragged and didn't explicitly estimate, treat as skip
+	if (currentTicket && !s.hasMoved && !s.selfAbstained) {
+		s.selfAbstained = true
+		s.abstainedTickets.add(currentTicket.id)
+	}
+	saveRoundToHistory(s, verdictOverride)
 	resetRound(s)
 	if (!s.prepMode) {
 		s.session?.sendReveal({ revealed: false })

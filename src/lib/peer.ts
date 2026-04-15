@@ -42,6 +42,20 @@ export interface PeerCallbacks {
 	onConnectionError?: (message: string) => void
 }
 
+/** Deduplicate callbacks that arrive via multiple strategies within a time window */
+function dedup<T>(fn: (data: T) => void, windowMs = 200): (data: T) => void {
+	let lastJson = ''
+	let lastTime = 0
+	return (data: T) => {
+		const json = JSON.stringify(data)
+		const now = Date.now()
+		if (json === lastJson && now - lastTime < windowMs) return
+		lastJson = json
+		lastTime = now
+		fn(data)
+	}
+}
+
 /** Send on all rooms, ignoring individual failures */
 function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>) {
 	return async (data: T) => {
@@ -139,6 +153,18 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	const unitSenders: Array<(data: UnitMessage) => Promise<void>> = []
 	const backlogSenders: Array<(data: BacklogMessage) => Promise<void>> = []
 
+	// Deduplicated receivers for messages with side effects —
+	// both Nostr and MQTT fire these, so we need to ignore the duplicate.
+	const dedupReveal = dedup((data: RevealMessage) =>
+		callbacks.onReveal(data.revealed, data.reEstimate),
+	)
+	const dedupBacklog = dedup((data: BacklogMessage) =>
+		callbacks.onBacklog?.(data.tickets, data.prepMode),
+	)
+	const dedupTopic = dedup((data: TopicMessage) =>
+		callbacks.onTopic(data.topic, data.url, data.ticketId),
+	)
+
 	for (let i = 0; i < rooms.length; i++) {
 		const room = rooms[i]
 		const strategy = i === 0 && rooms.length > 1 ? 'nostr' : i === 0 ? 'primary' : 'mqtt'
@@ -180,12 +206,12 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onEstimate((data, peerId) => {
 			callbacks.onEstimate({ peerId, mu: data.mu, sigma: data.sigma })
 		})
-		onReveal((data) => callbacks.onReveal(data.revealed, data.reEstimate))
+		onReveal((data) => dedupReveal(data))
 		onName((data, peerId) => callbacks.onName(peerId, data.name, !!data.isCreator))
-		onTopic((data) => callbacks.onTopic(data.topic, data.url, data.ticketId))
+		onTopic((data) => dedupTopic(data))
 		onReady((data, peerId) => callbacks.onReady(peerId, data.ready, data.abstained))
 		onUnit((data) => callbacks.onUnit(data.unit))
-		onBacklog((data) => callbacks.onBacklog?.(data.tickets, data.prepMode))
+		onBacklog((data) => dedupBacklog(data))
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value

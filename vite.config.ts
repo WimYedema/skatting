@@ -6,8 +6,12 @@ import { viteSingleFile } from 'vite-plugin-singlefile'
 export default defineConfig({
 	plugins: [svelte(), viteSingleFile()],
 	base: '/estimate/',
+	define: {
+		'process.env': {},
+		global: 'globalThis',
+	},
 	resolve: {
-		conditions: process.env.VITEST ? ['browser'] : [],
+		conditions: process.env.VITEST ? ['browser'] : undefined,
 	},
 	test: {
 		environment: 'jsdom',

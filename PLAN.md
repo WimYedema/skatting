@@ -8,7 +8,7 @@ Make async prep a reliable, first-class workflow — not an accident that works 
 
 ---
 
-## Phase 1 — Fix What's Broken (bugs, no new features)
+## Phase 1 — Fix What's Broken (bugs, no new features) ✅
 
 **Outcome:** The current async flow works reliably for people who've already synced once.
 
@@ -32,7 +32,7 @@ Test sequences like: import CSV → prepMode; selectTicket without moving → no
 
 ---
 
-## Phase 2 — True Async + Security (Nostr Events)
+## Phase 2 — True Async + Security (Nostr Events) ✅
 
 **Outcome:** A participant can join for the first time with the PO offline and still receive the full backlog. All persisted state is encrypted. Room codes are hard to guess.
 
@@ -156,7 +156,7 @@ UI: PO sees a list of who's done (with ticket count) in the sidebar or header, e
 
 ---
 
-## Phase 3 — High-Value UX Gaps + Component Tests
+## Phase 3 — High-Value UX Gaps + Component Tests ✅
 
 **Outcome:** Address the top friction points from the UX review. Add component-level tests for UI interactions.
 
@@ -181,7 +181,7 @@ Mock `createSession` to return fake senders. Simulate peers by calling callbacks
 
 ---
 
-## Phase 4 — Polish & Safety
+## Phase 4 — Polish & Safety ✅
 
 | # | Task | Why | Effort |
 |---|---|---|---|
@@ -189,6 +189,191 @@ Mock `createSession` to return fake senders. Simulate peers by calling callbacks
 | 4.2 | **Change unit** — creator can update unit mid-session + republish state | Locked at creation, requires new session | S |
 | 4.3 | **Re-import safety** — warn before replacing backlog, offer merge | Re-import wipes team's prep work | M |
 | 4.4 | **"Waiting for state" indicator** — spinner while querying Nostr relays on join | Brief delay before backlog appears | S |
+
+---
+
+## Phase 5 — Estimation Quality & Facilitation
+
+**Outcome:** Reduce anchoring risk in post-reveal discussions, improve facilitation flow, and eliminate remaining UX friction identified in the UX review (Poker Loyalist + Scrum Master perspectives).
+
+### 5.1 Anti-Anchoring: Lock After Reveal
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.1 | **Lock blobs after reveal** — post-reveal blobs become read-only; adjustments require a re-estimate round | Visible convergence undermines independent estimation — the Poker Loyalist and Scrum Master both flagged this as the #1 process concern | M |
+
+After reveal, pointer events on the canvas are disabled. The only way to change your estimate is through a full re-estimate round (blobs re-hide, everyone re-votes blind). This enforces the poker discipline: reveal → discuss → re-vote.
+
+### 5.2 Ghost Blob + "Drag Me" Arrow
+
+Replace the filled default blob with a **ghost blob** (dotted outline, unfilled, "?" in center) and a **sketchy hand-drawn arrow** with "Drag me!" text.
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.2a | **Ghost blob before first drag** — dotted outline, unfilled, "?" drawn in center at default canvas position. On first drag: fills solid, transitions to normal blob | The filled default blob looks like a committed estimate — users don't realise they need to act | S |
+| 5.2b | **"Drag me!" arrow** — hand-drawn wobbly arrow pointing at the ghost blob, with "Drag me!" text at the tail. Same sketchy stroke style as axis labels. Arrow points from bottom-right quadrant toward blob center | First-timers need a verb, not just a visual cue. The arrow invites action and subtly reveals the nearby 🤷 button in peripheral vision | S |
+| 5.2c | **Auto-abstain on Next** — if `!hasMoved` when clicking "Next", treat as abstain (same as "No idea 🤷") instead of saving the default position. No confirmation prompt needed — the ghost "?" already communicates "no estimate" | Eliminates accidental ghost estimates entirely. The ghost blob makes the semantics visual: unfilled = uncommitted | S |
+
+Visual vocabulary:
+- **Ghost "?" (grey dotted)** = hasn't estimated yet (passive)
+- **Filled blob (solid)** = committed estimate (active)
+- **Hatched "?" (sketchy pattern)** = actively abstained via 🤷 (deliberate skip)
+
+The "Drag me!" arrow and hint text:
+- Rendered on canvas in the same wobbly handwriting style as axis labels
+- Vanishes on first drag (for the current ticket) or on 🤷 click
+- After the user's first successful drag in the **session** (any ticket), the arrow is suppressed for all subsequent tickets (persist `hasEverDragged` flag in `$state`)
+- The hint text fades; the ghost blob "?" remains for each new unestimated ticket
+
+### 5.3 Post-Reveal Facilitation Loop
+
+A unified system that detects agreement patterns, provides visual + verbal feedback, and **withholds the verdict until convergence** — making the tool an active facilitation partner.
+
+#### Convergence Detection
+
+Use the **P90/P10 ratio** of the combined estimate (already computed for export):
+
+| Ratio | State | Meaning |
+|---|---|---|
+| < 3 | **Converged** | Team agrees — the range is narrow enough to call it |
+| ≥ 3 | **Divergent** | Range too wide — discussion needed before a verdict |
+
+#### Agreement Ring
+
+After reveal, draw a **ring around the combined blob** whose colour encodes the convergence state:
+- 🟢 **Green** — converged (P90/P10 < 3)
+- 🟡 **Amber** — moderate divergence (P90/P10 3–5)
+- 🔴 **Red** — high divergence (P90/P10 > 5)
+
+Rendered in the same sketchy stroke style. Instant, glanceable, zero cognitive load.
+
+#### Cluster Lassos
+
+When divergent (2+ clusters detected), draw a **sketchy lasso** (wobbly dashed ellipse) around each blob cluster — like someone circled groups with a marker on a whiteboard. Each lasso gets a small median annotation (~5, ~13) so the facilitator can reference "the 5-camp and the 13-camp."
+
+Cluster detection: 1D k-means on the X-axis positions (k=1,2,3), with a hysteresis threshold to prevent flickering between 1 and 2 clusters on borderline spreads.
+
+#### Pattern-Matched Prompts
+
+Canvas-rendered text in the wobbly handwriting style, positioned near the combined blob. Tone matches the existing axis labels:
+
+| Pattern | Prompt |
+|---|---|
+| Tight agreement | *"You're all on the same page"* |
+| Mild spread | *"Close enough — or worth a chat?"* |
+| Two camps | *"Two camps — looks like you have something to talk about"* |
+| Three+ camps | *"All over the place — someone start talking"* |
+| One outlier high | *"Someone sees dragons here"* |
+| One outlier low | *"Someone thinks this is a walk in the park"* |
+| Everyone uncertain (high Y) | *"Nobody's confident — what don't we know?"* |
+| Mixed certainty | *"Some sure, some guessing — what's the gap?"* |
+
+The certainty-axis patterns are unique to Skatting — poker can't detect "everyone estimated 8 but nobody's confident."
+
+Click-to-expand (optional): the facilitator can click the prompt text to see which names are in which cluster. Expansion is local (only visible to the person who clicked). Psychologically safe by default, detailed on demand.
+
+#### Deferred Verdict
+
+The key design decision: **the "call it N" verdict is withheld until convergence.**
+
+**Converged flow** (P90/P10 < 3):
+```
+Reveal → green ring → "You're all on the same page"
+       → "Call it 8" verdict appears
+       → [Next →]
+```
+
+**Divergent flow** (P90/P10 ≥ 3):
+```
+Reveal → amber/red ring → cluster lassos → pattern prompt
+       → NO verdict shown
+       → [Re-estimate ↺]  [Call it anyway…]
+```
+
+- **"Re-estimate ↺"** is the primary (prominent) action when divergent — blobs re-hide per 5.1, team re-votes blind
+- **"Call it anyway…"** is the escape hatch (secondary/muted). Opens a small Fibonacci picker so the creator can consciously override: *"We'll agree to disagree — call it…"*
+- **"Next →"** only appears once a verdict exists (via convergence or manual override)
+- The combined blob shape is still drawn during divergence (shows the mathematical average) — only the snapped verdict label is withheld
+
+This makes the tool opinionated about estimation quality. It won't give you a number until you've earned it through agreement — or until the creator deliberately overrides. The re-estimate loop becomes the natural path, not a hidden button.
+
+#### Implementation Summary
+
+| # | Task | Effort |
+|---|---|---|
+| 5.3a | **Convergence detection + agreement ring** — P90/P10 threshold, coloured ring on combined blob | S |
+| 5.3b | **Cluster detection + lassos** — 1D k-means, sketchy ellipse around each group with median label | M |
+| 5.3c | **Pattern prompts** — canvas-rendered text matched to detected pattern, click-to-expand names | S |
+| 5.3d | **Deferred verdict** — withhold "call it N" when divergent, show "Re-estimate ↺" as primary action, "Call it anyway…" as escape hatch with Fibonacci picker | M |
+
+All canvas-rendered (ring, lassos, text) via `drawScene()`. The "Call it anyway" Fibonacci picker is a small DOM popover. No architectural changes needed.
+
+### 5.4 Selective Reveal
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.4 | **Per-person reveal skip** — instead of all-or-nothing "Reveal anyway", allow skipping specific AFK participants while others continue estimating | One AFK person forces reveal for everyone, including people still actively placing blobs | M |
+
+### 5.5 Identity & Joining
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.5a | **Name picker on join** — after entering a room code, query Nostr state and show existing participant names as a selectable list. User picks their name to rejoin, or types a new name to join fresh. Shows prep progress per name (e.g. "Bob ← 8/15") and labels the creator role | Eliminates case-sensitivity issues, duplicate identities, and "who was I?" confusion. Also gives a session preview (unit, ticket count) before joining. Falls back to manual name entry if Nostr query returns nothing | M |
+| 5.5b | **Late joiner catch-up** — when joining mid-meeting, show a brief "You missed N rounds" indicator + completed tickets display verdicts in sidebar | Late joiners have no context about what happened before they arrived | M |
+
+### 5.6 Onboarding & Import
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.6a | **Conditional tour steps** — adapt spotlight tour based on current mode (skip Ready button step in prep mode, show it in meeting mode) | Tour step 2 points at non-existent Ready button when entering with a backlog | S |
+| 5.6b | **Paste-a-list import** — accept plain text (one title per line) as backlog input, alongside CSV | Teams without a CSV export face unnecessary friction | S |
+
+### 5.7 Facilitator Handoff ("The Mic")
+
+A lightweight facilitation model using a 🎤 metaphor — no roles UI, no permissions matrix.
+
+| # | Task | Why | Effort |
+|---|---|---|---|
+| 5.7a | **"Hand off 🎤" action** — creator clicks a participant's name in the strip → "Give 🎤". That person gains navigation controls (select ticket, Next, Re-estimate ↺, Call it anyway). Creator retains backlog management (import, unit, start meeting, back to prep). Both see the 🎤 indicator next to the holder's name | SM can facilitate without being the session creator. One click, no role system, no setup | S |
+| 5.7b | **Mic-drop on disconnect** — when the 🎤 holder disconnects, navigation opens to everyone. Toast: *"[Name] dropped the mic 🎤 — grab it?"*. First person to navigate (click ticket, Next, etc.) claims the 🎤. If nobody claims within ~10s, stays open (anyone can navigate) | Facilitator disconnect shouldn't freeze the meeting | S |
+| 5.7c | **Creator reclaim on rejoin** — if the creator rejoins (via 5.5a name picker), they automatically reclaim creator permissions. If someone else holds the 🎤, the creator can take it back or leave it | Creator disconnect + rejoin should restore the session cleanly | S |
+
+**Facilitator lifecycle:**
+```
+Session start
+  → Creator holds 🎤 (default)
+
+Creator clicks participant → "Hand off 🎤"
+  → That person holds 🎤 (navigate, Next, Re-estimate, Call it anyway)
+  → Creator keeps backlog management (import, unit, start meeting)
+
+🎤 holder disconnects
+  → "Bob dropped the mic 🎤 — grab it?"
+  → First to navigate claims 🎤
+  → If nobody claims in ~10s → stays open (anyone can navigate)
+
+Creator disconnects
+  → Same mic-drop mechanic
+  → Backlog management locks (no import/unit changes possible)
+  → Creator rejoins via name picker → reclaims creator + 🎤
+```
+
+**What's gated where:**
+
+| Action | Creator only | 🎤 holder | Anyone |
+|---|---|---|---|
+| Import CSV / paste-a-list | ✓ | | |
+| Change unit | ✓ | | |
+| Start meeting / Back to prep | ✓ | | |
+| Select ticket in sidebar | | ✓ | |
+| Next → | | ✓ | |
+| Re-estimate ↺ | | ✓ | |
+| Call it anyway… | | ✓ | |
+| Reveal anyway | | | ✓ |
+| Place/drag own blob | | | ✓ |
+| Ready ✓ / No idea 🤷 | | | ✓ |
+
+Downgraded from L to **3×S** — it's removing `isCreator` guards from navigation buttons and adding a `micHolder` state field + one "Hand off" action. No new roles concept, no permissions UI.
 
 ---
 
@@ -220,16 +405,23 @@ E2E / multi-peer browser tests (Playwright) deferred — revisit once the state 
 ## Sequencing
 
 ```
-Phase 1 (bugs + state machine)   ████░░  ~2 days
-Phase 2 (async + security)       ██████████░░  ~4 days
-Phase 3 (UX gaps + component tests)  ████████░░  ~4 days — start after Phase 1
-Phase 4 (polish)                 ████░░  ~2 days
+Phase 1 (bugs + state machine)          ████░░  ✅ done
+Phase 2 (async + security)              ██████████░░  ✅ done
+Phase 3 (UX gaps + component tests)     ████████░░  ✅ done
+Phase 4 (polish)                        ████░░  ✅ done
+Phase 5 (estimation quality + facilit.) ██████████░░  ~4 days
 ```
 
-Phase 1 first — bug fixes + extract state machine + write state tests. This is the foundation.
-Phase 2 is the big investment — async + security together.
-Phase 3 can start after Phase 1, in parallel with Phase 2. Component tests validate the UX gap implementations.
-Phase 4 is discretionary.
+Phase 5 ordering within the phase:
+1. **5.1** (lock blobs after reveal) — foundation for the rest; changes post-reveal interaction model
+2. **5.2a+5.2b+5.2c** (ghost blob + drag-me arrow + auto-abstain) — pre-reveal UX, independent of 5.1
+3. **5.3a+5.3b** (convergence ring + cluster lassos) — post-reveal visuals, builds on 5.1
+4. **5.3c** (pattern prompts) — layered on top of 5.3a/b
+5. **5.3d** (deferred verdict + "call it anyway") — the behaviour change, builds on 5.3a
+6. **5.4** (selective reveal) — independent, touches reveal logic
+7. **5.5a+5.5b** (identity + joining) — independent pair
+8. **5.6a+5.6b** (onboarding + import) — independent pair
+9. **5.7a+5.7b+5.7c** (facilitator handoff) — lightweight, depends on 5.5a for rejoin reclaim
 
 ---
 

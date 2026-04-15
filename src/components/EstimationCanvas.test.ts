@@ -120,4 +120,17 @@ describe('EstimationCanvas', () => {
 		expect(mu).toBeGreaterThan(0)
 		expect(sigma).toBeGreaterThan(0)
 	})
+
+	it('shows default cursor and ignores pointerdown when revealed', async () => {
+		const props = { ...defaultProps(), revealed: true }
+		render(EstimationCanvas, { props })
+		const canvas = document.querySelector('canvas')!
+		expect(canvas.style.cursor).toBe('default')
+		await fireEvent.pointerDown(canvas, {
+			clientX: 400,
+			clientY: 250,
+			pointerId: 1,
+		})
+		expect(props.onEstimateChange).not.toHaveBeenCalled()
+	})
 })
