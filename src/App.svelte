@@ -4,6 +4,7 @@
 	import Onboarding from './components/Onboarding.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
+	import type { ImportedTicket } from './lib/types'
 	import {
 		generateSessionKeys,
 		publishRoomState,
@@ -28,6 +29,7 @@
 		handleNext,
 		selectTicket,
 		processBacklogImport,
+		mergeBacklogImport,
 		handleReorder,
 		handleRemove,
 		startMeeting,
@@ -46,6 +48,7 @@
 
 	const ONBOARDING_KEY = 'estimate-onboarded'
 	let showOnboarding = $state(false)
+	let pendingImport = $state<ImportedTicket[] | null>(null)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -110,9 +113,24 @@
 		reader.onload = () => {
 			const text = reader.result as string
 			const tickets = parseCsv(text)
-			processBacklogImport(s, deps, tickets)
+			if (tickets.length === 0) return
+			if (s.backlog.length > 0) {
+				pendingImport = tickets
+			} else {
+				processBacklogImport(s, deps, tickets)
+			}
 		}
 		reader.readAsText(file)
+	}
+
+	function handleImportReplace() {
+		if (pendingImport) processBacklogImport(s, deps, pendingImport)
+		pendingImport = null
+	}
+
+	function handleImportMerge() {
+		if (pendingImport) mergeBacklogImport(s, deps, pendingImport)
+		pendingImport = null
 	}
 
 	function handleExportCsv() {
@@ -183,7 +201,7 @@
 				{/if}
 			</div>
 			<div class="header-center">
-				{#if s.isCreator && s.backlog.length === 0}
+				{#if s.isCreator}
 					<label class="import-label">
 						<input
 							type="file"
@@ -192,6 +210,7 @@
 							onchange={(e) => {
 								const file = (e.target as HTMLInputElement).files?.[0]
 								if (file) handleBacklogImport(file)
+								;(e.target as HTMLInputElement).value = ''
 							}}
 						/>
 						📋 Import CSV
@@ -336,6 +355,19 @@
 	{/if}
 	{#if showOnboarding}
 		<Onboarding userName={s.userName} onDismiss={dismissOnboarding} />
+	{/if}
+	{#if pendingImport}
+		<div class="summary-overlay" role="dialog" aria-label="Import backlog">
+			<div class="import-confirm">
+				<h2>You already have a backlog</h2>
+				<p>{s.backlog.length} tickets loaded — importing {pendingImport.length} new ones.</p>
+				<div class="import-actions">
+					<button class="primary" onclick={handleImportMerge}>Merge (add new)</button>
+					<button class="danger" onclick={handleImportReplace}>Replace all</button>
+					<button class="secondary" onclick={() => (pendingImport = null)}>Cancel</button>
+				</div>
+			</div>
+		</div>
 	{/if}
 {/if}
 
@@ -848,5 +880,58 @@
 
 	.summary-close:hover {
 		background: rgba(160, 150, 130, 0.4);
+	}
+
+	.import-confirm {
+		background: #f0e8d8;
+		border: 1px dashed #b0a890;
+		border-radius: 6px;
+		padding: 24px 32px;
+		max-width: 400px;
+		font-family: 'Caveat', cursive;
+		text-align: center;
+	}
+
+	.import-confirm h2 {
+		margin: 0 0 8px;
+		font-size: 1.4rem;
+		color: #3a3530;
+	}
+
+	.import-confirm p {
+		margin: 0 0 16px;
+		font-size: 1.1rem;
+		color: #6a6050;
+	}
+
+	.import-actions {
+		display: flex;
+		gap: 10px;
+		justify-content: center;
+	}
+
+	.import-actions button {
+		font-family: 'Caveat', cursive;
+		font-size: 1.1rem;
+		padding: 6px 16px;
+		border-radius: 4px;
+		border: 1px dashed #b0a890;
+		cursor: pointer;
+	}
+
+	.import-actions .primary {
+		background: rgba(91, 123, 154, 0.25);
+		color: #3a3530;
+	}
+
+	.import-actions .danger {
+		background: rgba(180, 80, 60, 0.2);
+		color: #8a3020;
+		border-color: rgba(180, 80, 60, 0.4);
+	}
+
+	.import-actions .secondary {
+		background: rgba(160, 150, 130, 0.2);
+		color: #6a6050;
 	}
 </style>

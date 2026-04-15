@@ -373,6 +373,21 @@ export function processBacklogImport(
 	publishState(s, deps)
 }
 
+export function mergeBacklogImport(
+	s: SessionState,
+	deps: SessionDeps,
+	tickets: ImportedTicket[],
+): void {
+	if (tickets.length === 0) return
+	const existingIds = new Set(s.backlog.map((t) => t.id))
+	const newTickets = tickets.filter((t) => !existingIds.has(t.id))
+	if (newTickets.length === 0) return
+	s.backlog = [...s.backlog, ...newTickets.map((t) => ({ ...t }))]
+	if (s.storage) s.storage.saveBacklog(s.backlog)
+	s.session?.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
+	publishState(s, deps)
+}
+
 export function handleReorder(
 	s: SessionState,
 	deps: SessionDeps,

@@ -32,6 +32,7 @@ import {
 	returnToPrep,
 	reEstimate,
 	changeUnit,
+	mergeBacklogImport,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -1716,5 +1717,67 @@ describe('changeUnit', () => {
 
 		expect(s.unit).toBe('points')
 		expect(s.session!.sendUnit).not.toHaveBeenCalled()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// mergeBacklogImport
+// ---------------------------------------------------------------------------
+
+describe('mergeBacklogImport', () => {
+	it('appends new tickets, skipping duplicates by id', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s) // T1, T2, T3
+		const d = mockDeps()
+
+		mergeBacklogImport(s, d, [
+			{ id: 'T2', title: 'Duplicate' },
+			{ id: 'T4', title: 'New one' },
+		])
+
+		expect(s.backlog).toHaveLength(4)
+		expect(s.backlog[3].id).toBe('T4')
+		expect(s.backlog[3].title).toBe('New one')
+		// T2 unchanged
+		expect(s.backlog[1].title).toBe('Ticket 2')
+	})
+
+	it('does nothing when all tickets are duplicates', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		const d = mockDeps()
+
+		mergeBacklogImport(s, d, [{ id: 'T1', title: 'Dup' }])
+
+		expect(s.backlog).toHaveLength(3)
+		expect(s.session!.sendBacklog).not.toHaveBeenCalled()
+	})
+
+	it('broadcasts merged backlog to peers', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		const d = mockDeps()
+
+		mergeBacklogImport(s, d, [{ id: 'T4', title: 'New' }])
+
+		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
+			tickets: s.backlog,
+			prepMode: s.prepMode,
+		})
+	})
+
+	it('preserves backlogIndex on merge', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.backlogIndex = 1
+		const d = mockDeps()
+
+		mergeBacklogImport(s, d, [{ id: 'T4', title: 'New' }])
+
+		expect(s.backlogIndex).toBe(1)
 	})
 })
