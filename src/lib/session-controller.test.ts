@@ -1040,6 +1040,26 @@ describe('createPeerCallbacks', () => {
 		expect(s.backlogIndex).toBe(1)
 	})
 
+	it('onTopic resets round state when switching tickets', () => {
+		withBacklog(s)
+		s.revealed = true
+		s.selfReady = true
+		s.readyPeers = new Set(['p1'])
+		callbacks.onTopic('', undefined, 'T2')
+		expect(s.backlogIndex).toBe(1)
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+	})
+
+	it('onTopic restores saved blob position', () => {
+		withBacklog(s)
+		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
+		callbacks.onTopic('', undefined, 'T2')
+		expect(s.mu).toBe(4.0)
+		expect(s.sigma).toBe(0.3)
+	})
+
 	it('onTopic sets topic text', () => {
 		callbacks.onTopic('Sprint 1', 'https://example.com', undefined)
 		expect(s.topic).toBe('Sprint 1')
@@ -1613,5 +1633,57 @@ describe('onReveal with reEstimate flag', () => {
 
 		expect(s.revealed).toBe(false)
 		expect(s.selfReady).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// revisit verdict overwrite
+// ---------------------------------------------------------------------------
+
+describe('revisit verdict overwrite', () => {
+	it('re-estimating a completed ticket overwrites the verdict', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.hasMoved = true
+		s.mu = 2.0
+		s.sigma = 0.4
+
+		// First estimation round — save verdict for T1
+		saveRoundToHistory(s)
+		expect(s.backlog[0].median).toBeDefined()
+		const oldMedian = s.backlog[0].median!
+		expect(s.history).toHaveLength(1)
+
+		// Navigate to T2, then back to T1 for re-estimation
+		selectTicket(s, 1, true)
+		selectTicket(s, 0, true)
+
+		// Re-estimate T1 with different values
+		s.mu = 4.0
+		s.sigma = 0.3
+		s.hasMoved = true
+		saveRoundToHistory(s)
+
+		// Verdict should be overwritten, not duplicated
+		expect(s.history).toHaveLength(1)
+		expect(s.backlog[0].median).toBeDefined()
+		expect(s.backlog[0].median).not.toBe(oldMedian)
+	})
+
+	it('selectTicket saves current verdict before switching', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.hasMoved = true
+		s.mu = 3.0
+		s.sigma = 0.5
+
+		selectTicket(s, 1) // should save T1 verdict before switching
+
+		expect(s.backlog[0].median).toBeDefined()
+		expect(s.backlogIndex).toBe(1)
 	})
 })

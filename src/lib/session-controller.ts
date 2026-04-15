@@ -540,7 +540,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		onTopic(newTopic: string, url?: string, ticketId?: string) {
 			if (ticketId && s.backlog.length > 0) {
 				const idx = s.backlog.findIndex((t) => t.id === ticketId)
-				if (idx >= 0) s.backlogIndex = idx
+				if (idx >= 0) selectTicket(s, idx, true)
 			}
 			if (newTopic) {
 				s.topic = newTopic
