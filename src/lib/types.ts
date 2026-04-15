@@ -30,6 +30,7 @@ export type TopicMessage = {
 
 export type ReadyMessage = {
 	ready: boolean
+	abstained?: boolean
 }
 
 export type UnitMessage = {
@@ -71,6 +72,7 @@ export interface SceneState {
 	unit: string
 	currentTicket?: ImportedTicket
 	persistentHistory: HistoryEntry[]
+	selfAbstained?: boolean
 }
 
 /** Muted colors assigned to peers — like colored pencils on paper */

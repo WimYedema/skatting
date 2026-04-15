@@ -22,6 +22,7 @@
 		getAllReady,
 		handleEstimateChange,
 		handleDone,
+		handleAbstain,
 		handleTopicChange,
 		handleForceReveal,
 		handleNext,
@@ -82,12 +83,14 @@
 	let currentTicket = $derived(getCurrentTicket(s))
 	let estimatedCount = $derived(getEstimatedCount(s))
 	let peerEstimates = $derived(
-		Array.from(s.peerEstimateMap.values()).map((pe) => ({
-			mu: pe.mu,
-			sigma: pe.sigma,
-			color: getPeerColor(pe.peerId, s.peerIds),
-			name: s.peerNames.get(pe.peerId) ?? 'Peer',
-		})),
+		Array.from(s.peerEstimateMap.values())
+			.filter((pe) => !s.abstainedPeers.has(pe.peerId))
+			.map((pe) => ({
+				mu: pe.mu,
+				sigma: pe.sigma,
+				color: getPeerColor(pe.peerId, s.peerIds),
+				name: s.peerNames.get(pe.peerId) ?? 'Peer',
+			})),
 	)
 	let allParticipants = $derived(getAllParticipants(s, selfId))
 	let readyCount = $derived(getReadyCount(s, selfId))
@@ -223,7 +226,7 @@
 		<div class="participants">
 			<div class="participant" class:is-ready={s.selfReady}>
 				<span class="ready-dot" class:ready={s.selfReady}></span>
-				<span class="name">{s.userName} (you){#if s.isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+				<span class="name">{s.userName} (you){#if s.selfAbstained} <span class="abstain-tag">🤷</span>{/if}{#if s.isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 			</div>
 			{#each s.peerIds as peerId}
 				<div class="participant" class:is-ready={s.readyPeers.has(peerId)}>
@@ -232,7 +235,7 @@
 						class:ready={s.readyPeers.has(peerId)}
 						style="--peer-color: {getPeerColor(peerId, s.peerIds)}"
 					></span>
-					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 				</div>
 			{/each}
 			<span class="ready-count">{readyCount}/{allParticipants.length} ready</span>
@@ -259,6 +262,9 @@
 			{currentTicket}
 			onEstimateChange={(mu, sigma) => handleEstimateChange(s, mu, sigma)}
 			dataTour="canvas"
+			selfAbstained={s.selfAbstained}
+			showAbstainButton={!s.selfReady && !s.revealed}
+			onAbstain={() => handleAbstain(s)}
 		/>
 
 		{#if s.backlog.length > 0}
@@ -612,6 +618,10 @@
 		font-size: 0.85em;
 		color: #8a7a60;
 		font-style: italic;
+	}
+
+	.abstain-tag {
+		font-size: 0.85em;
 	}
 
 	.next {

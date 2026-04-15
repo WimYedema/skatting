@@ -885,7 +885,7 @@ export function drawScene(
 	height: number,
 	scene: SceneState,
 ): void {
-	const { myEstimate, peerEstimates, revealed, history, unit, currentTicket, persistentHistory } =
+	const { myEstimate, peerEstimates, revealed, history, unit, currentTicket, persistentHistory, selfAbstained } =
 		scene
 
 	ctx.clearRect(0, 0, width, height)
@@ -905,26 +905,58 @@ export function drawScene(
 
 	drawAxes(ctx, width, height, unit)
 
-	// Vertical dashed line at the user's current mode (peak) position
-	const mode = Math.exp(myEstimate.mu - myEstimate.sigma ** 2)
-	const modeCx = mathToCanvasX(mode, width)
-	ctx.save()
-	ctx.strokeStyle = 'rgba(91, 123, 154, 0.4)'
-	ctx.lineWidth = 1.5
-	ctx.setLineDash([6, 6])
-	ctx.beginPath()
-	ctx.moveTo(modeCx + 0.5, DEFAULT_CONFIG.padding)
-	ctx.lineTo(modeCx - 0.5, height - DEFAULT_CONFIG.padding)
-	ctx.stroke()
-	ctx.setLineDash([])
-	ctx.restore()
+	if (!selfAbstained) {
+		// Vertical dashed line at the user's current mode (peak) position
+		const mode = Math.exp(myEstimate.mu - myEstimate.sigma ** 2)
+		const modeCx = mathToCanvasX(mode, width)
+		ctx.save()
+		ctx.strokeStyle = 'rgba(91, 123, 154, 0.4)'
+		ctx.lineWidth = 1.5
+		ctx.setLineDash([6, 6])
+		ctx.beginPath()
+		ctx.moveTo(modeCx + 0.5, DEFAULT_CONFIG.padding)
+		ctx.lineTo(modeCx - 0.5, height - DEFAULT_CONFIG.padding)
+		ctx.stroke()
+		ctx.setLineDash([])
+		ctx.restore()
 
-	// Always draw the user's own blob
-	drawBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a', 0.5)
+		// Draw the user's own blob
+		drawBlob(ctx, myEstimate.mu, myEstimate.sigma, width, height, '#5b7b9a', 0.5)
 
-	// Annotations: show on own blob pre-reveal, on combined blob post-reveal
-	if (!revealed) {
-		drawAnnotations(ctx, myEstimate.mu, myEstimate.sigma, width, height, unit)
+		// Annotations: show on own blob pre-reveal, on combined blob post-reveal
+		if (!revealed) {
+			drawAnnotations(ctx, myEstimate.mu, myEstimate.sigma, width, height, unit)
+		}
+	} else if (!revealed) {
+		// Draw a big sketchy "?" when user has no idea — same hatched style as blobs
+		const fontSize = Math.min(height * 0.45, 200)
+		const color = '#5b7b9a'
+		ctx.save()
+		ctx.font = `${fontSize}px 'Caveat', cursive`
+		ctx.textAlign = 'center'
+		ctx.textBaseline = 'middle'
+		ctx.translate(width / 2, height / 2)
+		ctx.rotate(-0.05)
+
+		// Hatched fill
+		ctx.globalAlpha = 0.35
+		const pattern = createHatchPattern(ctx, color, 5, 1.5)
+		if (pattern) {
+			ctx.fillStyle = pattern
+		} else {
+			ctx.fillStyle = color
+		}
+		ctx.fillText('?', 0, 0)
+
+		// Sketchy double-stroke outline
+		ctx.globalAlpha = 0.4
+		ctx.strokeStyle = color
+		ctx.lineWidth = 1.5
+		ctx.strokeText('?', 0.5, 0.5)
+		ctx.lineWidth = 1
+		ctx.strokeText('?', -0.5, -0.5)
+
+		ctx.restore()
 	}
 
 	// Draw peer blobs only when revealed
@@ -933,9 +965,9 @@ export function drawScene(
 			drawBlob(ctx, peer.mu, peer.sigma, width, height, peer.color)
 		}
 
-		// Draw combined estimate from all participants
+		// Draw combined estimate from all participants (self excluded if abstained)
 		const allEstimates = [
-			{ mu: myEstimate.mu, sigma: myEstimate.sigma },
+			...(selfAbstained ? [] : [{ mu: myEstimate.mu, sigma: myEstimate.sigma }]),
 			...peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma })),
 		]
 		const combined = combineEstimates(allEstimates)

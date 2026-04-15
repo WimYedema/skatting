@@ -36,7 +36,7 @@ export interface PeerCallbacks {
 	onReveal: (revealed: boolean) => void
 	onName: (peerId: string, name: string, isCreator: boolean) => void
 	onTopic: (topic: string, url?: string, ticketId?: string) => void
-	onReady: (peerId: string, ready: boolean) => void
+	onReady: (peerId: string, ready: boolean, abstained?: boolean) => void
 	onUnit: (unit: string) => void
 	onBacklog?: (tickets: ImportedTicket[], prepMode?: boolean) => void
 	onConnectionError?: (message: string) => void
@@ -183,7 +183,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onReveal((data) => callbacks.onReveal(data.revealed))
 		onName((data, peerId) => callbacks.onName(peerId, data.name, !!data.isCreator))
 		onTopic((data) => callbacks.onTopic(data.topic, data.url, data.ticketId))
-		onReady((data, peerId) => callbacks.onReady(peerId, data.ready))
+		onReady((data, peerId) => callbacks.onReady(peerId, data.ready, data.abstained))
 		onUnit((data) => callbacks.onUnit(data.unit))
 		onBacklog((data) => callbacks.onBacklog?.(data.tickets, data.prepMode))
 	}

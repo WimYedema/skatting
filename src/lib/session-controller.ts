@@ -21,7 +21,10 @@ export interface SessionState {
 	peerNames: Map<string, string>
 	creatorPeerId: string | null
 	readyPeers: Set<string>
+	abstainedPeers: Set<string>
 	selfReady: boolean
+	selfAbstained: boolean
+	selfAbstained: boolean
 	history: HistoryEntry[]
 	persistentHistory: HistoryEntry[]
 	showPersistentHistory: boolean
@@ -31,6 +34,7 @@ export interface SessionState {
 	backlog: EstimatedTicket[]
 	backlogIndex: number
 	myEstimates: Map<string, { mu: number; sigma: number }>
+	abstainedTickets: Set<string>
 	hasMoved: boolean
 	prepMode: boolean
 	showSummary: boolean
@@ -59,7 +63,9 @@ export function createInitialState(): SessionState {
 		peerNames: new Map(),
 		creatorPeerId: null,
 		readyPeers: new Set(),
+		abstainedPeers: new Set(),
 		selfReady: false,
+		selfAbstained: false,
 		history: [],
 		persistentHistory: [],
 		showPersistentHistory: true,
@@ -69,6 +75,7 @@ export function createInitialState(): SessionState {
 		backlog: [],
 		backlogIndex: -1,
 		myEstimates: new Map(),
+		abstainedTickets: new Set(),
 		hasMoved: false,
 		prepMode: false,
 		showSummary: false,
@@ -150,6 +157,12 @@ export function handleEstimateChange(s: SessionState, mu: number, sigma: number)
 	s.mu = mu
 	s.sigma = sigma
 	s.hasMoved = true
+	// Dragging clears abstain — user changed their mind
+	if (s.selfAbstained) {
+		s.selfAbstained = false
+		const ticket = getCurrentTicket(s)
+		if (ticket) s.abstainedTickets.delete(ticket.id)
+	}
 	if (!s.prepMode) {
 		s.session?.sendEstimate({ mu, sigma })
 	}
@@ -159,6 +172,15 @@ export function handleDone(s: SessionState): void {
 	if (s.selfReady) return
 	s.selfReady = true
 	s.session?.sendReady({ ready: true })
+}
+
+export function handleAbstain(s: SessionState): void {
+	if (s.selfReady) return
+	s.selfReady = true
+	s.selfAbstained = true
+	const ticket = getCurrentTicket(s)
+	if (ticket) s.abstainedTickets.add(ticket.id)
+	s.session?.sendReady({ ready: true, abstained: true })
 }
 
 export function persistSession(s: SessionState, deps: SessionDeps): void {
@@ -211,11 +233,19 @@ export function addOrUpdateHistory(s: SessionState, entry: HistoryEntry): void {
 export function saveRoundToHistory(s: SessionState): void {
 	const currentTicket = getCurrentTicket(s)
 	const label = currentTicket?.title || s.topic.trim() || `Item ${s.history.length + 1}`
-	const peerEsts = Array.from(s.peerEstimateMap.values()).map((pe) => ({
-		mu: pe.mu,
-		sigma: pe.sigma,
-	}))
-	const verdict = computeVerdict(label, { mu: s.mu, sigma: s.sigma }, peerEsts)
+	const peerEsts = Array.from(s.peerEstimateMap.values())
+		.filter((pe) => !s.abstainedPeers.has(pe.peerId))
+		.map((pe) => ({ mu: pe.mu, sigma: pe.sigma }))
+
+	// If self abstained and no non-abstained peers, skip verdict entirely
+	if (s.selfAbstained && peerEsts.length === 0) return
+
+	const myEstimate = s.selfAbstained ? null : { mu: s.mu, sigma: s.sigma }
+	const verdict = myEstimate
+		? computeVerdict(label, myEstimate, peerEsts)
+		: peerEsts.length > 0
+			? computeVerdict(label, peerEsts[0], peerEsts.slice(1))
+			: null
 
 	if (currentTicket && verdict) {
 		applyVerdict(currentTicket, verdict, s.unit)
@@ -228,7 +258,9 @@ export function saveRoundToHistory(s: SessionState): void {
 export function resetRound(s: SessionState): void {
 	s.revealed = false
 	s.selfReady = false
+	s.selfAbstained = false
 	s.readyPeers = new Set()
+	s.abstainedPeers = new Set()
 	s.peerEstimateMap = new Map()
 	s.mu = 2.0
 	s.sigma = 0.6
@@ -238,7 +270,7 @@ export function resetRound(s: SessionState): void {
 export function handleNext(s: SessionState, deps: SessionDeps): void {
 	if (!s.prepMode && !s.revealed) return
 	const currentTicket = getCurrentTicket(s)
-	if (currentTicket && s.hasMoved) {
+	if (currentTicket && s.hasMoved && !s.selfAbstained) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 	}
@@ -269,7 +301,7 @@ export function selectTicket(s: SessionState, index: number, skipSave = false): 
 	if (index < 0 || index >= s.backlog.length) return
 
 	const currentTicket = getCurrentTicket(s)
-	if (!skipSave && currentTicket && s.hasMoved) {
+	if (!skipSave && currentTicket && s.hasMoved && !s.selfAbstained) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 		saveRoundToHistory(s)
@@ -277,32 +309,44 @@ export function selectTicket(s: SessionState, index: number, skipSave = false): 
 
 	s.revealed = false
 	s.selfReady = false
+	s.selfAbstained = false
 	s.readyPeers = new Set()
+	s.abstainedPeers = new Set()
 	s.peerEstimateMap = new Map()
 
 	s.backlogIndex = index
 	const ticket = s.backlog[index]
 
-	const saved = s.myEstimates.get(ticket.id)
-	if (saved) {
-		s.mu = saved.mu
-		s.sigma = saved.sigma
-		s.hasMoved = true
-	} else if (s.storage) {
-		const stored = s.storage.getPreEstimates()
-		const pre = stored.get(ticket.id)
-		if (pre) {
-			s.mu = pre.mu
-			s.sigma = pre.sigma
-			s.myEstimates.set(ticket.id, pre)
+	// Restore abstain state for this ticket
+	if (s.abstainedTickets.has(ticket.id)) {
+		s.selfAbstained = true
+		s.mu = 2.0
+		s.sigma = 0.6
+		s.hasMoved = false
+	} else {
+		const saved = s.myEstimates.get(ticket.id)
+		if (saved) {
+			s.mu = saved.mu
+			s.sigma = saved.sigma
 			s.hasMoved = true
+		} else if (s.storage) {
+			const stored = s.storage.getPreEstimates()
+			const pre = stored.get(ticket.id)
+			if (pre) {
+				s.mu = pre.mu
+				s.sigma = pre.sigma
+				s.myEstimates.set(ticket.id, pre)
+				s.hasMoved = true
+			} else {
+				s.mu = 2.0
+				s.sigma = 0.6
+				s.hasMoved = false
+			}
 		} else {
 			s.mu = 2.0
 			s.sigma = 0.6
+			s.hasMoved = false
 		}
-	} else {
-		s.mu = 2.0
-		s.sigma = 0.6
 	}
 
 	if (!s.prepMode) {
@@ -438,7 +482,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				})
 			}
 			if (s.selfReady) {
-				s.session?.sendReady({ ready: true })
+				s.session?.sendReady({ ready: true, abstained: s.selfAbstained || undefined })
 			}
 		},
 		onPeerLeave(peerId: string) {
@@ -452,6 +496,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			const rp = new Set(s.readyPeers)
 			rp.delete(peerId)
 			s.readyPeers = rp
+			const ap = new Set(s.abstainedPeers)
+			ap.delete(peerId)
+			s.abstainedPeers = ap
 		},
 		onEstimate(estimate: PeerEstimate) {
 			s.peerEstimateMap = new Map(s.peerEstimateMap).set(estimate.peerId, estimate)
@@ -478,13 +525,19 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.topicUrl = url ?? ''
 			}
 		},
-		onReady(peerId: string, ready: boolean) {
+		onReady(peerId: string, ready: boolean, abstained?: boolean) {
 			if (ready) {
 				s.readyPeers = new Set(s.readyPeers).add(peerId)
+				if (abstained) {
+					s.abstainedPeers = new Set(s.abstainedPeers).add(peerId)
+				}
 			} else {
 				const rp = new Set(s.readyPeers)
 				rp.delete(peerId)
 				s.readyPeers = rp
+				const ap = new Set(s.abstainedPeers)
+				ap.delete(peerId)
+				s.abstainedPeers = ap
 			}
 		},
 		onUnit(peerUnit: string) {

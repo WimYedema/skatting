@@ -21,9 +21,12 @@
 		currentTicket?: ImportedTicket
 		onEstimateChange: (mu: number, sigma: number) => void
 		dataTour?: string
+		selfAbstained?: boolean
+		showAbstainButton?: boolean
+		onAbstain?: () => void
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour, selfAbstained, showAbstainButton, onAbstain }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
@@ -61,8 +64,8 @@
 		const px = ((e.clientX - rect.left) / rect.width) * width
 		const py = ((e.clientY - rect.top) / rect.height) * height
 
-		// Check own blob first
-		if (hitTestBlob(mu, sigma, px, py, width, height)) {
+		// Check own blob first (skip if abstained — no blob to hover)
+		if (!selfAbstained && hitTestBlob(mu, sigma, px, py, width, height)) {
 			tooltipText = userName ? `${userName} (you)` : 'Mine'
 			tooltipX = e.clientX - rect.left
 			tooltipY = e.clientY - rect.top
@@ -126,6 +129,8 @@
 
 		const w = width
 		const h = height
+		// Read all reactive props before any early return — Svelte only tracks synchronous reads
+		const abstained = selfAbstained ?? false
 
 		// Set buffer size and draw synchronously to avoid race conditions
 		// between ResizeObserver and requestAnimationFrame
@@ -140,6 +145,7 @@
 			unit,
 			currentTicket,
 			persistentHistory,
+			selfAbstained: abstained,
 		})
 	})
 </script>
@@ -157,6 +163,9 @@
 		<div class="tooltip" style="left: {tooltipX}px; top: {tooltipY - 30}px;">
 			{tooltipText}
 		</div>
+	{/if}
+	{#if showAbstainButton && !selfAbstained}
+		<button class="no-idea-btn" onclick={() => onAbstain?.()}>No idea 🤷</button>
 	{/if}
 </div>
 
@@ -189,5 +198,28 @@
 		padding: 2px 8px;
 		white-space: nowrap;
 		transform: translateX(-50%);
+	}
+
+	.no-idea-btn {
+		position: absolute;
+		bottom: 16px;
+		right: 16px;
+		padding: 8px 18px;
+		border: 1.5px dashed #c0b89a;
+		border-radius: 3px;
+		background: rgba(245, 240, 230, 0.7);
+		color: #8a8070;
+		font-family: 'Caveat', cursive;
+		font-size: 1.15rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s;
+		z-index: 2;
+	}
+
+	.no-idea-btn:hover {
+		background: rgba(245, 240, 230, 0.9);
+		color: #5a5040;
+		border-color: #a09880;
 	}
 </style>

@@ -13,6 +13,7 @@ import {
 	getEstimatedCount,
 	getReadyCount,
 	handleDone,
+	handleAbstain,
 	handleEstimateChange,
 	handleForceReveal,
 	handleNext,
@@ -1341,5 +1342,141 @@ describe('leaveSession cleans up Nostr state', () => {
 		expect(s.secretKeyHex).toBe('')
 		expect(s.publicKeyHex).toBe('')
 		expect(s.prepDone).toEqual([])
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleAbstain
+// ---------------------------------------------------------------------------
+
+describe('handleAbstain', () => {
+	it('marks selfReady and selfAbstained, sends ready with abstained flag', () => {
+		const s = createInitialState()
+		withSession(s)
+		handleAbstain(s)
+		expect(s.selfReady).toBe(true)
+		expect(s.selfAbstained).toBe(true)
+		expect(s.session!.sendReady).toHaveBeenCalledWith({ ready: true, abstained: true })
+	})
+
+	it('is idempotent when already ready', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.selfReady = true
+		handleAbstain(s)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.session!.sendReady).not.toHaveBeenCalled()
+	})
+
+	it('counts as ready for auto-reveal', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.peerIds = ['p1']
+		s.readyPeers = new Set(['p1'])
+		handleAbstain(s)
+		expect(getAllReady(s, 'self')).toBe(true)
+	})
+
+	it('is cleared by resetRound', () => {
+		const s = createInitialState()
+		s.selfAbstained = true
+		s.abstainedPeers = new Set(['p1'])
+		resetRound(s)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.abstainedPeers.size).toBe(0)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// onReady callback with abstain
+// ---------------------------------------------------------------------------
+
+describe('onReady callback with abstain', () => {
+	let s: SessionState
+	let callbacks: PeerCallbacks
+
+	beforeEach(() => {
+		s = createInitialState()
+		const deps = mockDeps()
+		callbacks = createPeerCallbacks(s, deps)
+	})
+
+	it('tracks abstained peers', () => {
+		callbacks.onReady('p1', true, true)
+		expect(s.readyPeers.has('p1')).toBe(true)
+		expect(s.abstainedPeers.has('p1')).toBe(true)
+	})
+
+	it('does not mark non-abstaining peers as abstained', () => {
+		callbacks.onReady('p1', true)
+		expect(s.readyPeers.has('p1')).toBe(true)
+		expect(s.abstainedPeers.has('p1')).toBe(false)
+	})
+
+	it('clears abstained on unready', () => {
+		callbacks.onReady('p1', true, true)
+		callbacks.onReady('p1', false)
+		expect(s.readyPeers.has('p1')).toBe(false)
+		expect(s.abstainedPeers.has('p1')).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// abstain persistence across ticket navigation
+// ---------------------------------------------------------------------------
+
+describe('abstain persistence', () => {
+	it('remembers abstained ticket when navigating away and back', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.backlog = [
+			{ id: 'T1', title: 'First' },
+			{ id: 'T2', title: 'Second' },
+		]
+		s.backlogIndex = 0
+		s.prepMode = true
+
+		handleAbstain(s)
+		expect(s.selfAbstained).toBe(true)
+		expect(s.abstainedTickets.has('T1')).toBe(true)
+
+		// Navigate to T2
+		selectTicket(s, 1)
+		expect(s.selfAbstained).toBe(false)
+
+		// Navigate back to T1
+		selectTicket(s, 0)
+		expect(s.selfAbstained).toBe(true)
+	})
+
+	it('clears abstain when user drags on an abstained ticket', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.backlog = [{ id: 'T1', title: 'First' }]
+		s.backlogIndex = 0
+
+		handleAbstain(s)
+		expect(s.selfAbstained).toBe(true)
+
+		handleEstimateChange(s, 3.0, 0.5)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.abstainedTickets.has('T1')).toBe(false)
+	})
+
+	it('does not save estimate for abstained ticket in handleNext', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.backlog = [
+			{ id: 'T1', title: 'First' },
+			{ id: 'T2', title: 'Second' },
+		]
+		s.backlogIndex = 0
+		s.prepMode = true
+		s.hasMoved = true
+
+		handleAbstain(s)
+		handleNext(s, mockDeps())
+
+		expect(s.myEstimates.has('T1')).toBe(false)
 	})
 })
