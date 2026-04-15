@@ -3,7 +3,7 @@
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
 	import Onboarding from './components/Onboarding.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
-	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
+	import { parseCsv, parseList, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import type { ImportedTicket } from './lib/types'
 	import { convergenceState } from './lib/canvas'
 	import { combineEstimates, snapVerdict } from './lib/lognormal'
@@ -56,6 +56,10 @@
 	let pendingImport = $state<ImportedTicket[] | null>(null)
 	let connecting = $state(false)
 	let missedRounds = $state(0)
+	let showPasteModal = $state(false)
+	let pasteText = $state('')
+	let dragOver = $state(false)
+	let importMenuOpen = $state(false)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -191,6 +195,26 @@
 		const timestamp = new Date().toISOString().slice(0, 10)
 		downloadFile(xls, `estimates-${timestamp}.xls`, 'application/vnd.ms-excel')
 	}
+
+	function handlePasteImport() {
+		const tickets = parseList(pasteText)
+		if (tickets.length === 0) return
+		if (s.backlog.length > 0) {
+			pendingImport = tickets
+		} else {
+			processBacklogImport(s, deps, tickets)
+		}
+		showPasteModal = false
+		pasteText = ''
+	}
+
+	function handleFileDrop(e: DragEvent) {
+		e.preventDefault()
+		dragOver = false
+		if (!s.isCreator) return
+		const file = e.dataTransfer?.files[0]
+		if (file) handleBacklogImport(file)
+	}
 </script>
 
 {#if !s.session}
@@ -202,7 +226,12 @@
 		</div>
 	{/if}
 {:else}
-	<main style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}">
+	<main
+		style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}"
+		ondragover={(e) => { if (s.isCreator) { e.preventDefault(); dragOver = true } }}
+		ondragleave={() => (dragOver = false)}
+		ondrop={handleFileDrop}
+	>
 		<header>
 			<div class="header-left">
 				<h1 class="logo">
@@ -254,20 +283,37 @@
 				{/if}
 			</div>
 			<div class="header-center">
-				{#if s.isCreator}
-					<label class="import-label">
-						<input
-							type="file"
-							accept=".csv"
-							class="file-input"
-							onchange={(e) => {
-								const file = (e.target as HTMLInputElement).files?.[0]
-								if (file) handleBacklogImport(file)
-								;(e.target as HTMLInputElement).value = ''
-							}}
-						/>
-						📋 Import CSV
-					</label>
+				{#if s.isCreator && s.backlog.length === 0}
+					<div class="import-menu">
+						<button class="import-toggle" onclick={() => (importMenuOpen = !importMenuOpen)}>
+							+ Add tickets ▾
+						</button>
+						{#if importMenuOpen}
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="import-menu-backdrop" onclick={() => (importMenuOpen = false)}></div>
+							<div class="import-menu-dropdown">
+								<label class="import-menu-item">
+									<input
+										type="file"
+										accept=".csv"
+										class="file-input"
+										onchange={(e) => {
+											const file = (e.target as HTMLInputElement).files?.[0]
+											if (file) handleBacklogImport(file)
+											;(e.target as HTMLInputElement).value = ''
+											importMenuOpen = false
+										}}
+									/>
+									📋 From CSV file
+								</label>
+								<button class="import-menu-item" onclick={() => { showPasteModal = true; importMenuOpen = false }}>
+									📝 Paste a list
+								</button>
+								<div class="import-menu-hint">or drop a file onto the page</div>
+							</div>
+						{/if}
+					</div>
 				{/if}
 				<button
 					class="past-toggle"
@@ -398,6 +444,8 @@
 				onRemove={(index) => handleRemove(s, deps, index)}
 				onExportCsv={handleExportCsv}
 				onExportExcel={handleExportExcel}
+				onImportCsv={handleBacklogImport}
+				onPasteList={() => (showPasteModal = true)}
 			/>
 		{/if}
 	</main>
@@ -434,7 +482,7 @@
 		</div>
 	{/if}
 	{#if showOnboarding}
-		<Onboarding userName={s.userName} onDismiss={dismissOnboarding} />
+		<Onboarding userName={s.userName} prepMode={s.prepMode} onDismiss={dismissOnboarding} />
 	{/if}
 	{#if pendingImport}
 		<div class="summary-overlay" role="dialog" aria-label="Import backlog">
@@ -447,6 +495,29 @@
 					<button class="secondary" onclick={() => (pendingImport = null)}>Cancel</button>
 				</div>
 			</div>
+		</div>
+	{/if}
+	{#if showPasteModal}
+		<div class="summary-overlay" role="dialog" aria-label="Paste a list">
+			<div class="paste-modal">
+				<h2>Paste a list</h2>
+				<p>One ticket title per line</p>
+				<textarea
+					class="paste-textarea"
+					rows="10"
+					placeholder={"Login page redesign\nFix checkout bug\nAdd dark mode\n…"}
+					bind:value={pasteText}
+				></textarea>
+				<div class="import-actions">
+					<button class="primary" disabled={pasteText.trim().length === 0} onclick={handlePasteImport}>Import {parseList(pasteText).length || ''}</button>
+					<button class="secondary" onclick={() => { showPasteModal = false; pasteText = '' }}>Cancel</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+	{#if dragOver}
+		<div class="drop-overlay">
+			<div class="drop-message">📋 Drop CSV file to import</div>
 		</div>
 	{/if}
 {/if}
@@ -943,6 +1014,73 @@
 		display: none;
 	}
 
+	.import-menu {
+		position: relative;
+	}
+
+	.import-toggle {
+		padding: 4px 12px;
+		border: 1px dashed #b0a890;
+		border-radius: 3px;
+		background: rgba(210, 200, 180, 0.25);
+		color: #6a6050;
+		font-family: 'Caveat', cursive;
+		font-size: 1rem;
+		cursor: pointer;
+		transition: background 0.15s;
+		white-space: nowrap;
+	}
+
+	.import-toggle:hover {
+		background: rgba(210, 200, 180, 0.45);
+	}
+
+	.import-menu-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 9;
+	}
+
+	.import-menu-dropdown {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: 0;
+		background: #f0e8d8;
+		border: 1px dashed #b0a890;
+		border-radius: 4px;
+		box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+		z-index: 10;
+		min-width: 160px;
+		padding: 4px 0;
+	}
+
+	.import-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 8px 14px;
+		border: none;
+		background: none;
+		color: #3a3530;
+		font-family: 'Caveat', cursive;
+		font-size: 1.05rem;
+		cursor: pointer;
+		white-space: nowrap;
+		text-align: left;
+	}
+
+	.import-menu-item:hover {
+		background: rgba(210, 200, 180, 0.4);
+	}
+
+	.import-menu-hint {
+		padding: 4px 14px 6px;
+		font-size: 0.85rem;
+		color: #a09880;
+		border-top: 1px solid rgba(176, 168, 144, 0.25);
+	}
+
 	.summary-overlay {
 		position: fixed;
 		inset: 0;
@@ -1114,5 +1252,77 @@
 		font-family: 'Caveat', cursive;
 		font-size: 1.3rem;
 		color: #6a6050;
+	}
+
+	.paste-modal {
+		background: #f0e8d8;
+		border: 1px dashed #b0a890;
+		border-radius: 6px;
+		padding: 24px 32px;
+		max-width: 420px;
+		width: 90%;
+		font-family: 'Caveat', cursive;
+	}
+
+	.paste-modal h2 {
+		margin: 0 0 4px;
+		font-size: 1.4rem;
+		color: #3a3530;
+	}
+
+	.paste-modal p {
+		margin: 0 0 12px;
+		font-size: 1rem;
+		color: #8a8070;
+	}
+
+	.paste-textarea {
+		width: 100%;
+		box-sizing: border-box;
+		font-family: 'Caveat', cursive;
+		font-size: 1.05rem;
+		color: #3a3530;
+		background: rgba(245, 240, 230, 0.6);
+		border: 1px dashed #c0b89a;
+		border-radius: 3px;
+		padding: 10px;
+		resize: vertical;
+		outline: none;
+		margin-bottom: 14px;
+	}
+
+	.paste-textarea:focus {
+		border-color: #3b7dd8;
+	}
+
+	.paste-textarea::placeholder {
+		color: #b0a890;
+	}
+
+	.import-actions .primary:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.drop-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(59, 125, 216, 0.12);
+		border: 3px dashed #3b7dd8;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 50;
+		pointer-events: none;
+	}
+
+	.drop-message {
+		font-family: 'Caveat', cursive;
+		font-size: 1.8rem;
+		color: #2a5090;
+		background: rgba(245, 240, 230, 0.9);
+		padding: 16px 32px;
+		border-radius: 6px;
+		border: 1px dashed #8aaacc;
 	}
 </style>

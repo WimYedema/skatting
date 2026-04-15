@@ -3,14 +3,15 @@
 
 	interface Props {
 		userName: string
+		prepMode?: boolean
 		onDismiss: () => void
 	}
 
-	let { userName, onDismiss }: Props = $props()
+	let { userName, prepMode = false, onDismiss }: Props = $props()
 
 	type Step = 'welcome' | 'canvas' | 'ready' | 'room'
 
-	const TOUR_STEPS: { id: Step; selector: string; title: string; text: string; position: 'bottom' | 'top' | 'left' }[] = [
+	const ALL_TOUR_STEPS: { id: Step; selector: string; title: string; text: string; position: 'bottom' | 'top' | 'left' }[] = [
 		{
 			id: 'canvas',
 			selector: '[data-tour="canvas"]',
@@ -33,6 +34,8 @@
 			position: 'bottom',
 		},
 	]
+
+	const TOUR_STEPS = $derived(prepMode ? ALL_TOUR_STEPS.filter((s) => s.id !== 'ready') : ALL_TOUR_STEPS)
 
 	let step = $state<Step>('welcome')
 	let spotlightRect = $state<DOMRect | null>(null)

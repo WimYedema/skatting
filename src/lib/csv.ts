@@ -125,6 +125,21 @@ export function parseCsv(text: string): ImportedTicket[] {
 }
 
 /**
+ * Parse plain text (one title per line) into ImportedTicket[].
+ * Empty/whitespace-only lines are skipped.
+ */
+export function parseList(text: string): ImportedTicket[] {
+	return text
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.filter((l) => l.length > 0)
+		.map((title, i) => ({
+			id: `item-${i + 1}`,
+			title,
+		}))
+}
+
+/**
  * Export estimated tickets to CSV string.
  */
 export function exportToCsv(tickets: EstimatedTicket[]): string {

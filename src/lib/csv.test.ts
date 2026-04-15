@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exportToCsv, exportToXls, parseCsv, parseCsvLine } from './csv'
+import { exportToCsv, exportToXls, parseCsv, parseCsvLine, parseList } from './csv'
 import type { EstimatedTicket } from './types'
 
 describe('parseCsvLine', () => {
@@ -213,5 +213,37 @@ describe('exportToXls', () => {
 		// 1 header row + 3 data rows
 		const rowCount = (xls.match(/<Row>/g) ?? []).length
 		expect(rowCount).toBe(4)
+	})
+})
+
+describe('parseList', () => {
+	it('parses one title per line', () => {
+		const result = parseList('Login redesign\nFix checkout bug\nAdd dark mode')
+		expect(result).toHaveLength(3)
+		expect(result[0]).toEqual({ id: 'item-1', title: 'Login redesign' })
+		expect(result[2]).toEqual({ id: 'item-3', title: 'Add dark mode' })
+	})
+
+	it('skips empty and whitespace-only lines', () => {
+		const result = parseList('First\n\n  \nSecond\n')
+		expect(result).toHaveLength(2)
+		expect(result[0].title).toBe('First')
+		expect(result[1].title).toBe('Second')
+	})
+
+	it('trims whitespace from titles', () => {
+		const result = parseList('  padded title  \n  another  ')
+		expect(result[0].title).toBe('padded title')
+		expect(result[1].title).toBe('another')
+	})
+
+	it('returns empty array for blank input', () => {
+		expect(parseList('')).toHaveLength(0)
+		expect(parseList('  \n  \n')).toHaveLength(0)
+	})
+
+	it('handles Windows-style line endings', () => {
+		const result = parseList('A\r\nB\r\nC')
+		expect(result).toHaveLength(3)
 	})
 })

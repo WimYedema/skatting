@@ -13,13 +13,16 @@
 		onRemove: (index: number) => void
 		onExportCsv: () => void
 		onExportExcel: () => void
+		onImportCsv?: (file: File) => void
+		onPasteList?: () => void
 	}
 
-	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, onSelect, onReorder, onRemove, onExportCsv, onExportExcel }: Props = $props()
+	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, onSelect, onReorder, onRemove, onExportCsv, onExportExcel, onImportCsv, onPasteList }: Props = $props()
 
 	let collapsed = $state(window.innerWidth < 768)
 	let dragIndex = $state(-1)
 	let dropIndex = $state(-1)
+	let addMenuOpen = $state(false)
 
 	function isEstimated(ticket: EstimatedTicket): boolean {
 		return ticket.median != null || myEstimates.has(ticket.id)
@@ -114,10 +117,46 @@
 				</li>
 			{/each}
 		</ul>
-		{#if isCreator && estimatedCount > 0}
-			<div class="export-bar">
-				<button class="export-btn" onclick={onExportCsv}>CSV ↓</button>
-				<button class="export-btn" onclick={onExportExcel}>Excel ↓</button>
+		{#if isCreator}
+			<div class="bottom-bar">
+				{#if onImportCsv || onPasteList}
+					<div class="add-menu">
+						<button class="bar-btn" onclick={() => (addMenuOpen = !addMenuOpen)}>+ Add more ▾</button>
+						{#if addMenuOpen}
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="add-menu-backdrop" onclick={() => (addMenuOpen = false)}></div>
+							<div class="add-menu-dropdown">
+								{#if onImportCsv}
+									<label class="add-menu-item">
+										<input
+											type="file"
+											accept=".csv"
+											class="file-input"
+											onchange={(e) => {
+												const file = (e.target as HTMLInputElement).files?.[0]
+												if (file) onImportCsv(file)
+												;(e.target as HTMLInputElement).value = ''
+												addMenuOpen = false
+											}}
+										/>
+										📋 From CSV file
+									</label>
+								{/if}
+								{#if onPasteList}
+									<button class="add-menu-item" onclick={() => { onPasteList(); addMenuOpen = false }}>
+										📝 Paste a list
+									</button>
+								{/if}
+								<div class="add-menu-hint">or drop a file onto the page</div>
+							</div>
+						{/if}
+					</div>
+				{/if}
+				{#if estimatedCount > 0}
+					<button class="bar-btn export" onclick={onExportCsv}>CSV ↓</button>
+					<button class="bar-btn export" onclick={onExportExcel}>Excel ↓</button>
+				{/if}
 			</div>
 		{/if}
 	{/if}
@@ -294,27 +333,95 @@
 		cursor: grabbing;
 	}
 
-  .export-bar {
-    display: flex;
-    gap: 6px;
-    padding: 8px 10px;
-    border-top: 1px dashed #c0b89a;
-  }
+	.bottom-bar {
+		display: flex;
+		gap: 6px;
+		padding: 8px 10px;
+		border-top: 1px dashed #c0b89a;
+		flex-wrap: wrap;
+	}
 
-  .export-btn {
-    flex: 1;
-    padding: 5px 10px;
-    border: 1px dashed #8a9ab0;
-    border-radius: 3px;
-    background: rgba(59, 125, 216, 0.12);
-    color: #2a5090;
-    font-family: 'Caveat', cursive;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
+	.bar-btn {
+		flex: 1;
+		padding: 5px 10px;
+		border: 1px dashed #b0a890;
+		border-radius: 3px;
+		background: rgba(210, 200, 180, 0.2);
+		color: #6a6050;
+		font-family: 'Caveat', cursive;
+		font-size: 0.95rem;
+		cursor: pointer;
+		transition: background 0.15s;
+		text-align: center;
+		white-space: nowrap;
+	}
 
-  .export-btn:hover {
-    background: rgba(59, 125, 216, 0.25);
-  }
+	.bar-btn:hover {
+		background: rgba(210, 200, 180, 0.4);
+	}
+
+	.bar-btn.export {
+		background: rgba(59, 125, 216, 0.12);
+		border-color: #8a9ab0;
+		color: #2a5090;
+	}
+
+	.bar-btn.export:hover {
+		background: rgba(59, 125, 216, 0.25);
+	}
+
+	.add-menu {
+		position: relative;
+		flex: 1;
+	}
+
+	.add-menu-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 9;
+	}
+
+	.add-menu-dropdown {
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 0;
+		right: 0;
+		background: #f0e8d8;
+		border: 1px dashed #b0a890;
+		border-radius: 4px;
+		box-shadow: 0 -3px 12px rgba(0, 0, 0, 0.12);
+		z-index: 10;
+		padding: 4px 0;
+	}
+
+	.add-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 8px 14px;
+		border: none;
+		background: none;
+		color: #3a3530;
+		font-family: 'Caveat', cursive;
+		font-size: 1.05rem;
+		cursor: pointer;
+		white-space: nowrap;
+		text-align: left;
+	}
+
+	.add-menu-item:hover {
+		background: rgba(210, 200, 180, 0.4);
+	}
+
+	.add-menu-hint {
+		padding: 4px 14px 6px;
+		font-size: 0.85rem;
+		color: #a09880;
+		border-top: 1px solid rgba(176, 168, 144, 0.25);
+	}
+
+	.file-input {
+		display: none;
+	}
 </style>
