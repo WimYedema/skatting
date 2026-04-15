@@ -49,6 +49,7 @@
 	const ONBOARDING_KEY = 'estimate-onboarded'
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
+	let connecting = $state(false)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -68,6 +69,7 @@
 	}
 
 	async function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
+		connecting = true
 		prepareJoin(s, deps, roomId, name, selectedUnit)
 		try {
 			const [roomState, prepDone] = await Promise.all([
@@ -79,6 +81,7 @@
 			// Nostr query failure is non-fatal — proceed with P2P
 		}
 		connectSession(s, deps, roomId)
+		connecting = false
 		// Show onboarding on first-ever session
 		if (!localStorage.getItem(ONBOARDING_KEY)) {
 			showOnboarding = true
@@ -148,6 +151,12 @@
 
 {#if !s.session}
 	<SessionLobby onJoin={handleJoin} />
+	{#if connecting}
+		<div class="connecting-overlay">
+			<div class="connecting-spinner"></div>
+			<span class="connecting-text">Looking for session…</span>
+		</div>
+	{/if}
 {:else}
 	<main style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}">
 		<header>
@@ -932,6 +941,36 @@
 
 	.import-actions .secondary {
 		background: rgba(160, 150, 130, 0.2);
+		color: #6a6050;
+	}
+
+	.connecting-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(245, 240, 230, 0.85);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 16px;
+		z-index: 30;
+	}
+
+	.connecting-spinner {
+		width: 32px;
+		height: 32px;
+		border: 3px dashed #8a8070;
+		border-radius: 50%;
+		animation: spin 1.2s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.connecting-text {
+		font-family: 'Caveat', cursive;
+		font-size: 1.3rem;
 		color: #6a6050;
 	}
 </style>
