@@ -1,6 +1,7 @@
 <script lang="ts">
 	import BacklogPanel from './components/BacklogPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
+	import Onboarding from './components/Onboarding.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import {
@@ -39,6 +40,14 @@
 
 	let s = $state(createInitialState())
 
+	const ONBOARDING_KEY = 'estimate-onboarded'
+	let showOnboarding = $state(false)
+
+	function dismissOnboarding() {
+		showOnboarding = false
+		localStorage.setItem(ONBOARDING_KEY, '1')
+	}
+
 	const deps: SessionDeps = {
 		selfId,
 		createSession,
@@ -63,6 +72,10 @@
 			// Nostr query failure is non-fatal — proceed with P2P
 		}
 		connectSession(s, deps, roomId)
+		// Show onboarding on first-ever session
+		if (!localStorage.getItem(ONBOARDING_KEY)) {
+			showOnboarding = true
+		}
 	}
 
 	// Derived values
@@ -133,7 +146,7 @@
 				</svg>
 				<span class="logo-text">Skatting</span>
 			</h1>
-				<span class="room-badge" role="button" tabindex="0" title="Copy room code" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
+				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
 				{#if s.topicUrl}
 					<a
 						class="topic-link"
@@ -191,11 +204,12 @@
 						{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 					</button>
 				{:else if !s.selfReady}
-					<button class="done" onclick={() => handleDone(s)}>Ready ✓</button>
+					<button class="done" data-tour="ready" onclick={() => handleDone(s)}>Ready ✓</button>
 				{:else if !allReady}
 					<button class="force-reveal" onclick={() => handleForceReveal(s)}>Reveal anyway</button>
 				{/if}
 				<button class="leave" onclick={() => leaveSession(s)}>Leave</button>
+				<button class="help-btn" title="How does this work?" onclick={() => (showOnboarding = true)}>?</button>
 			</div>
 		</header>
 
@@ -244,6 +258,7 @@
 			unit={s.unit}
 			{currentTicket}
 			onEstimateChange={(mu, sigma) => handleEstimateChange(s, mu, sigma)}
+			dataTour="canvas"
 		/>
 
 		{#if s.backlog.length > 0}
@@ -295,6 +310,9 @@
 				</div>
 			</div>
 		</div>
+	{/if}
+	{#if showOnboarding}
+		<Onboarding userName={s.userName} onDismiss={dismissOnboarding} />
 	{/if}
 {/if}
 
@@ -542,6 +560,27 @@
 
 	.leave:hover {
 		background: rgba(160, 150, 130, 0.4);
+	}
+
+	.help-btn {
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		border: 1px dashed #b0a890;
+		border-radius: 50%;
+		background: rgba(210, 200, 180, 0.2);
+		color: #9a9080;
+		font-family: 'Caveat', cursive;
+		font-size: 1.1rem;
+		font-weight: 700;
+		cursor: pointer;
+		line-height: 1;
+		transition: background 0.15s, color 0.15s;
+	}
+
+	.help-btn:hover {
+		background: rgba(210, 200, 180, 0.45);
+		color: #5a5040;
 	}
 
 	.past-toggle {

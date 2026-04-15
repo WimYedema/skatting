@@ -20,9 +20,10 @@
 		unit: string
 		currentTicket?: ImportedTicket
 		onEstimateChange: (mu: number, sigma: number) => void
+		dataTour?: string
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
@@ -143,7 +144,7 @@
 	})
 </script>
 
-<div class="canvas-container" bind:this={container}>
+<div class="canvas-container" bind:this={container} data-tour={dataTour}>
 	<canvas
 		bind:this={canvas}
 		onpointerdown={handlePointerDown}
