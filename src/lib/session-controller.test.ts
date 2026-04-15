@@ -61,6 +61,11 @@ function mockDeps(overrides?: Partial<SessionDeps>): SessionDeps {
 		getVerdictHistory: vi.fn().mockReturnValue([]),
 		saveBacklog: vi.fn(),
 		getBacklog: vi.fn().mockReturnValue([]),
+		generateSessionKeys: vi.fn().mockReturnValue({ secretKeyHex: 'aa'.repeat(32), publicKeyHex: 'bb'.repeat(32) }),
+		publishRoomState: vi.fn().mockResolvedValue(undefined),
+		publishPrepDone: vi.fn().mockResolvedValue(undefined),
+		queryRoomState: vi.fn().mockResolvedValue(null),
+		queryPrepDone: vi.fn().mockResolvedValue([]),
 		...overrides,
 	}
 }
@@ -536,13 +541,14 @@ describe('handleRemove', () => {
 describe('startMeeting', () => {
 	it('sets prepMode false and sends backlog with prepMode:false', () => {
 		const s = createInitialState()
+		const deps = mockDeps()
 		withSession(s)
 		withBacklog(s)
 		s.prepMode = true
 		s.mu = 3.0
 		s.sigma = 0.5
 
-		startMeeting(s)
+		startMeeting(s, deps)
 
 		expect(s.prepMode).toBe(false)
 		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
@@ -939,12 +945,13 @@ describe('state machine sequences', () => {
 
 	it('Start meeting → sendBacklog with prepMode:false', () => {
 		const s = createInitialState()
+		const deps = mockDeps()
 		withSession(s)
 		withBacklog(s)
 		s.prepMode = true
 		s.isCreator = true
 
-		startMeeting(s)
+		startMeeting(s, deps)
 
 		expect(s.prepMode).toBe(false)
 		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
@@ -1003,5 +1010,174 @@ describe('state machine sequences', () => {
 		// Leave
 		leaveSession(s)
 		expect(s.session).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Nostr integration
+// ---------------------------------------------------------------------------
+
+describe('Nostr state publication', () => {
+	it('processBacklogImport publishes room state', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+
+		processBacklogImport(s, deps, [{ id: 'A', title: 'Alpha' }])
+
+		expect(deps.publishRoomState).toHaveBeenCalledWith(
+			'bakitume',
+			'aa'.repeat(32),
+			expect.objectContaining({ backlog: expect.any(Array), prepMode: true }),
+		)
+	})
+
+	it('handleReorder publishes room state', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+
+		handleReorder(s, deps, 0, 2)
+
+		expect(deps.publishRoomState).toHaveBeenCalled()
+	})
+
+	it('handleRemove publishes room state', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+
+		handleRemove(s, deps, 0)
+
+		expect(deps.publishRoomState).toHaveBeenCalled()
+	})
+
+	it('startMeeting publishes room state with prepMode:false', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+
+		startMeeting(s, deps)
+
+		expect(deps.publishRoomState).toHaveBeenCalledWith(
+			'bakitume',
+			'aa'.repeat(32),
+			expect.objectContaining({ prepMode: false }),
+		)
+	})
+
+	it('publishes prep-done when finishing last ticket in prep mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s, 1) // Single ticket
+		s.prepMode = true
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+		s.userName = 'Alice'
+
+		handleNext(s, deps)
+
+		expect(s.showSummary).toBe(true)
+		expect(deps.publishPrepDone).toHaveBeenCalledWith(
+			'bakitume',
+			'aa'.repeat(32),
+			expect.objectContaining({ name: 'Alice' }),
+		)
+	})
+
+	it('does NOT publish prep-done in meeting mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s, 1)
+		s.prepMode = false
+		s.revealed = true
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+
+		handleNext(s, deps)
+
+		expect(deps.publishPrepDone).not.toHaveBeenCalled()
+	})
+})
+
+describe('Nostr keypair in joinSession', () => {
+	it('generates and stores keypair', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro-om', 'Alice', 'points')
+
+		expect(s.secretKeyHex).toBe('aa'.repeat(32))
+		expect(s.publicKeyHex).toBe('bb'.repeat(32))
+		expect(deps.generateSessionKeys).toHaveBeenCalled()
+	})
+
+	it('saves secretKey to session for creators', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro-om', 'Alice', 'points')
+
+		expect(deps.saveSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				secretKey: 'aa'.repeat(32),
+				publicKey: 'bb'.repeat(32),
+			}),
+		)
+	})
+
+	it('does not save secretKey for joiners', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro-om', 'Bob', null)
+
+		expect(deps.saveSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				secretKey: undefined,
+				publicKey: 'bb'.repeat(32),
+			}),
+		)
+	})
+
+	it('sets roomCode on state', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro-om', 'Alice', 'points')
+
+		expect(s.roomCode).toBe('te-st-ro-om')
+	})
+})
+
+describe('leaveSession cleans up Nostr state', () => {
+	it('resets roomCode and keypair', () => {
+		const s = createInitialState()
+		s.roomCode = 'bakitume'
+		s.secretKeyHex = 'aa'.repeat(32)
+		s.publicKeyHex = 'bb'.repeat(32)
+		s.prepDone = [{ name: 'Alice', ticketCount: 5, timestamp: 1 }]
+		withSession(s)
+
+		leaveSession(s)
+
+		expect(s.roomCode).toBe('')
+		expect(s.secretKeyHex).toBe('')
+		expect(s.publicKeyHex).toBe('')
+		expect(s.prepDone).toEqual([])
 	})
 })

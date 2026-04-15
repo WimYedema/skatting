@@ -8,6 +8,10 @@ export interface SavedSession {
 	isCreator: boolean
 	peerNames: string[]
 	lastUsed: number
+	/** Hex-encoded Nostr secret key (creator only) */
+	secretKey?: string
+	/** Hex-encoded Nostr public key */
+	publicKey?: string
 }
 
 const STORAGE_KEY = 'estimate-sessions'

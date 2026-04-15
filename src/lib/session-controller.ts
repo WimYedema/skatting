@@ -1,3 +1,4 @@
+import type { NostrSessionKeys, PrepDoneSignal, RoomState } from './nostr-state'
 import type { PeerCallbacks, PeerSession } from './peer'
 import type { HistoryVerdict, SavedSession } from './session-store'
 import type { EstimatedTicket, HistoryEntry, ImportedTicket, PeerEstimate } from './types'
@@ -33,6 +34,13 @@ export interface SessionState {
 	hasMoved: boolean
 	prepMode: boolean
 	showSummary: boolean
+	/** Room code (needed for Nostr key derivation and publication) */
+	roomCode: string
+	/** Nostr keypair for event signing */
+	secretKeyHex: string
+	publicKeyHex: string
+	/** Prep-done signals from other participants */
+	prepDone: PrepDoneSignal[]
 }
 
 export function createInitialState(): SessionState {
@@ -62,6 +70,10 @@ export function createInitialState(): SessionState {
 		hasMoved: false,
 		prepMode: false,
 		showSummary: false,
+		roomCode: '',
+		secretKeyHex: '',
+		publicKeyHex: '',
+		prepDone: [],
 	}
 }
 
@@ -79,6 +91,28 @@ export interface SessionDeps {
 	getVerdictHistory: (unit: string, roomId: string) => HistoryEntry[]
 	saveBacklog: (roomId: string, tickets: ImportedTicket[]) => void
 	getBacklog: (roomId: string) => ImportedTicket[]
+	generateSessionKeys: () => NostrSessionKeys
+	publishRoomState: (roomCode: string, secretKeyHex: string, state: RoomState) => Promise<void>
+	publishPrepDone: (roomCode: string, secretKeyHex: string, signal: PrepDoneSignal) => Promise<void>
+	queryRoomState: (roomCode: string) => Promise<RoomState | null>
+	queryPrepDone: (roomCode: string) => Promise<PrepDoneSignal[]>
+}
+
+// ---------------------------------------------------------------------------
+// Nostr publication helper (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+function publishState(s: SessionState, deps: SessionDeps): void {
+	if (!s.roomCode || !s.secretKeyHex) return
+	const state: RoomState = {
+		backlog: s.backlog,
+		unit: s.unit,
+		prepMode: s.prepMode,
+		topic: s.topic.trim(),
+	}
+	deps.publishRoomState(s.roomCode, s.secretKeyHex, state).catch(() => {
+		// Relay publish failures are non-fatal
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +254,14 @@ export function handleNext(s: SessionState, deps: SessionDeps): void {
 		selectTicket(s, deps, s.backlogIndex + 1, true)
 	} else if (s.backlog.length > 0) {
 		s.showSummary = true
+		// Signal prep completion to Nostr if in prep mode
+		if (s.prepMode && s.roomCode && s.secretKeyHex) {
+			deps.publishPrepDone(s.roomCode, s.secretKeyHex, {
+				name: s.userName,
+				ticketCount: getEstimatedCount(s),
+				timestamp: Date.now(),
+			}).catch(() => {})
+		}
 	}
 }
 
@@ -289,6 +331,7 @@ export function processBacklogImport(
 	if (s.session) deps.saveBacklog(s.session.roomId, tickets)
 	s.session?.sendBacklog({ tickets, prepMode: true })
 	selectTicket(s, deps, 0)
+	publishState(s, deps)
 }
 
 export function handleReorder(
@@ -311,6 +354,7 @@ export function handleReorder(
 		s.session.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
 		deps.saveBacklog(s.session.roomId, s.backlog)
 	}
+	publishState(s, deps)
 }
 
 export function handleRemove(s: SessionState, deps: SessionDeps, index: number): void {
@@ -330,9 +374,10 @@ export function handleRemove(s: SessionState, deps: SessionDeps, index: number):
 		s.session.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
 		deps.saveBacklog(s.session.roomId, s.backlog)
 	}
+	publishState(s, deps)
 }
 
-export function startMeeting(s: SessionState): void {
+export function startMeeting(s: SessionState, deps: SessionDeps): void {
 	s.prepMode = false
 	const currentTicket = getCurrentTicket(s)
 	s.session?.sendBacklog({ tickets: s.backlog, prepMode: false })
@@ -340,6 +385,7 @@ export function startMeeting(s: SessionState): void {
 	if (currentTicket) {
 		s.session?.sendTopic({ topic: '', url: currentTicket.url, ticketId: currentTicket.id })
 	}
+	publishState(s, deps)
 }
 
 export function checkAutoReveal(s: SessionState, allReady: boolean): void {
@@ -365,6 +411,10 @@ export function leaveSession(s: SessionState): void {
 	s.topicUrl = ''
 	s.myEstimates = new Map()
 	s.prepMode = false
+	s.roomCode = ''
+	s.secretKeyHex = ''
+	s.publicKeyHex = ''
+	s.prepDone = []
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +524,7 @@ export interface PreloadedState {
 	unit?: string
 	prepMode?: boolean
 	topic?: string
+	prepDone?: PrepDoneSignal[]
 }
 
 /**
@@ -492,6 +543,12 @@ export function prepareJoin(
 	s.isCreator = selectedUnit !== null
 	if (selectedUnit) s.unit = selectedUnit
 	s.connectionError = ''
+	s.roomCode = roomId
+
+	// Generate or reuse Nostr keypair
+	const keys = deps.generateSessionKeys()
+	s.secretKeyHex = keys.secretKeyHex
+	s.publicKeyHex = keys.publicKeyHex
 
 	// Apply pre-loaded state from Nostr (if any) before localStorage
 	if (preloaded) {
@@ -502,6 +559,7 @@ export function prepareJoin(
 			s.backlog = preloaded.backlog.map((t) => ({ ...t }))
 			s.prepMode = preloaded.prepMode ?? true
 		}
+		if (preloaded.prepDone) s.prepDone = preloaded.prepDone
 	}
 
 	s.persistentHistory = deps.getVerdictHistory(s.unit, roomId)
@@ -514,6 +572,8 @@ export function prepareJoin(
 		isCreator: s.isCreator,
 		peerNames: [],
 		lastUsed: Date.now(),
+		secretKey: s.isCreator ? keys.secretKeyHex : undefined,
+		publicKey: keys.publicKeyHex,
 	})
 
 	// Restore from localStorage (only if not already loaded from Nostr)

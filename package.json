@@ -26,9 +26,12 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@noble/secp256k1": "^3.1.0",
     "@trystero-p2p/core": "^0.23.0",
     "@trystero-p2p/mqtt": "^0.23.0",
     "@trystero-p2p/nostr": "^0.23.0",
+    "nostr-tools": "^2.23.3",
     "trystero": "^0.23.0"
   }
 }
