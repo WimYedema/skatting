@@ -1,17 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+	createScopedStorage,
 	deleteSession,
-	getBacklog,
 	getLastUserName,
-	getPreEstimates,
 	getSavedSessions,
-	getVerdictHistory,
 	type HistoryVerdict,
 	type SavedSession,
-	saveBacklog,
-	savePreEstimate,
 	saveSession,
-	saveVerdict,
 } from './session-store'
 
 function makeSession(overrides: Partial<SavedSession> = {}): SavedSession {
@@ -114,7 +109,7 @@ describe('session-store', () => {
 	})
 })
 
-describe('verdict history', () => {
+describe('scoped storage — verdict history', () => {
 	let store: Record<string, string>
 
 	beforeEach(() => {
@@ -147,110 +142,118 @@ describe('verdict history', () => {
 	}
 
 	it('returns empty array when nothing saved', () => {
-		expect(getVerdictHistory()).toEqual([])
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getVerdictHistory()).toEqual([])
 	})
 
 	it('saves and retrieves a verdict', () => {
-		saveVerdict(makeVerdict())
-		const results = getVerdictHistory()
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict())
+		const results = s.getVerdictHistory()
 		expect(results).toHaveLength(1)
 		expect(results[0].label).toBe('Task A')
 	})
 
-	it('replaces existing verdict with same label, unit, and roomId', () => {
-		saveVerdict(makeVerdict({ mu: 1.0 }))
-		saveVerdict(makeVerdict({ mu: 3.0 }))
-		const results = getVerdictHistory()
+	it('replaces existing verdict with same label and unit', () => {
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ mu: 1.0 }))
+		s.saveVerdict(makeVerdict({ mu: 3.0 }))
+		const results = s.getVerdictHistory()
 		expect(results).toHaveLength(1)
 		expect(results[0].mu).toBe(3.0)
 	})
 
 	it('keeps verdicts with different labels separate', () => {
-		saveVerdict(makeVerdict({ label: 'Task A' }))
-		saveVerdict(makeVerdict({ label: 'Task B' }))
-		expect(getVerdictHistory()).toHaveLength(2)
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'Task A' }))
+		s.saveVerdict(makeVerdict({ label: 'Task B' }))
+		expect(s.getVerdictHistory()).toHaveLength(2)
 	})
 
 	it('keeps verdicts with same label but different unit separate', () => {
-		saveVerdict(makeVerdict({ label: 'Task A', unit: 'points' }))
-		saveVerdict(makeVerdict({ label: 'Task A', unit: 'days' }))
-		expect(getVerdictHistory()).toHaveLength(2)
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'Task A', unit: 'points' }))
+		s.saveVerdict(makeVerdict({ label: 'Task A', unit: 'days' }))
+		expect(s.getVerdictHistory()).toHaveLength(2)
 	})
 
 	it('filters by unit', () => {
-		saveVerdict(makeVerdict({ label: 'A', unit: 'points' }))
-		saveVerdict(makeVerdict({ label: 'B', unit: 'days' }))
-		expect(getVerdictHistory('points')).toHaveLength(1)
-		expect(getVerdictHistory('points')[0].label).toBe('A')
-		expect(getVerdictHistory('days')).toHaveLength(1)
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'A', unit: 'points' }))
+		s.saveVerdict(makeVerdict({ label: 'B', unit: 'days' }))
+		expect(s.getVerdictHistory('points')).toHaveLength(1)
+		expect(s.getVerdictHistory('points')[0].label).toBe('A')
+		expect(s.getVerdictHistory('days')).toHaveLength(1)
 	})
 
-	it('filters by roomId — sessions do not mix', () => {
-		saveVerdict(makeVerdict({ label: 'A', roomId: 'room-1' }))
-		saveVerdict(makeVerdict({ label: 'B', roomId: 'room-2' }))
-		expect(getVerdictHistory(undefined, 'room-1')).toHaveLength(1)
-		expect(getVerdictHistory(undefined, 'room-1')[0].label).toBe('A')
-		expect(getVerdictHistory(undefined, 'room-2')).toHaveLength(1)
-		expect(getVerdictHistory(undefined, 'room-2')[0].label).toBe('B')
+	it('isolates verdicts by user', () => {
+		const alice = createScopedStorage('room-1', 'Alice')
+		const bob = createScopedStorage('room-1', 'Bob')
+		alice.saveVerdict(makeVerdict({ label: 'A' }))
+		bob.saveVerdict(makeVerdict({ label: 'B' }))
+		expect(alice.getVerdictHistory()).toHaveLength(1)
+		expect(alice.getVerdictHistory()[0].label).toBe('A')
+		expect(bob.getVerdictHistory()).toHaveLength(1)
+		expect(bob.getVerdictHistory()[0].label).toBe('B')
 	})
 
-	it('filters by both unit and roomId', () => {
-		saveVerdict(makeVerdict({ label: 'A', unit: 'points', roomId: 'room-1' }))
-		saveVerdict(makeVerdict({ label: 'B', unit: 'days', roomId: 'room-1' }))
-		saveVerdict(makeVerdict({ label: 'C', unit: 'points', roomId: 'room-2' }))
-		expect(getVerdictHistory('points', 'room-1')).toHaveLength(1)
-		expect(getVerdictHistory('points', 'room-1')[0].label).toBe('A')
-	})
-
-	it('keeps same label in different rooms separate', () => {
-		saveVerdict(makeVerdict({ label: 'Task A', roomId: 'room-1' }))
-		saveVerdict(makeVerdict({ label: 'Task A', roomId: 'room-2' }))
-		expect(getVerdictHistory()).toHaveLength(2)
+	it('isolates verdicts by room', () => {
+		const s1 = createScopedStorage('room-1', 'Alice')
+		const s2 = createScopedStorage('room-2', 'Alice')
+		s1.saveVerdict(makeVerdict({ label: 'A' }))
+		s2.saveVerdict(makeVerdict({ label: 'B' }))
+		expect(s1.getVerdictHistory()).toHaveLength(1)
+		expect(s1.getVerdictHistory()[0].label).toBe('A')
 	})
 
 	it('deduplicates by ticketId when present, ignoring label', () => {
-		saveVerdict(makeVerdict({ label: 'Old title', ticketId: 'PROJ-42', mu: 1.0 }))
-		saveVerdict(makeVerdict({ label: 'Renamed title', ticketId: 'PROJ-42', mu: 3.0 }))
-		const results = getVerdictHistory()
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'Old title', ticketId: 'PROJ-42', mu: 1.0 }))
+		s.saveVerdict(makeVerdict({ label: 'Renamed title', ticketId: 'PROJ-42', mu: 3.0 }))
+		const results = s.getVerdictHistory()
 		expect(results).toHaveLength(1)
 		expect(results[0].mu).toBe(3.0)
 		expect(results[0].label).toBe('Renamed title')
 	})
 
 	it('keeps tickets with same label but different ticketIds separate', () => {
-		saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-1' }))
-		saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-2' }))
-		expect(getVerdictHistory()).toHaveLength(2)
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-1' }))
+		s.saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-2' }))
+		expect(s.getVerdictHistory()).toHaveLength(2)
 	})
 
 	it('falls back to label dedup when ticketId is absent', () => {
-		saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 1.0 }))
-		saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 2.0 }))
-		expect(getVerdictHistory()).toHaveLength(1)
-		expect(getVerdictHistory()[0].mu).toBe(2.0)
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 1.0 }))
+		s.saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 2.0 }))
+		expect(s.getVerdictHistory()).toHaveLength(1)
+		expect(s.getVerdictHistory()[0].mu).toBe(2.0)
 	})
 
 	it('limits to 50 entries', () => {
+		const s = createScopedStorage('room-1', 'Alice')
 		for (let i = 0; i < 60; i++) {
-			saveVerdict(makeVerdict({ label: `Task ${i}`, timestamp: i }))
+			s.saveVerdict(makeVerdict({ label: `Task ${i}`, timestamp: i }))
 		}
-		expect(getVerdictHistory()).toHaveLength(50)
-		// Should keep most recent (last 50)
-		expect(getVerdictHistory()[0].label).toBe('Task 10')
+		expect(s.getVerdictHistory()).toHaveLength(50)
+		expect(s.getVerdictHistory()[0].label).toBe('Task 10')
 	})
 
 	it('handles corrupted localStorage gracefully', () => {
-		store['estimate-history'] = 'not json{'
-		expect(getVerdictHistory()).toEqual([])
+		store['estimate-history:room-1:Alice'] = 'not json{'
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getVerdictHistory()).toEqual([])
 	})
 
 	it('filters out invalid entries', () => {
-		store['estimate-history'] = JSON.stringify([makeVerdict(), { bad: true }, null])
-		expect(getVerdictHistory()).toHaveLength(1)
+		const s = createScopedStorage('room-1', 'Alice')
+		store['estimate-history:room-1:Alice'] = JSON.stringify([makeVerdict(), { bad: true }, null])
+		expect(s.getVerdictHistory()).toHaveLength(1)
 	})
 })
 
-describe('pre-estimate persistence', () => {
+describe('scoped storage — pre-estimates', () => {
 	let store: Record<string, string>
 
 	beforeEach(() => {
@@ -271,51 +274,70 @@ describe('pre-estimate persistence', () => {
 	})
 
 	it('returns empty map when nothing saved', () => {
-		expect(getPreEstimates('room-1').size).toBe(0)
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getPreEstimates().size).toBe(0)
 	})
 
 	it('saves and retrieves a pre-estimate', () => {
-		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
-		const estimates = getPreEstimates('room-1')
+		const s = createScopedStorage('room-1', 'Alice')
+		s.savePreEstimate('T-1', 2.0, 0.5)
+		const estimates = s.getPreEstimates()
 		expect(estimates.size).toBe(1)
 		expect(estimates.get('T-1')).toEqual({ mu: 2.0, sigma: 0.5 })
 	})
 
 	it('overwrites existing pre-estimate', () => {
-		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
-		savePreEstimate('room-1', 'T-1', 3.0, 0.3)
-		const estimates = getPreEstimates('room-1')
+		const s = createScopedStorage('room-1', 'Alice')
+		s.savePreEstimate('T-1', 2.0, 0.5)
+		s.savePreEstimate('T-1', 3.0, 0.3)
+		const estimates = s.getPreEstimates()
 		expect(estimates.size).toBe(1)
 		expect(estimates.get('T-1')).toEqual({ mu: 3.0, sigma: 0.3 })
 	})
 
-	it('keeps pre-estimates per room separate', () => {
-		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
-		savePreEstimate('room-2', 'T-1', 4.0, 0.8)
-		expect(getPreEstimates('room-1').get('T-1')?.mu).toBe(2.0)
-		expect(getPreEstimates('room-2').get('T-1')?.mu).toBe(4.0)
+	it('isolates pre-estimates by user', () => {
+		const alice = createScopedStorage('room-1', 'Alice')
+		const bob = createScopedStorage('room-1', 'Bob')
+		alice.savePreEstimate('T-1', 2.0, 0.5)
+		bob.savePreEstimate('T-1', 4.0, 0.8)
+		expect(alice.getPreEstimates().get('T-1')?.mu).toBe(2.0)
+		expect(bob.getPreEstimates().get('T-1')?.mu).toBe(4.0)
 	})
 
-	it('stores multiple tickets per room', () => {
-		savePreEstimate('room-1', 'T-1', 2.0, 0.5)
-		savePreEstimate('room-1', 'T-2', 3.0, 0.6)
-		expect(getPreEstimates('room-1').size).toBe(2)
+	it('isolates pre-estimates by room', () => {
+		const s1 = createScopedStorage('room-1', 'Alice')
+		const s2 = createScopedStorage('room-2', 'Alice')
+		s1.savePreEstimate('T-1', 2.0, 0.5)
+		s2.savePreEstimate('T-1', 4.0, 0.8)
+		expect(s1.getPreEstimates().get('T-1')?.mu).toBe(2.0)
+		expect(s2.getPreEstimates().get('T-1')?.mu).toBe(4.0)
+	})
+
+	it('stores multiple tickets', () => {
+		const s = createScopedStorage('room-1', 'Alice')
+		s.savePreEstimate('T-1', 2.0, 0.5)
+		s.savePreEstimate('T-2', 3.0, 0.6)
+		expect(s.getPreEstimates().size).toBe(2)
 	})
 
 	it('handles corrupted localStorage gracefully', () => {
-		store['estimate-pre-estimates'] = 'bad json{'
-		expect(getPreEstimates('room-1').size).toBe(0)
+		store['estimate-pre:room-1:Alice'] = 'bad json{'
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getPreEstimates().size).toBe(0)
 	})
 
 	it('filters out invalid entries', () => {
-		store['estimate-pre-estimates'] = JSON.stringify({
-			'room-1': { 'T-1': { mu: 2.0, sigma: 0.5 }, 'T-2': 'bad', 'T-3': null },
+		store['estimate-pre:room-1:Alice'] = JSON.stringify({
+			'T-1': { mu: 2.0, sigma: 0.5 },
+			'T-2': 'bad',
+			'T-3': null,
 		})
-		expect(getPreEstimates('room-1').size).toBe(1)
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getPreEstimates().size).toBe(1)
 	})
 })
 
-describe('backlog persistence', () => {
+describe('scoped storage — backlog', () => {
 	let store: Record<string, string>
 
 	beforeEach(() => {
@@ -336,7 +358,8 @@ describe('backlog persistence', () => {
 	})
 
 	it('returns empty array when nothing saved', () => {
-		expect(getBacklog('room-1')).toEqual([])
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getBacklog()).toEqual([])
 	})
 
 	it('saves and retrieves a backlog', () => {
@@ -344,38 +367,69 @@ describe('backlog persistence', () => {
 			{ id: 'T-1', title: 'First task' },
 			{ id: 'T-2', title: 'Second task', url: 'http://example.com' },
 		]
-		saveBacklog('room-1', tickets)
-		const result = getBacklog('room-1')
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveBacklog(tickets)
+		const result = s.getBacklog()
 		expect(result).toHaveLength(2)
 		expect(result[0].id).toBe('T-1')
 		expect(result[1].url).toBe('http://example.com')
 	})
 
-	it('keeps backlogs per room separate', () => {
-		saveBacklog('room-1', [{ id: 'A', title: 'Task A' }])
-		saveBacklog('room-2', [{ id: 'B', title: 'Task B' }])
-		expect(getBacklog('room-1')[0].id).toBe('A')
-		expect(getBacklog('room-2')[0].id).toBe('B')
+	it('isolates backlogs by user', () => {
+		const alice = createScopedStorage('room-1', 'Alice')
+		const bob = createScopedStorage('room-1', 'Bob')
+		alice.saveBacklog([{ id: 'A', title: 'Task A' }])
+		bob.saveBacklog([{ id: 'B', title: 'Task B' }])
+		expect(alice.getBacklog()[0].id).toBe('A')
+		expect(bob.getBacklog()[0].id).toBe('B')
 	})
 
-	it('overwrites existing backlog for same room', () => {
-		saveBacklog('room-1', [{ id: 'A', title: 'Old' }])
-		saveBacklog('room-1', [{ id: 'B', title: 'New' }])
-		const result = getBacklog('room-1')
+	it('isolates backlogs by room', () => {
+		const s1 = createScopedStorage('room-1', 'Alice')
+		const s2 = createScopedStorage('room-2', 'Alice')
+		s1.saveBacklog([{ id: 'A', title: 'Task A' }])
+		s2.saveBacklog([{ id: 'B', title: 'Task B' }])
+		expect(s1.getBacklog()[0].id).toBe('A')
+		expect(s2.getBacklog()[0].id).toBe('B')
+	})
+
+	it('overwrites existing backlog', () => {
+		const s = createScopedStorage('room-1', 'Alice')
+		s.saveBacklog([{ id: 'A', title: 'Old' }])
+		s.saveBacklog([{ id: 'B', title: 'New' }])
+		const result = s.getBacklog()
 		expect(result).toHaveLength(1)
 		expect(result[0].id).toBe('B')
 	})
 
+	it('strips runtime-only fields (median, p10, p90)', () => {
+		const s = createScopedStorage('room-1', 'Alice')
+		// Simulate saving an EstimatedTicket with verdict fields
+		const ticketsWithMedian = [
+			{ id: 'A', title: 'Task A', median: 5.0, p10: 2.0, p90: 12.0, estimateUnit: 'points' },
+		]
+		s.saveBacklog(ticketsWithMedian as never)
+		const result = s.getBacklog()
+		expect(result).toHaveLength(1)
+		expect(result[0]).toEqual({ id: 'A', title: 'Task A' })
+		expect('median' in result[0]).toBe(false)
+	})
+
 	it('handles corrupted localStorage gracefully', () => {
-		store['estimate-backlogs'] = 'bad{'
-		expect(getBacklog('room-1')).toEqual([])
+		store['estimate-backlog:room-1:Alice'] = 'bad{'
+		const s = createScopedStorage('room-1', 'Alice')
+		expect(s.getBacklog()).toEqual([])
 	})
 
 	it('filters out invalid entries', () => {
-		store['estimate-backlogs'] = JSON.stringify({
-			'room-1': [{ id: 'T-1', title: 'Valid' }, { bad: true }, null, 42],
-		})
-		const result = getBacklog('room-1')
+		store['estimate-backlog:room-1:Alice'] = JSON.stringify([
+			{ id: 'T-1', title: 'Valid' },
+			{ bad: true },
+			null,
+			42,
+		])
+		const s = createScopedStorage('room-1', 'Alice')
+		const result = s.getBacklog()
 		expect(result).toHaveLength(1)
 		expect(result[0].id).toBe('T-1')
 	})

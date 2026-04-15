@@ -1,6 +1,6 @@
 import type { NostrSessionKeys, PrepDoneSignal, RoomState } from './nostr-state'
 import type { PeerCallbacks, PeerSession } from './peer'
-import type { HistoryVerdict, SavedSession } from './session-store'
+import type { SavedSession, ScopedStorage } from './session-store'
 import type { EstimatedTicket, HistoryEntry, ImportedTicket, PeerEstimate } from './types'
 import { applyVerdict, computeVerdict, upsertHistory } from './verdict'
 
@@ -41,6 +41,8 @@ export interface SessionState {
 	publicKeyHex: string
 	/** Prep-done signals from other participants */
 	prepDone: PrepDoneSignal[]
+	/** User-scoped localStorage (created at join time) */
+	storage: ScopedStorage | null
 }
 
 export function createInitialState(): SessionState {
@@ -74,6 +76,7 @@ export function createInitialState(): SessionState {
 		secretKeyHex: '',
 		publicKeyHex: '',
 		prepDone: [],
+		storage: null,
 	}
 }
 
@@ -85,12 +88,7 @@ export interface SessionDeps {
 	selfId: string
 	createSession: (roomId: string, callbacks: PeerCallbacks) => PeerSession
 	saveSession: (session: SavedSession) => void
-	saveVerdict: (entry: HistoryVerdict) => void
-	savePreEstimate: (roomId: string, ticketId: string, mu: number, sigma: number) => void
-	getPreEstimates: (roomId: string) => Map<string, { mu: number; sigma: number }>
-	getVerdictHistory: (unit: string, roomId: string) => HistoryEntry[]
-	saveBacklog: (roomId: string, tickets: ImportedTicket[]) => void
-	getBacklog: (roomId: string) => ImportedTicket[]
+	createScopedStorage: (roomId: string, userName: string) => ScopedStorage
 	generateSessionKeys: () => NostrSessionKeys
 	publishRoomState: (roomCode: string, secretKeyHex: string, state: RoomState) => Promise<void>
 	publishPrepDone: (roomCode: string, secretKeyHex: string, signal: PrepDoneSignal) => Promise<void>
@@ -195,22 +193,22 @@ export function handleForceReveal(s: SessionState): void {
 	s.session?.sendReveal({ revealed: true })
 }
 
-export function addOrUpdateHistory(s: SessionState, deps: SessionDeps, entry: HistoryEntry): void {
+export function addOrUpdateHistory(s: SessionState, entry: HistoryEntry): void {
 	s.history = upsertHistory(s.history, entry)
-	if (s.session) {
+	if (s.session && s.storage) {
 		const currentTicket = getCurrentTicket(s)
-		deps.saveVerdict({
+		s.storage.saveVerdict({
 			...entry,
 			unit: s.unit,
 			roomId: s.session.roomId,
 			timestamp: Date.now(),
 			ticketId: currentTicket?.id,
 		})
-		s.persistentHistory = deps.getVerdictHistory(s.unit, s.session.roomId)
+		s.persistentHistory = s.storage.getVerdictHistory(s.unit)
 	}
 }
 
-export function saveRoundToHistory(s: SessionState, deps: SessionDeps): void {
+export function saveRoundToHistory(s: SessionState): void {
 	const currentTicket = getCurrentTicket(s)
 	const label = currentTicket?.title || s.topic.trim() || `Item ${s.history.length + 1}`
 	const peerEsts = Array.from(s.peerEstimateMap.values()).map((pe) => ({
@@ -221,9 +219,9 @@ export function saveRoundToHistory(s: SessionState, deps: SessionDeps): void {
 
 	if (currentTicket && verdict) {
 		applyVerdict(currentTicket, verdict, s.unit)
-		addOrUpdateHistory(s, deps, verdict.historyEntry)
+		addOrUpdateHistory(s, verdict.historyEntry)
 	} else if (verdict && peerEsts.length > 0) {
-		addOrUpdateHistory(s, deps, verdict.historyEntry)
+		addOrUpdateHistory(s, verdict.historyEntry)
 	}
 }
 
@@ -242,42 +240,39 @@ export function handleNext(s: SessionState, deps: SessionDeps): void {
 	const currentTicket = getCurrentTicket(s)
 	if (currentTicket && s.hasMoved) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
-		if (s.session) deps.savePreEstimate(s.session.roomId, currentTicket.id, s.mu, s.sigma)
+		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 	}
-	saveRoundToHistory(s, deps)
+	saveRoundToHistory(s)
 	resetRound(s)
 	if (!s.prepMode) {
 		s.session?.sendReveal({ revealed: false })
 	}
 
 	if (s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1) {
-		selectTicket(s, deps, s.backlogIndex + 1, true)
+		selectTicket(s, s.backlogIndex + 1, true)
 	} else if (s.backlog.length > 0) {
 		s.showSummary = true
 		// Signal prep completion to Nostr if in prep mode
 		if (s.prepMode && s.roomCode && s.secretKeyHex) {
-			deps.publishPrepDone(s.roomCode, s.secretKeyHex, {
-				name: s.userName,
-				ticketCount: getEstimatedCount(s),
-				timestamp: Date.now(),
-			}).catch(() => {})
+			deps
+				.publishPrepDone(s.roomCode, s.secretKeyHex, {
+					name: s.userName,
+					ticketCount: getEstimatedCount(s),
+					timestamp: Date.now(),
+				})
+				.catch(() => {})
 		}
 	}
 }
 
-export function selectTicket(
-	s: SessionState,
-	deps: SessionDeps,
-	index: number,
-	skipSave = false,
-): void {
+export function selectTicket(s: SessionState, index: number, skipSave = false): void {
 	if (index < 0 || index >= s.backlog.length) return
 
 	const currentTicket = getCurrentTicket(s)
 	if (!skipSave && currentTicket && s.hasMoved) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
-		if (s.session) deps.savePreEstimate(s.session.roomId, currentTicket.id, s.mu, s.sigma)
-		saveRoundToHistory(s, deps)
+		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
+		saveRoundToHistory(s)
 	}
 
 	s.revealed = false
@@ -293,8 +288,8 @@ export function selectTicket(
 		s.mu = saved.mu
 		s.sigma = saved.sigma
 		s.hasMoved = true
-	} else if (s.session) {
-		const stored = deps.getPreEstimates(s.session.roomId)
+	} else if (s.storage) {
+		const stored = s.storage.getPreEstimates()
 		const pre = stored.get(ticket.id)
 		if (pre) {
 			s.mu = pre.mu
@@ -328,9 +323,9 @@ export function processBacklogImport(
 	s.backlog = tickets.map((t) => ({ ...t }))
 	s.backlogIndex = -1
 	s.prepMode = true
-	if (s.session) deps.saveBacklog(s.session.roomId, tickets)
+	if (s.storage) s.storage.saveBacklog(tickets)
 	s.session?.sendBacklog({ tickets, prepMode: true })
-	selectTicket(s, deps, 0)
+	selectTicket(s, 0)
 	publishState(s, deps)
 }
 
@@ -352,7 +347,7 @@ export function handleReorder(
 	}
 	if (s.session) {
 		s.session.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
-		deps.saveBacklog(s.session.roomId, s.backlog)
+		if (s.storage) s.storage.saveBacklog(s.backlog)
 	}
 	publishState(s, deps)
 }
@@ -368,11 +363,11 @@ export function handleRemove(s: SessionState, deps: SessionDeps, index: number):
 		s.backlogIndex--
 	} else if (index === s.backlogIndex) {
 		const newIndex = Math.min(s.backlogIndex, s.backlog.length - 1)
-		selectTicket(s, deps, newIndex)
+		selectTicket(s, newIndex)
 	}
 	if (s.session) {
 		s.session.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
-		deps.saveBacklog(s.session.roomId, s.backlog)
+		if (s.storage) s.storage.saveBacklog(s.backlog)
 	}
 	publishState(s, deps)
 }
@@ -415,6 +410,7 @@ export function leaveSession(s: SessionState): void {
 	s.secretKeyHex = ''
 	s.publicKeyHex = ''
 	s.prepDone = []
+	s.storage = null
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +459,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		onReveal(rev: boolean) {
 			s.revealed = rev
 			if (!rev) {
-				saveRoundToHistory(s, deps)
+				saveRoundToHistory(s)
 				resetRound(s)
 			}
 		},
@@ -494,7 +490,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		onUnit(peerUnit: string) {
 			if (!s.isCreator) {
 				s.unit = peerUnit
-				if (s.session) s.persistentHistory = deps.getVerdictHistory(peerUnit, s.session.roomId)
+				if (s.storage) s.persistentHistory = s.storage.getVerdictHistory(peerUnit)
 				persistSession(s, deps)
 			}
 		},
@@ -503,7 +499,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.backlog = tickets.map((t) => ({ ...t }))
 				s.backlogIndex = -1
 				s.prepMode = peerPrepMode ?? true
-				if (s.session) deps.saveBacklog(s.session.roomId, tickets)
+				if (s.storage) s.storage.saveBacklog(tickets)
 			} else if (!s.isCreator && peerPrepMode !== undefined) {
 				s.prepMode = peerPrepMode
 			}
@@ -545,6 +541,9 @@ export function prepareJoin(
 	s.connectionError = ''
 	s.roomCode = roomId
 
+	// Create user-scoped storage (isolates per room+user in localStorage)
+	s.storage = deps.createScopedStorage(roomId, name)
+
 	// Generate or reuse Nostr keypair
 	const keys = deps.generateSessionKeys()
 	s.secretKeyHex = keys.secretKeyHex
@@ -562,7 +561,7 @@ export function prepareJoin(
 		if (preloaded.prepDone) s.prepDone = preloaded.prepDone
 	}
 
-	s.persistentHistory = deps.getVerdictHistory(s.unit, roomId)
+	s.persistentHistory = s.storage.getVerdictHistory(s.unit)
 
 	deps.saveSession({
 		roomId,
@@ -577,7 +576,7 @@ export function prepareJoin(
 	})
 
 	// Restore from localStorage (only if not already loaded from Nostr)
-	const savedBacklog = deps.getBacklog(roomId)
+	const savedBacklog = s.storage.getBacklog()
 	if (savedBacklog.length > 0 && s.backlog.length === 0) {
 		s.backlog = savedBacklog.map((t) => ({ ...t }))
 		s.prepMode = true
@@ -585,12 +584,39 @@ export function prepareJoin(
 
 	// Load pre-estimates into in-memory map
 	if (s.backlog.length > 0) {
-		const savedEstimates = deps.getPreEstimates(roomId)
+		const savedEstimates = s.storage.getPreEstimates()
 		for (const [ticketId, est] of savedEstimates) {
 			s.myEstimates.set(ticketId, est)
 		}
-		selectTicket(s, deps, 0)
+		selectTicket(s, 0)
 	}
+}
+
+/**
+ * Apply Nostr-queried room state between prepareJoin and connectSession.
+ * Handles backlog restoration, unit/topic sync, pre-estimate loading.
+ */
+export function applyNostrState(
+	s: SessionState,
+	roomState: RoomState | null,
+	prepDone: PrepDoneSignal[],
+): void {
+	if (roomState && !s.isCreator && s.backlog.length === 0) {
+		if (roomState.backlog.length > 0) {
+			s.backlog = roomState.backlog.map((t) => ({ ...t }))
+			s.prepMode = roomState.prepMode
+			if (roomState.unit) s.unit = roomState.unit
+			if (roomState.topic) s.topic = roomState.topic
+			if (s.storage) {
+				const savedEstimates = s.storage.getPreEstimates()
+				for (const [ticketId, est] of savedEstimates) {
+					s.myEstimates.set(ticketId, est)
+				}
+			}
+			if (s.backlog.length > 0) selectTicket(s, 0)
+		}
+	}
+	if (prepDone.length > 0) s.prepDone = prepDone
 }
 
 /** Phase 2: Connect to P2P network (can be called after async Nostr query). */

@@ -68,142 +68,139 @@ export interface HistoryVerdict {
 	ticketId?: string
 }
 
-const HISTORY_KEY = 'estimate-history'
-const MAX_HISTORY = 50
-
-export function getVerdictHistory(unit?: string, roomId?: string): HistoryVerdict[] {
-	try {
-		const raw = localStorage.getItem(HISTORY_KEY)
-		if (!raw) return []
-		const parsed: unknown = JSON.parse(raw)
-		if (!Array.isArray(parsed)) return []
-		let all = parsed.filter(
-			(v): v is HistoryVerdict =>
-				typeof v === 'object' &&
-				v !== null &&
-				typeof v.label === 'string' &&
-				typeof v.mu === 'number' &&
-				typeof v.sigma === 'number' &&
-				typeof v.unit === 'string' &&
-				typeof v.timestamp === 'number',
-		)
-		if (roomId !== undefined) all = all.filter((v) => v.roomId === roomId)
-		if (unit !== undefined) all = all.filter((v) => v.unit === unit)
-		return all
-	} catch {
-		return []
-	}
-}
-
-export function saveVerdict(entry: HistoryVerdict): void {
-	const all = getVerdictHistory()
-	// Replace existing entry with same ticket (or label fallback) + unit + roomId
-	const idx = all.findIndex(
-		(v) =>
-			v.unit === entry.unit &&
-			v.roomId === entry.roomId &&
-			(entry.ticketId ? v.ticketId === entry.ticketId : v.label === entry.label),
-	)
-	if (idx >= 0) {
-		all[idx] = entry
-	} else {
-		all.push(entry)
-	}
-	// Keep most recent entries
-	const trimmed = all.slice(-MAX_HISTORY)
-	localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed))
-}
-
-// --- Pre-estimate persistence ---
+// --- Scoped storage (isolates per room+user) ---
 
 interface StoredEstimate {
 	mu: number
 	sigma: number
 }
 
-const PRE_ESTIMATE_KEY = 'estimate-pre-estimates'
+const MAX_HISTORY = 50
 
 /**
- * Save a pre-estimate for a ticket in a room.
- * Stored as { [roomId]: { [ticketId]: { mu, sigma } } }.
+ * User-scoped localStorage abstraction.
+ * All data is keyed by roomId + userName so different users
+ * sharing the same browser never see each other's data.
  */
-export function savePreEstimate(roomId: string, ticketId: string, mu: number, sigma: number): void {
-	try {
-		const raw = localStorage.getItem(PRE_ESTIMATE_KEY)
-		const all: Record<string, Record<string, StoredEstimate>> = raw ? JSON.parse(raw) : {}
-		if (!all[roomId]) all[roomId] = {}
-		all[roomId][ticketId] = { mu, sigma }
-		localStorage.setItem(PRE_ESTIMATE_KEY, JSON.stringify(all))
-	} catch {
-		// Ignore storage errors
-	}
+export interface ScopedStorage {
+	savePreEstimate(ticketId: string, mu: number, sigma: number): void
+	getPreEstimates(): Map<string, StoredEstimate>
+	saveVerdict(entry: HistoryVerdict): void
+	getVerdictHistory(unit?: string): HistoryVerdict[]
+	saveBacklog(tickets: ImportedTicket[]): void
+	getBacklog(): ImportedTicket[]
 }
 
-/**
- * Get all pre-estimates for a room as a Map.
- */
-export function getPreEstimates(roomId: string): Map<string, StoredEstimate> {
-	try {
-		const raw = localStorage.getItem(PRE_ESTIMATE_KEY)
-		if (!raw) return new Map()
-		const all: unknown = JSON.parse(raw)
-		if (typeof all !== 'object' || all === null) return new Map()
-		const room = (all as Record<string, unknown>)[roomId]
-		if (typeof room !== 'object' || room === null) return new Map()
-		const result = new Map<string, StoredEstimate>()
-		for (const [ticketId, est] of Object.entries(room as Record<string, unknown>)) {
-			if (
-				typeof est === 'object' &&
-				est !== null &&
-				typeof (est as StoredEstimate).mu === 'number' &&
-				typeof (est as StoredEstimate).sigma === 'number'
-			) {
-				result.set(ticketId, est as StoredEstimate)
+export function createScopedStorage(roomId: string, userName: string): ScopedStorage {
+	const preEstKey = `estimate-pre:${roomId}:${userName}`
+	const backlogKey = `estimate-backlog:${roomId}:${userName}`
+	const historyKey = `estimate-history:${roomId}:${userName}`
+
+	return {
+		savePreEstimate(ticketId: string, mu: number, sigma: number): void {
+			try {
+				const raw = localStorage.getItem(preEstKey)
+				const all: Record<string, StoredEstimate> = raw ? JSON.parse(raw) : {}
+				all[ticketId] = { mu, sigma }
+				localStorage.setItem(preEstKey, JSON.stringify(all))
+			} catch {
+				// Ignore storage errors
 			}
-		}
-		return result
-	} catch {
-		return new Map()
-	}
-}
+		},
 
-// --- Backlog persistence ---
+		getPreEstimates(): Map<string, StoredEstimate> {
+			try {
+				const raw = localStorage.getItem(preEstKey)
+				if (!raw) return new Map()
+				const obj: unknown = JSON.parse(raw)
+				if (typeof obj !== 'object' || obj === null) return new Map()
+				const result = new Map<string, StoredEstimate>()
+				for (const [ticketId, est] of Object.entries(obj as Record<string, unknown>)) {
+					if (
+						typeof est === 'object' &&
+						est !== null &&
+						typeof (est as StoredEstimate).mu === 'number' &&
+						typeof (est as StoredEstimate).sigma === 'number'
+					) {
+						result.set(ticketId, est as StoredEstimate)
+					}
+				}
+				return result
+			} catch {
+				return new Map()
+			}
+		},
 
-const BACKLOG_KEY = 'estimate-backlogs'
+		saveVerdict(entry: HistoryVerdict): void {
+			const all = this.getVerdictHistory()
+			const idx = all.findIndex(
+				(v) =>
+					v.unit === entry.unit &&
+					(entry.ticketId ? v.ticketId === entry.ticketId : v.label === entry.label),
+			)
+			if (idx >= 0) {
+				all[idx] = entry
+			} else {
+				all.push(entry)
+			}
+			const trimmed = all.slice(-MAX_HISTORY)
+			localStorage.setItem(historyKey, JSON.stringify(trimmed))
+		},
 
-/**
- * Persist the backlog for a room so it survives page reloads.
- */
-export function saveBacklog(roomId: string, tickets: ImportedTicket[]): void {
-	try {
-		const raw = localStorage.getItem(BACKLOG_KEY)
-		const all: Record<string, ImportedTicket[]> = raw ? JSON.parse(raw) : {}
-		all[roomId] = tickets
-		localStorage.setItem(BACKLOG_KEY, JSON.stringify(all))
-	} catch {
-		// Ignore storage errors
-	}
-}
+		getVerdictHistory(unit?: string): HistoryVerdict[] {
+			try {
+				const raw = localStorage.getItem(historyKey)
+				if (!raw) return []
+				const parsed: unknown = JSON.parse(raw)
+				if (!Array.isArray(parsed)) return []
+				let all = parsed.filter(
+					(v): v is HistoryVerdict =>
+						typeof v === 'object' &&
+						v !== null &&
+						typeof v.label === 'string' &&
+						typeof v.mu === 'number' &&
+						typeof v.sigma === 'number' &&
+						typeof v.unit === 'string' &&
+						typeof v.timestamp === 'number',
+				)
+				if (unit !== undefined) all = all.filter((v) => v.unit === unit)
+				return all
+			} catch {
+				return []
+			}
+		},
 
-/**
- * Load a persisted backlog for a room.
- */
-export function getBacklog(roomId: string): ImportedTicket[] {
-	try {
-		const raw = localStorage.getItem(BACKLOG_KEY)
-		if (!raw) return []
-		const all: unknown = JSON.parse(raw)
-		if (typeof all !== 'object' || all === null) return []
-		const tickets = (all as Record<string, unknown>)[roomId]
-		if (!Array.isArray(tickets)) return []
-		return tickets.filter(
-			(t): t is ImportedTicket =>
-				typeof t === 'object' &&
-				t !== null &&
-				typeof (t as ImportedTicket).id === 'string' &&
-				typeof (t as ImportedTicket).title === 'string',
-		)
-	} catch {
-		return []
+		saveBacklog(tickets: ImportedTicket[]): void {
+			try {
+				// Strip runtime-only fields (median, p10, p90, estimateUnit) to avoid
+				// leaking one user's verdicts into another user's backlog view.
+				const clean = tickets.map(({ id, title, url }) => {
+					const t: ImportedTicket = { id, title }
+					if (url) t.url = url
+					return t
+				})
+				localStorage.setItem(backlogKey, JSON.stringify(clean))
+			} catch {
+				// Ignore storage errors
+			}
+		},
+
+		getBacklog(): ImportedTicket[] {
+			try {
+				const raw = localStorage.getItem(backlogKey)
+				if (!raw) return []
+				const parsed: unknown = JSON.parse(raw)
+				if (!Array.isArray(parsed)) return []
+				return parsed.filter(
+					(t): t is ImportedTicket =>
+						typeof t === 'object' &&
+						t !== null &&
+						typeof (t as ImportedTicket).id === 'string' &&
+						typeof (t as ImportedTicket).title === 'string',
+				)
+			} catch {
+				return []
+			}
+		},
 	}
 }

@@ -11,7 +11,7 @@
 		queryPrepDone,
 	} from './lib/nostr-state'
 	import { createSession, getPeerColor, selfId } from './lib/peer'
-	import { saveSession, getVerdictHistory, saveVerdict, savePreEstimate, getPreEstimates, saveBacklog, getBacklog } from './lib/session-store'
+	import { saveSession, createScopedStorage } from './lib/session-store'
 	import {
 		createInitialState,
 		getCurrentTicket,
@@ -31,6 +31,7 @@
 		startMeeting,
 		checkAutoReveal,
 		prepareJoin,
+		applyNostrState,
 		connectSession,
 		leaveSession,
 		type SessionDeps,
@@ -42,12 +43,7 @@
 		selfId,
 		createSession,
 		saveSession,
-		saveVerdict,
-		savePreEstimate,
-		getPreEstimates,
-		getVerdictHistory,
-		saveBacklog,
-		getBacklog,
+		createScopedStorage,
 		generateSessionKeys,
 		publishRoomState,
 		publishPrepDone,
@@ -57,27 +53,12 @@
 
 	async function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
 		prepareJoin(s, deps, roomId, name, selectedUnit)
-		// Query Nostr for persisted room state before connecting P2P
 		try {
 			const [roomState, prepDone] = await Promise.all([
 				queryRoomState(roomId),
 				queryPrepDone(roomId),
 			])
-			if (roomState && !s.isCreator && s.backlog.length === 0) {
-				if (roomState.backlog.length > 0) {
-					s.backlog = roomState.backlog.map((t) => ({ ...t }))
-					s.prepMode = roomState.prepMode
-					if (roomState.unit) s.unit = roomState.unit
-					if (roomState.topic) s.topic = roomState.topic
-					// Load pre-estimates for the restored backlog
-					const savedEstimates = getPreEstimates(roomId)
-					for (const [ticketId, est] of savedEstimates) {
-						s.myEstimates.set(ticketId, est)
-					}
-					if (s.backlog.length > 0) selectTicket(s, deps, 0)
-				}
-			}
-			if (prepDone.length > 0) s.prepDone = prepDone
+			applyNostrState(s, roomState, prepDone)
 		} catch {
 			// Nostr query failure is non-fatal — proceed with P2P
 		}
@@ -274,7 +255,7 @@
 				myEstimates={s.myEstimates}
 				{estimatedCount}
 				onSelect={(index) => {
-					if (s.isCreator || s.prepMode) selectTicket(s, deps, index)
+					if (s.isCreator || s.prepMode) selectTicket(s, index)
 				}}
 				onReorder={(from, to) => handleReorder(s, deps, from, to)}
 				onRemove={(index) => handleRemove(s, deps, index)}

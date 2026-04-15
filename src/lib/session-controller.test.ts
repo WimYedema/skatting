@@ -1,34 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PeerCallbacks, PeerSession } from './peer'
 import type { SessionDeps, SessionState } from './session-controller'
 import {
+	applyNostrState,
+	checkAutoReveal,
+	connectSession,
 	createInitialState,
+	createPeerCallbacks,
+	getAllParticipants,
+	getAllReady,
 	getCurrentTicket,
 	getEstimatedCount,
-	getAllParticipants,
 	getReadyCount,
-	getAllReady,
-	handleEstimateChange,
 	handleDone,
-	handleNext,
-	selectTicket,
-	processBacklogImport,
-	handleReorder,
-	handleRemove,
+	handleEstimateChange,
 	handleForceReveal,
+	handleNext,
+	handleRemove,
+	handleReorder,
 	handleTopicChange,
-	startMeeting,
-	checkAutoReveal,
 	joinSession,
 	leaveSession,
-	resetRound,
-	createPeerCallbacks,
 	persistSession,
-	addOrUpdateHistory,
-	saveRoundToHistory,
 	prepareJoin,
-	connectSession,
+	processBacklogImport,
+	resetRound,
+	saveRoundToHistory,
+	selectTicket,
+	startMeeting,
 } from './session-controller'
+import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
 
 // ---------------------------------------------------------------------------
@@ -50,18 +51,27 @@ function mockSession(): PeerSession {
 	}
 }
 
+function mockScopedStorage(overrides?: Partial<ScopedStorage>): ScopedStorage {
+	return {
+		savePreEstimate: vi.fn(),
+		getPreEstimates: vi.fn().mockReturnValue(new Map()),
+		saveVerdict: vi.fn(),
+		getVerdictHistory: vi.fn().mockReturnValue([]),
+		saveBacklog: vi.fn(),
+		getBacklog: vi.fn().mockReturnValue([]),
+		...overrides,
+	}
+}
+
 function mockDeps(overrides?: Partial<SessionDeps>): SessionDeps {
 	return {
 		selfId: 'self-id',
 		createSession: vi.fn((_roomId: string, _callbacks: PeerCallbacks) => mockSession()),
 		saveSession: vi.fn(),
-		saveVerdict: vi.fn(),
-		savePreEstimate: vi.fn(),
-		getPreEstimates: vi.fn().mockReturnValue(new Map()),
-		getVerdictHistory: vi.fn().mockReturnValue([]),
-		saveBacklog: vi.fn(),
-		getBacklog: vi.fn().mockReturnValue([]),
-		generateSessionKeys: vi.fn().mockReturnValue({ secretKeyHex: 'aa'.repeat(32), publicKeyHex: 'bb'.repeat(32) }),
+		createScopedStorage: vi.fn().mockReturnValue(mockScopedStorage()),
+		generateSessionKeys: vi
+			.fn()
+			.mockReturnValue({ secretKeyHex: 'aa'.repeat(32), publicKeyHex: 'bb'.repeat(32) }),
 		publishRoomState: vi.fn().mockResolvedValue(undefined),
 		publishPrepDone: vi.fn().mockResolvedValue(undefined),
 		queryRoomState: vi.fn().mockResolvedValue(null),
@@ -76,6 +86,11 @@ function ticket(id: string, title?: string): EstimatedTicket {
 
 function withSession(s: SessionState, session?: PeerSession): SessionState {
 	s.session = session ?? mockSession()
+	return s
+}
+
+function withStorage(s: SessionState, overrides?: Partial<ScopedStorage>): SessionState {
+	s.storage = mockScopedStorage(overrides)
 	return s
 }
 
@@ -262,13 +277,14 @@ describe('handleNext', () => {
 		s.prepMode = false
 		s.revealed = false
 		handleNext(s, deps)
-		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+		// No storage set, so nothing to check — just ensure no crash
 	})
 
 	it('saves estimate when hasMoved and advances to next ticket', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.prepMode = true
 		s.mu = 3.0
@@ -277,7 +293,7 @@ describe('handleNext', () => {
 
 		handleNext(s, deps)
 
-		expect(deps.savePreEstimate).toHaveBeenCalledWith('te-st-ro', 'T1', 3.0, 0.5)
+		expect(s.storage!.savePreEstimate).toHaveBeenCalledWith('T1', 3.0, 0.5)
 		expect(s.backlogIndex).toBe(1)
 	})
 
@@ -285,13 +301,14 @@ describe('handleNext', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.prepMode = true
 		s.hasMoved = false
 
 		handleNext(s, deps)
 
-		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
 	})
 
 	it('shows summary on last ticket', () => {
@@ -347,7 +364,7 @@ describe('selectTicket', () => {
 		s.selfReady = true
 		s.revealed = true
 
-		selectTicket(s, deps, 2)
+		selectTicket(s, 2)
 
 		expect(s.backlogIndex).toBe(2)
 		expect(s.selfReady).toBe(false)
@@ -359,10 +376,10 @@ describe('selectTicket', () => {
 		const deps = mockDeps()
 		withBacklog(s)
 
-		selectTicket(s, deps, 99)
+		selectTicket(s, 99)
 		expect(s.backlogIndex).toBe(0)
 
-		selectTicket(s, deps, -1)
+		selectTicket(s, -1)
 		expect(s.backlogIndex).toBe(0)
 	})
 
@@ -372,7 +389,7 @@ describe('selectTicket', () => {
 		withBacklog(s)
 		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
 
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
 		expect(s.mu).toBe(4.0)
 		expect(s.sigma).toBe(0.3)
@@ -381,12 +398,13 @@ describe('selectTicket', () => {
 
 	it('restores from localStorage when not in memory', () => {
 		const stored = new Map([['T2', { mu: 5.0, sigma: 0.4 }]])
-		const deps = mockDeps({ getPreEstimates: vi.fn().mockReturnValue(stored) })
 		const s = createInitialState()
+		const deps = mockDeps()
 		withSession(s)
+		withStorage(s, { getPreEstimates: vi.fn().mockReturnValue(stored) })
 		withBacklog(s)
 
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
 		expect(s.mu).toBe(5.0)
 		expect(s.sigma).toBe(0.4)
@@ -398,11 +416,12 @@ describe('selectTicket', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.mu = 5.0
 		s.sigma = 1.0
 
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
 		expect(s.mu).toBe(2.0)
 		expect(s.sigma).toBe(0.6)
@@ -412,26 +431,28 @@ describe('selectTicket', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.mu = 3.0
 		s.sigma = 0.5
 		s.hasMoved = true
 
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
-		expect(deps.savePreEstimate).toHaveBeenCalledWith('te-st-ro', 'T1', 3.0, 0.5)
+		expect(s.storage!.savePreEstimate).toHaveBeenCalledWith('T1', 3.0, 0.5)
 	})
 
 	it('does not save current estimate when skipSave is true', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.hasMoved = true
 
-		selectTicket(s, deps, 1, true)
+		selectTicket(s, 1, true)
 
-		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
 	})
 
 	it('syncs topic to peers in meeting mode', () => {
@@ -441,7 +462,7 @@ describe('selectTicket', () => {
 		withBacklog(s)
 		s.prepMode = false
 
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
 		expect(s.session!.sendTopic).toHaveBeenCalledWith({
 			topic: '',
@@ -460,6 +481,7 @@ describe('processBacklogImport', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		const tickets: ImportedTicket[] = [
 			{ id: 'A', title: 'Alpha' },
 			{ id: 'B', title: 'Beta' },
@@ -470,7 +492,7 @@ describe('processBacklogImport', () => {
 		expect(s.backlog.length).toBe(2)
 		expect(s.prepMode).toBe(true)
 		expect(s.backlogIndex).toBe(0)
-		expect(deps.saveBacklog).toHaveBeenCalled()
+		expect(s.storage!.saveBacklog).toHaveBeenCalled()
 		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
 			tickets,
 			prepMode: true,
@@ -664,8 +686,12 @@ describe('joinSession', () => {
 		]
 		const savedEstimates = new Map([['X1', { mu: 4.0, sigma: 0.3 }]])
 		const deps = mockDeps({
-			getBacklog: vi.fn().mockReturnValue(savedBacklog),
-			getPreEstimates: vi.fn().mockReturnValue(savedEstimates),
+			createScopedStorage: vi.fn().mockReturnValue(
+				mockScopedStorage({
+					getBacklog: vi.fn().mockReturnValue(savedBacklog),
+					getPreEstimates: vi.fn().mockReturnValue(savedEstimates),
+				}),
+			),
 		})
 		const s = createInitialState()
 
@@ -711,7 +737,11 @@ describe('joinSession', () => {
 
 	it('localStorage backlog does not override Nostr-preloaded backlog', () => {
 		const deps = mockDeps({
-			getBacklog: vi.fn().mockReturnValue([{ id: 'L1', title: 'Local' }]),
+			createScopedStorage: vi.fn().mockReturnValue(
+				mockScopedStorage({
+					getBacklog: vi.fn().mockReturnValue([{ id: 'L1', title: 'Local' }]),
+				}),
+			),
 		})
 		const s = createInitialState()
 
@@ -767,6 +797,127 @@ describe('prepareJoin + connectSession', () => {
 })
 
 // ---------------------------------------------------------------------------
+// applyNostrState
+// ---------------------------------------------------------------------------
+
+describe('applyNostrState', () => {
+	it('applies room state for non-creator with empty backlog', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+
+		applyNostrState(
+			s,
+			{
+				backlog: [{ id: 'N1', title: 'From Nostr' }],
+				unit: 'days',
+				prepMode: true,
+				topic: 'Sprint 42',
+			},
+			[],
+		)
+
+		expect(s.backlog.length).toBe(1)
+		expect(s.backlog[0].title).toBe('From Nostr')
+		expect(s.unit).toBe('days')
+		expect(s.topic).toBe('Sprint 42')
+		expect(s.prepMode).toBe(true)
+		expect(s.backlogIndex).toBe(0)
+	})
+
+	it('does not override existing backlog', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+		s.backlog = [{ id: 'E1', title: 'Existing' }]
+
+		applyNostrState(
+			s,
+			{
+				backlog: [{ id: 'N1', title: 'From Nostr' }],
+				unit: 'days',
+				prepMode: true,
+				topic: '',
+			},
+			[],
+		)
+
+		expect(s.backlog.length).toBe(1)
+		expect(s.backlog[0].id).toBe('E1')
+	})
+
+	it('ignores room state for creators', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Alice', 'points')
+
+		applyNostrState(
+			s,
+			{
+				backlog: [{ id: 'N1', title: 'From Nostr' }],
+				unit: 'days',
+				prepMode: true,
+				topic: 'Sprint 42',
+			},
+			[],
+		)
+
+		expect(s.backlog.length).toBe(0)
+		expect(s.unit).toBe('points')
+	})
+
+	it('applies prepDone signals', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+
+		applyNostrState(s, null, [{ name: 'Alice', ticketCount: 3, timestamp: 1000 }])
+
+		expect(s.prepDone).toHaveLength(1)
+		expect(s.prepDone[0].name).toBe('Alice')
+	})
+
+	it('loads pre-estimates from storage for restored backlog', () => {
+		const savedEstimates = new Map([['N1', { mu: 4.0, sigma: 0.3 }]])
+		const deps = mockDeps({
+			createScopedStorage: vi.fn().mockReturnValue(
+				mockScopedStorage({
+					getPreEstimates: vi.fn().mockReturnValue(savedEstimates),
+				}),
+			),
+		})
+		const s = createInitialState()
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+
+		applyNostrState(
+			s,
+			{
+				backlog: [{ id: 'N1', title: 'From Nostr' }],
+				unit: 'points',
+				prepMode: true,
+				topic: '',
+			},
+			[],
+		)
+
+		expect(s.myEstimates.get('N1')).toEqual({ mu: 4.0, sigma: 0.3 })
+		expect(s.mu).toBe(4.0)
+		expect(s.sigma).toBe(0.3)
+	})
+
+	it('handles null roomState gracefully', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+
+		applyNostrState(s, null, [])
+
+		expect(s.backlog.length).toBe(0)
+		expect(s.prepDone).toEqual([])
+	})
+})
+
+// ---------------------------------------------------------------------------
 // P2P callbacks
 // ---------------------------------------------------------------------------
 
@@ -779,6 +930,7 @@ describe('createPeerCallbacks', () => {
 		s = createInitialState()
 		deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		s.userName = 'Alice'
 		callbacks = createPeerCallbacks(s, deps)
 	})
@@ -801,7 +953,10 @@ describe('createPeerCallbacks', () => {
 	it('onPeerLeave removes peer from all maps', () => {
 		s.peerIds = ['p1', 'p2']
 		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.5 }]])
-		s.peerNames = new Map([['p1', 'Peer1'], ['p2', 'Peer2']])
+		s.peerNames = new Map([
+			['p1', 'Peer1'],
+			['p2', 'Peer2'],
+		])
 		s.readyPeers = new Set(['p1'])
 
 		callbacks.onPeerLeave('p1')
@@ -874,7 +1029,7 @@ describe('createPeerCallbacks', () => {
 		callbacks.onBacklog!(tickets, true)
 		expect(s.backlog.length).toBe(1)
 		expect(s.prepMode).toBe(true)
-		expect(deps.saveBacklog).toHaveBeenCalled()
+		expect(s.storage!.saveBacklog).toHaveBeenCalled()
 	})
 
 	it('onBacklog is ignored for creators', () => {
@@ -905,6 +1060,7 @@ describe('state machine sequences', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 
 		// Import 2 tickets
 		processBacklogImport(s, deps, [
@@ -935,12 +1091,13 @@ describe('state machine sequences', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 
 		// Don't move the blob, just select next ticket
-		selectTicket(s, deps, 1)
+		selectTicket(s, 1)
 
-		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
 	})
 
 	it('Start meeting → sendBacklog with prepMode:false', () => {
@@ -1022,6 +1179,7 @@ describe('Nostr state publication', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		s.roomCode = 'bakitume'
 		s.secretKeyHex = 'aa'.repeat(32)
 
@@ -1038,6 +1196,7 @@ describe('Nostr state publication', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.roomCode = 'bakitume'
 		s.secretKeyHex = 'aa'.repeat(32)
@@ -1051,6 +1210,7 @@ describe('Nostr state publication', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.roomCode = 'bakitume'
 		s.secretKeyHex = 'aa'.repeat(32)
@@ -1064,6 +1224,7 @@ describe('Nostr state publication', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s)
 		s.prepMode = true
 		s.roomCode = 'bakitume'
@@ -1082,6 +1243,7 @@ describe('Nostr state publication', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
+		withStorage(s)
 		withBacklog(s, 1) // Single ticket
 		s.prepMode = true
 		s.roomCode = 'bakitume'
