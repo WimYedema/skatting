@@ -230,3 +230,106 @@ Phase 1 first — bug fixes + extract state machine + write state tests. This is
 Phase 2 is the big investment — async + security together.
 Phase 3 can start after Phase 1, in parallel with Phase 2. Component tests validate the UX gap implementations.
 Phase 4 is discretionary.
+
+---
+
+## Blue Sky — Future Ideas
+
+Things that would be cool but aren't on the roadmap yet. Captured here so we don't forget.
+
+### VS Code Extension
+
+Wrap the single-file HTML in a Webview panel (~50 lines of extension code). Gets Skatting into the VS Code Marketplace with zero separate codebase. Developers could estimate beside their code without opening a browser.
+
+Higher-value integrations down the line:
+- Command palette: "Skatting: Import backlog from CSV in workspace"
+- Status bar: "3/5 prepped" indicator during async prep
+- Notification: "PO started the meeting — join now"
+
+### AI-Assisted Estimation (no API key required)
+
+Three layers, from simple to ambitious:
+
+**Heuristics + statistics (web + extension, zero dependencies)**
+- Complexity flags — scan ticket description for risk words (API, migration, legacy) → "⚠️ mentions: database migration"
+- Spread warning — after reveal, flag when P90/P10 ratio > 4× → "high disagreement — discuss"
+- Bias tracking — "you consistently underestimate by 30% vs team median"
+- Velocity patterns — "last 3 sprints averaged 34 points — you've estimated 52 so far"
+
+**Similarity matching via browser-side embeddings (web + extension)**
+- Run a small embedding model (~30MB, e.g. `all-MiniLM-L6-v2`) in-browser via Transformers.js / ONNX WASM
+- Embed ticket titles/descriptions → compare against past estimated tickets
+- Surface: "similar tickets were estimated at 5, 8, 5 points — median 5"
+- Model downloads once, caches in browser. No server, no API key, fits the serverless architecture
+
+**LLM via VS Code Copilot API (extension only, uses the user's existing Copilot subscription)**
+- The `vscode.lm` Language Model API lets extensions call Copilot with no separate key
+- Ticket decomposition: "this has 3 independent work streams — consider splitting"
+- Estimate rationale: "key cost drivers: new API integration, data migration, UI changes"
+- Discussion prompts after reveal: "the 3× spread might be because Alice considered the API dependency and Bob didn't"
+- Smart summary: "sprint estimation complete — 42 points, 2 high-uncertainty items flagged"
+
+The Copilot integration is the strongest argument for eventually building the VS Code extension — it transforms it from "same app in a panel" to "AI-assisted estimation integrated in your editor."
+
+### E2E Testing (Playwright)
+
+Multi-browser tests that exercise real P2P connections. Two browser contexts, one creator, one joiner, full journey through prep → meeting → reveal → export. Flaky by nature (depends on relays), so nightly-only, not gating CI. Revisit once Layer 1+2 testing is solid.
+
+### 🌙 Moonshot: Probabilistic Sprint Forecasting
+
+**The insight:** Skatting is the only estimation tool that captures uncertainty as a first-class dimension. Every blob is a log-normal distribution — not a point estimate. We have mu AND sigma for every ticket, for every team member. No one else has this data.
+
+**The question stakeholders actually ask:** *"When will it be done?"*
+
+Planning poker answers with a number. Skatting could answer with a **cone of probability.**
+
+**How it works:**
+1. After estimating a sprint backlog, run a Monte Carlo simulation — for each ticket, sample from its log-normal distribution (the math is already in `lognormal.ts`), sum across the backlog, repeat 10,000 times
+2. Output: *"This sprint is 23 points at P50, but 38 points at P90"*
+3. Overlay with historical velocity: *"You'll complete this backlog by Friday at 70% confidence, by next Wednesday at 95%"*
+4. Visualize as a **burndown cone** — a widening/narrowing fan instead of a line. The cone narrows as tickets complete. At the start it's wide; by mid-sprint it converges on reality
+
+**Why it's transformative:**
+- **Nobody does this.** Jira, Linear, Shortcut all show burndown *lines*. Lines lie. A cone shows whether you're fine or doomed — before the sprint fails, not after
+- **The certainty axis is the secret weapon.** High certainty tickets → narrow cone → predictable sprint. Five "gut feeling" tickets → wide cone → risky sprint. Risk becomes visible before the sprint starts
+- **It compounds.** After a few sprints, calibration data accumulates. "Your team's P90 is actually P65 — you're systematically overconfident." The model self-corrects. Forecasts get genuinely accurate over time
+- **It changes the conversation.** Instead of "can we fit 8 more points?" → "adding these 3 tickets moves your 90% confidence date from Friday to next Tuesday." Tradeoffs, not gut feelings
+
+**Why Skatting is uniquely positioned:** Other tools would have to retrofit uncertainty. We already have it — every estimate is a distribution. The Monte Carlo math is trivial given `lognormal.ts`. The canvas visualization is our strength. Nostr persistence means calibration data survives across sprints.
+
+**The vision:** *Skatting — the estimation tool that tells you when you'll be done, not just how big it is — with honest confidence intervals, not false precision.*
+
+### 🌙 Moonshot: Value × Effort — Probabilistic Prioritisation
+
+**The insight:** Skatting already captures effort with uncertainty. What if it also captured *value* with uncertainty? The ratio — value per point — becomes a *distribution*, not a number. You can compute the probability that ticket A delivers more bang-per-buck than ticket B.
+
+That's way more honest than a WSJF number on a spreadsheet.
+
+**The estimation mechanic stays the same:**
+
+| | Effort | Value |
+|---|---|---|
+| Who knows? | Developers | PO / stakeholders |
+| When? | Prep mode / meeting | PO preps value before the meeting |
+| Interaction | Same blob, same canvas | Same X=magnitude, Y=certainty |
+
+The PO estimates value using the same blob — same log-normal, same certainty axis. Just a different question: *"How valuable is this?"* instead of *"How much work?"*
+
+**What falls out of value + effort:**
+
+1. **Probabilistic priority ranking** — rank tickets by expected value-per-point with confidence intervals. Tickets whose value/effort distributions overlap → "these are genuinely interchangeable, stop arguing"
+
+2. **Priority clouds, not dots** — plot each ticket as a probability cloud on a value (Y) vs effort (X) plane. Traditional matrices show dots in quadrants (quick wins / big bets / money pits). Skatting shows *clouds* — the shape reveals how sure the team is. A tight cloud in "quick win" = do it. A cloud sprawling across quadrants = investigate before committing.
+
+3. **Sprint optimisation (ties into Monte Carlo)** — given a velocity budget, find the commitment that maximises expected value delivered: *"Swapping ticket D for ticket G improves expected value by 15% with the same effort budget."* A knapsack problem with uncertain weights and values — tractable via simulation.
+
+4. **Cost of delay becomes visible** — if value is time-sensitive ("worth 100 now, 20 next sprint"), the priority cloud drifts downward over time. Urgency becomes a shape, not a label.
+
+**What's needed:**
+- A second estimation round per ticket (or mode toggle: "estimate effort" / "estimate value")
+- One more (mu, sigma) pair per ticket per participant
+- A combined view: scatter plot with probability clouds, ranked priority list, sprint optimiser
+
+**Why this is unique:** WSJF exists. Value/effort matrices exist. But they all use point estimates that hide uncertainty. Nobody plots the *probability that ticket A beats ticket B* in value-per-point. Nobody shows you that two tickets are statistically indistinguishable so stop debating them.
+
+**Combined vision with the forecasting moonshot:** The two moonshots are halves of the same picture — *probabilistic planning, not just estimation.* Effort distributions power the **burndown cone** (when will we be done?). Value distributions power the **priority cloud** (what should we do first?). Together: *"Here's the sprint that delivers the most value by Friday with 90% confidence."*
