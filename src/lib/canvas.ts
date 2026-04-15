@@ -1,175 +1,53 @@
 import {
+	type CanvasConfig,
+	canvasToMathX,
+	canvasYToSigmaFromPeak,
+	computeYScale,
+	DEFAULT_CONFIG,
+	generateLogSpaceBlob,
+	hitTestBlob,
+	mathToCanvasX,
+	peakCanvasY,
+} from './canvas-coords'
+import {
+	createHatchPattern,
+	drawSketchyArrow,
+	jitter,
+	seededRng,
+	sketchyEllipse,
+} from './canvas-sketchy'
+import {
+	type BlobCluster,
+	convergenceState,
+	detectClusters,
+	detectPattern,
+	lognormalOverlap,
+} from './facilitation'
+import {
+	collectEstimates,
 	combineEstimates,
-	lognormalPdf,
 	lognormalQuantile,
 	muFromMode,
 	snapVerdict,
 } from './lognormal'
 import type { SceneState } from './types'
 
-/**
- * Seeded pseudo-random number generator (mulberry32).
- * Produces deterministic jitter so blobs don't wobble on every redraw.
- */
-/** @internal Seeded pseudo-random number generator (mulberry32). */
-export function seededRng(seed: number): () => number {
-	return () => {
-		seed = (seed + 0x6d2b79f5) | 0
-		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-	}
-}
-
-/** @internal Small random offset for sketchy lines. Deterministic per seed. */
-export function jitter(rng: () => number, amount = 1.5): number {
-	return (rng() - 0.5) * 2 * amount
-}
-
-export interface CanvasConfig {
-	/** Padding in pixels around the drawable area */
-	padding: number
-	/** X-axis range in math space [min, max] */
-	xRange: [number, number]
-	/** Fixed visual area for each blob (in math-space units²) */
-	blobArea: number
-}
-
-export const DEFAULT_CONFIG: CanvasConfig = {
-	padding: 40,
-	xRange: [0.5, 55],
-	blobArea: 0.55,
-}
-
-/** Map from math-space x to canvas pixel x */
-export function mathToCanvasX(
-	mathX: number,
-	canvasWidth: number,
-	config: CanvasConfig = DEFAULT_CONFIG,
-): number {
-	const drawWidth = canvasWidth - config.padding * 2
-	const [xMin, xMax] = config.xRange
-	const logMin = Math.log(xMin)
-	const logMax = Math.log(xMax)
-	const logX = Math.log(Math.max(mathX, 1e-6))
-	return config.padding + ((logX - logMin) / (logMax - logMin)) * drawWidth
-}
-
-/** Map from canvas pixel x to math-space x */
-export function canvasToMathX(
-	canvasX: number,
-	canvasWidth: number,
-	config: CanvasConfig = DEFAULT_CONFIG,
-): number {
-	const drawWidth = canvasWidth - config.padding * 2
-	const [xMin, xMax] = config.xRange
-	const logMin = Math.log(xMin)
-	const logMax = Math.log(xMax)
-	const frac = (canvasX - config.padding) / drawWidth
-	return Math.exp(logMin + frac * (logMax - logMin))
-}
-
-/**
- * Compute yScale so the tallest blob point doesn't exceed the drawable area.
- * Prefers drawHeight * 0.6 but caps to drawHeight * 0.95 / maxY if needed.
- */
-function computeYScale(drawHeight: number, maxY: number): number {
-	const preferred = drawHeight * 0.6
-	const maxAllowed = drawHeight * 0.98
-	if (maxY * preferred <= maxAllowed) return preferred
-	return maxAllowed / maxY
-}
-
-/**
- * Generate blob points in log-space where the lognormal becomes a normal distribution.
- * Returns {x, y} with x in linear math-space and y = normal PDF in log-space,
- * scaled so visual area in log-space equals targetArea.
- * Peak height = targetArea / (sigma * sqrt(2pi)) — independent of mu (mode),
- * giving uniform blob shapes across the entire X axis.
- */
-function generateLogSpaceBlob(
-	mu: number,
-	sigma: number,
-	targetArea: number,
-	numPoints = 200,
-	config: CanvasConfig = DEFAULT_CONFIG,
-): Array<{ x: number; y: number }> {
-	const uMin = Math.max(mu - 4 * sigma, Math.log(config.xRange[0]))
-	const uMax = Math.min(mu + 4 * sigma, Math.log(config.xRange[1]))
-	const step = (uMax - uMin) / (numPoints - 1)
-
-	const rawPoints: Array<{ x: number; y: number }> = []
-	let rawArea = 0
-
-	for (let i = 0; i < numPoints; i++) {
-		const u = uMin + i * step
-		const y = Math.exp(-((u - mu) ** 2) / (2 * sigma ** 2)) / (sigma * Math.sqrt(2 * Math.PI))
-		rawPoints.push({ x: Math.exp(u), y })
-		if (i > 0) {
-			rawArea += ((rawPoints[i - 1].y + y) / 2) * step
-		}
-	}
-
-	const scale = rawArea > 0 ? targetArea / rawArea : 1
-	return rawPoints.map((p) => ({ x: p.x, y: p.y * scale }))
-}
-
-/**
- * Compute the canvas Y position of the blob peak for a given mu and sigma.
- * In log-space the lognormal is a normal N(mu, sigma²), so peak height depends
- * only on sigma: blobArea / (sigma * sqrt(2pi)). Independent of mu (mode).
- */
-export function peakCanvasY(
-	_mu: number,
-	sigma: number,
-	canvasHeight: number,
-	config: CanvasConfig = DEFAULT_CONFIG,
-): number {
-	const pad = config.padding
-	const drawHeight = canvasHeight - pad * 2
-	const baselineY = canvasHeight - pad
-
-	const scaledPeak = config.blobArea / (sigma * Math.sqrt(2 * Math.PI))
-	const yScale = computeYScale(drawHeight, scaledPeak)
-	return baselineY - scaledPeak * yScale
-}
-
-/**
- * Find the sigma that makes the blob peak reach the given canvas Y position.
- * Uses binary search since peak height is monotonically decreasing with sigma.
- * Higher cursor → higher sigma (less certain, shorter peak).
- */
-export function canvasYToSigmaFromPeak(
-	canvasY: number,
-	canvasHeight: number,
-	desiredMode: number,
-	sigmaRange: [number, number] = [0.08, 2.5],
-	config: CanvasConfig = DEFAULT_CONFIG,
-): number {
-	const pad = config.padding
-	const baselineY = canvasHeight - pad
-
-	// Clamp: cursor at or below baseline → max sigma; cursor at top → min sigma
-	if (canvasY >= baselineY - 2) return sigmaRange[1]
-	if (canvasY <= pad) return sigmaRange[0]
-
-	let lo = sigmaRange[0]
-	let hi = sigmaRange[1]
-
-	// Binary search: lower sigma → taller peak (lower canvasY)
-	for (let i = 0; i < 20; i++) {
-		const mid = (lo + hi) / 2
-		const mu = muFromMode(desiredMode, mid)
-		const peakY = peakCanvasY(mu, mid, canvasHeight, config)
-		if (peakY < canvasY) {
-			// Peak is too high (too tall), need more sigma
-			lo = mid
-		} else {
-			// Peak is too low (too short), need less sigma
-			hi = mid
-		}
-	}
-	return (lo + hi) / 2
+// Re-export public API from sub-modules so existing imports keep working
+export {
+	type BlobCluster,
+	type CanvasConfig,
+	canvasToMathX,
+	canvasYToSigmaFromPeak,
+	convergenceState,
+	DEFAULT_CONFIG,
+	detectClusters,
+	detectPattern,
+	hitTestBlob,
+	jitter,
+	lognormalOverlap,
+	mathToCanvasX,
+	peakCanvasY,
+	seededRng,
 }
 
 /** Draw axes with labels — hand-drawn style */
@@ -261,33 +139,6 @@ export function drawAxes(
 	ctx.textAlign = 'center'
 	ctx.fillText('certainty', 0, 0)
 	ctx.restore()
-}
-
-/** Create a diagonal hatch pattern for a given color */
-function createHatchPattern(
-	ctx: CanvasRenderingContext2D,
-	color: string,
-	spacing = 4,
-	lineWidth = 1,
-): CanvasPattern | null {
-	const size = spacing * 2
-	const offscreen = new OffscreenCanvas(size, size)
-	const octx = offscreen.getContext('2d')
-	if (!octx) return null
-
-	octx.strokeStyle = color
-	octx.lineWidth = lineWidth
-	// Draw diagonal lines (bottom-left to top-right), repeating at tile edges
-	octx.beginPath()
-	octx.moveTo(0, size)
-	octx.lineTo(size, 0)
-	octx.moveTo(-size / 2, size / 2)
-	octx.lineTo(size / 2, -size / 2)
-	octx.moveTo(size / 2, size + size / 2)
-	octx.lineTo(size + size / 2, size / 2)
-	octx.stroke()
-
-	return ctx.createPattern(offscreen, 'repeat')
 }
 
 /** Draw a single blob (log-normal PDF) on the canvas — sketchy style */
@@ -518,16 +369,7 @@ function drawGrabHandle(
 	ctx.fillStyle = 'rgba(245, 240, 230, 0.7)'
 
 	// Sketchy circle at the peak
-	ctx.beginPath()
-	const steps = 24
-	for (let i = 0; i <= steps; i++) {
-		const angle = (i / steps) * Math.PI * 2
-		const px = cx + (r + jitter(rng, 1)) * Math.cos(angle)
-		const py = cy + (r + jitter(rng, 1)) * Math.sin(angle)
-		if (i === 0) ctx.moveTo(px, py)
-		else ctx.lineTo(px, py)
-	}
-	ctx.closePath()
+	sketchyEllipse(ctx, cx, cy, r + jitter(rng, 1), r + jitter(rng, 1), rng, 1, 24)
 	ctx.fill()
 	ctx.stroke()
 
@@ -614,16 +456,7 @@ function drawCombinedGhost(
 
 	// Small wobbly ring
 	const r = 6
-	ctx.beginPath()
-	const steps = 20
-	for (let i = 0; i <= steps; i++) {
-		const angle = (i / steps) * Math.PI * 2
-		const px = cx + (r + jitter(rng, 0.8)) * Math.cos(angle)
-		const py = cy + (r + jitter(rng, 0.8)) * Math.sin(angle)
-		if (i === 0) ctx.moveTo(px, py)
-		else ctx.lineTo(px, py)
-	}
-	ctx.closePath()
+	sketchyEllipse(ctx, cx, cy, r, r, rng, 0.8, 20)
 	ctx.stroke()
 
 	// "combined" label
@@ -727,43 +560,6 @@ function drawPaperBackground(ctx: CanvasRenderingContext2D, width: number, heigh
 	ctx.moveTo(marginX, 0)
 	ctx.lineTo(marginX, height)
 	ctx.stroke()
-}
-
-/** Test if a canvas point (px, py) is inside a blob's filled area */
-export function hitTestBlob(
-	mu: number,
-	sigma: number,
-	px: number,
-	py: number,
-	canvasWidth: number,
-	canvasHeight: number,
-	config: CanvasConfig = DEFAULT_CONFIG,
-): boolean {
-	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
-	if (points.length === 0) return false
-
-	const pad = config.padding
-	const drawHeight = canvasHeight - pad * 2
-	const maxY = Math.max(...points.map((p) => p.y))
-	const yScale = computeYScale(drawHeight, maxY)
-	const baselineY = canvasHeight - pad
-
-	// Quick Y check: must be between peak and baseline
-	if (py > baselineY || py < pad) return false
-
-	// Find the two points bracketing px, check if py is below the curve
-	for (let i = 0; i < points.length - 1; i++) {
-		const x0 = mathToCanvasX(points[i].x, canvasWidth, config)
-		const x1 = mathToCanvasX(points[i + 1].x, canvasWidth, config)
-		if (px >= x0 && px <= x1) {
-			const t = (px - x0) / (x1 - x0)
-			const curveY0 = baselineY - points[i].y * yScale
-			const curveY1 = baselineY - points[i + 1].y * yScale
-			const curveY = curveY0 + t * (curveY1 - curveY0)
-			return py >= curveY && py <= baselineY
-		}
-	}
-	return false
 }
 
 /** Ticket info drawn on the paper like handwritten sketchbook notes */
@@ -944,56 +740,6 @@ function drawHistoryScribbles(
 	}
 }
 
-/**
- * Draw a sketchy curvy arrow from (x0,y0) to (x1,y1).
- * The arrow curves via a control point offset from the midpoint.
- */
-/**
- * Draw an elastic-looking arrow from (x0,y0) to (x1,y1).
- * Single cubic bezier whose bow increases with distance —
- * short = nearly straight, long = stretched rubber-band curve.
- * Fully deterministic, no RNG.
- */
-function drawSketchyArrow(
-	ctx: CanvasRenderingContext2D,
-	x0: number,
-	y0: number,
-	x1: number,
-	y1: number,
-): void {
-	const dx = x1 - x0
-	const dy = y1 - y0
-	const len = Math.sqrt(dx * dx + dy * dy)
-	if (len < 5) return
-
-	const perpX = -dy / len
-	const perpY = dx / len
-
-	// Bow grows quadratically with length — elastic rubber-band feel
-	const bow = Math.min(len * len * 0.0008, 30)
-
-	// Asymmetric S-curve: first CP bows out more, second less
-	const cp1x = x0 + dx * 0.3 + perpX * bow
-	const cp1y = y0 + dy * 0.3 + perpY * bow
-	const cp2x = x0 + dx * 0.7 - perpX * bow * 0.3
-	const cp2y = y0 + dy * 0.7 - perpY * bow * 0.3
-
-	ctx.beginPath()
-	ctx.moveTo(x0, y0)
-	ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x1, y1)
-	ctx.stroke()
-
-	// Arrowhead from tangent at t=1: derivative = 3*(P3-P2)
-	const angle = Math.atan2(y1 - cp2y, x1 - cp2x)
-	const headLen = 7
-	ctx.beginPath()
-	ctx.moveTo(x1, y1)
-	ctx.lineTo(x1 - headLen * Math.cos(angle - 0.4), y1 - headLen * Math.sin(angle - 0.4))
-	ctx.moveTo(x1, y1)
-	ctx.lineTo(x1 - headLen * Math.cos(angle + 0.4), y1 - headLen * Math.sin(angle + 0.4))
-	ctx.stroke()
-}
-
 /** Format a number nicely: show 1 decimal if < 10, otherwise integer */
 function formatValue(v: number): string {
 	if (v < 10) return v.toFixed(1)
@@ -1097,91 +843,6 @@ function drawAnnotations(
 	ctx.restore()
 }
 
-export interface BlobCluster {
-	/** Indices into the original estimates array */
-	members: number[]
-	/** Median mode (X-axis value) of this cluster */
-	medianMode: number
-}
-
-/**
- * Detect clusters in a set of estimates using 1D gap-based splitting on mode (peak) positions.
- * Returns 1–3 clusters. A gap must be at least `threshold` times the overall range to split.
- */
-export function detectClusters(
-	estimates: ReadonlyArray<{ mu: number; sigma: number }>,
-	threshold = 0.4,
-): BlobCluster[] {
-	if (estimates.length === 0) return []
-	if (estimates.length === 1) {
-		const mode = Math.exp(estimates[0].mu - estimates[0].sigma ** 2)
-		return [{ members: [0], medianMode: mode }]
-	}
-
-	// Compute mode (peak X position) for each estimate
-	const indexed = estimates.map((e, i) => ({
-		index: i,
-		mode: Math.exp(e.mu - e.sigma ** 2),
-	}))
-	indexed.sort((a, b) => a.mode - b.mode)
-
-	const range = indexed[indexed.length - 1].mode - indexed[0].mode
-	if (range === 0) {
-		return [{ members: indexed.map((e) => e.index), medianMode: indexed[0].mode }]
-	}
-
-	// Find the largest gap
-	let maxGap = 0
-	let maxGapIdx = 0
-	for (let i = 1; i < indexed.length; i++) {
-		const gap = indexed[i].mode - indexed[i - 1].mode
-		if (gap > maxGap) {
-			maxGap = gap
-			maxGapIdx = i
-		}
-	}
-
-	// If the largest gap is below threshold, it's one cluster
-	if (maxGap / range < threshold) {
-		const modes = indexed.map((e) => e.mode)
-		return [{ members: indexed.map((e) => e.index), medianMode: median(modes) }]
-	}
-
-	// Split into two clusters at the largest gap
-	const left = indexed.slice(0, maxGapIdx)
-	const right = indexed.slice(maxGapIdx)
-
-	// Check if either half has a secondary large gap (→ 3 clusters)
-	const trySplit = (group: typeof indexed): (typeof indexed)[] => {
-		if (group.length < 2) return [group]
-		const r = group[group.length - 1].mode - group[0].mode
-		if (r === 0) return [group]
-		let mg = 0
-		let mi = 0
-		for (let i = 1; i < group.length; i++) {
-			const g = group[i].mode - group[i - 1].mode
-			if (g > mg) {
-				mg = g
-				mi = i
-			}
-		}
-		if (mg / range < threshold) return [group] // Use overall range for threshold
-		return [group.slice(0, mi), group.slice(mi)]
-	}
-
-	const parts = [...trySplit(left), ...trySplit(right)].slice(0, 3)
-	return parts.map((p) => {
-		const modes = p.map((e) => e.mode)
-		return { members: p.map((e) => e.index), medianMode: median(modes) }
-	})
-}
-
-function median(values: number[]): number {
-	const sorted = [...values].sort((a, b) => a - b)
-	const mid = Math.floor(sorted.length / 2)
-	return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-}
-
 /**
  * Draw a sketchy lasso (wobbly dashed ellipse) around a cluster of blobs,
  * with a small median annotation.
@@ -1225,16 +886,7 @@ function drawClusterLasso(
 	ctx.setLineDash([6, 4])
 
 	// Wobbly dashed ellipse
-	ctx.beginPath()
-	const steps = 40
-	for (let i = 0; i <= steps; i++) {
-		const angle = (i / steps) * Math.PI * 2
-		const x = centerX + radiusX * Math.cos(angle) + jitter(rng, 2)
-		const y = centerY + radiusY * Math.sin(angle) + jitter(rng, 2)
-		if (i === 0) ctx.moveTo(x, y)
-		else ctx.lineTo(x, y)
-	}
-	ctx.closePath()
+	sketchyEllipse(ctx, centerX, centerY, radiusX, radiusY, rng, 2, 40)
 	ctx.stroke()
 	ctx.setLineDash([])
 
@@ -1248,133 +900,6 @@ function drawClusterLasso(
 	ctx.fillText(`~${medianSnapped}`, centerX, centerY + radiusY + fontSize + 2)
 
 	ctx.restore()
-}
-
-/**
- * Compute the overlap area between two lognormal PDFs using numerical integration.
- * Returns a value in [0, 1] — the integral of min(f₁(x), f₂(x)) dx.
- * 1 = identical distributions, 0 = no overlap at all.
- */
-export function lognormalOverlap(
-	mu1: number,
-	sigma1: number,
-	mu2: number,
-	sigma2: number,
-	numSteps = 500,
-): number {
-	// Integration range: from near-zero to well beyond the larger P99
-	const lo = 0.01
-	const hi = Math.max(lognormalQuantile(0.995, mu1, sigma1), lognormalQuantile(0.995, mu2, sigma2))
-	const dx = (hi - lo) / numSteps
-	let sum = 0
-	for (let i = 0; i <= numSteps; i++) {
-		const x = lo + i * dx
-		sum += Math.min(lognormalPdf(x, mu1, sigma1), lognormalPdf(x, mu2, sigma2))
-	}
-	return sum * dx
-}
-
-/**
- * Compute convergence state from individual estimates using pairwise overlap.
- * Overlap area ∈ [0, 1]: high overlap = agreement, low = divergence.
- * Falls back to combined P90/P10 when no individual estimates are provided.
- */
-export function convergenceState(
-	mu: number,
-	sigma: number,
-	estimates?: ReadonlyArray<{ mu: number; sigma: number }>,
-): { overlap: number; color: string; converged: boolean } {
-	let overlap: number
-
-	if (estimates && estimates.length >= 2) {
-		// Minimum pairwise overlap — the worst pair drives the score
-		overlap = 1
-		for (let i = 0; i < estimates.length; i++) {
-			for (let j = i + 1; j < estimates.length; j++) {
-				const ov = lognormalOverlap(
-					estimates[i].mu,
-					estimates[i].sigma,
-					estimates[j].mu,
-					estimates[j].sigma,
-				)
-				overlap = Math.min(overlap, ov)
-			}
-		}
-	} else {
-		// Fallback for solo: measure self-consistency via P90/P10 ratio
-		const p10 = lognormalQuantile(0.1, mu, sigma)
-		const p90 = lognormalQuantile(0.9, mu, sigma)
-		const ratio = p10 > 0 ? p90 / p10 : 999
-		// Map ratio to a pseudo-overlap: ratio=1 → 1.0, ratio=3 → 0.5, ratio=5 → 0.25
-		overlap = Math.max(0, 1 - (ratio - 1) / 4)
-	}
-
-	if (overlap > 0.5) return { overlap, color: '#4a8c5c', converged: true } // green
-	if (overlap > 0.25) return { overlap, color: '#c49a3c', converged: false } // amber
-	return { overlap, color: '#b55a5a', converged: false } // red
-}
-
-/**
- * Detect the estimation pattern from revealed blobs and return a human-friendly prompt.
- */
-export function detectPattern(
-	estimates: ReadonlyArray<{ mu: number; sigma: number }>,
-	converged: boolean,
-): string {
-	if (estimates.length === 0) return ''
-	if (estimates.length === 1) return ''
-
-	const clusters = detectClusters(estimates)
-	const sigmas = estimates.map((e) => e.sigma)
-	const highUncertaintyThreshold = 0.8
-	const lowUncertaintyThreshold = 0.4
-
-	// Check certainty patterns (Y-axis)
-	const allUncertain = sigmas.every((s) => s > highUncertaintyThreshold)
-	const someUncertain = sigmas.some((s) => s > highUncertaintyThreshold)
-	const someCertain = sigmas.some((s) => s < lowUncertaintyThreshold)
-	const mixedCertainty = someUncertain && someCertain
-
-	if (converged) {
-		return "You're all on the same page"
-	}
-
-	// Uncertainty-based patterns override cluster patterns
-	if (allUncertain) {
-		return "Nobody's confident — what don't we know?"
-	}
-	if (mixedCertainty) {
-		return 'Someone knows something — care to share?'
-	}
-
-	// Cluster-based patterns
-	if (clusters.length >= 3) {
-		return 'All over the place — someone start talking'
-	}
-	if (clusters.length === 2) {
-		return 'Two camps — looks like you have something to talk about'
-	}
-
-	// Single cluster but not converged (moderate spread)
-	// Check for single outlier
-	if (estimates.length >= 3) {
-		const modes = estimates.map((e) => Math.exp(e.mu - e.sigma ** 2))
-		const sorted = [...modes].sort((a, b) => a - b)
-		const medianMode = sorted[Math.floor(sorted.length / 2)]
-		const deviations = modes.map((m) => Math.abs(m - medianMode))
-		const maxDev = Math.max(...deviations)
-		const avgDev = deviations.reduce((a, b) => a + b, 0) / deviations.length
-		if (maxDev > avgDev * 2.5) {
-			const outlierIdx = deviations.indexOf(maxDev)
-			const outlierMode = modes[outlierIdx]
-			if (outlierMode > medianMode) {
-				return 'Someone sees dragons here'
-			}
-			return 'Someone thinks this is a walk in the park'
-		}
-	}
-
-	return 'Close enough — or worth a chat?'
 }
 
 /**
@@ -1452,16 +977,7 @@ function drawAgreementRing(
 		const passRng = seededRng(seed + pass * 777)
 		ctx.lineWidth = pass === 0 ? 3 : 1.5
 		ctx.globalAlpha = pass === 0 ? 0.5 : 0.3
-		ctx.beginPath()
-		const steps = 48
-		for (let i = 0; i <= steps; i++) {
-			const angle = (i / steps) * Math.PI * 2
-			const x = centerX + radiusX * Math.cos(angle) + jitter(passRng, 2)
-			const y = centerY + radiusY * Math.sin(angle) + jitter(passRng, 2)
-			if (i === 0) ctx.moveTo(x, y)
-			else ctx.lineTo(x, y)
-		}
-		ctx.closePath()
+		sketchyEllipse(ctx, centerX, centerY, radiusX, radiusY, passRng, 2, 48)
 		ctx.stroke()
 	}
 
@@ -1641,10 +1157,7 @@ export function drawScene(
 		}
 
 		// Draw combined estimate from all participants (self excluded if abstained)
-		const allEstimates = [
-			...(selfAbstained ? [] : [{ mu: myEstimate.mu, sigma: myEstimate.sigma }]),
-			...peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma })),
-		]
+		const allEstimates = collectEstimates(myEstimate, peerEstimates, selfAbstained ?? false)
 		const combined = combineEstimates(allEstimates)
 		if (combined) {
 			const conclusionMode = scene.conclusionMode ?? null

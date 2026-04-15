@@ -156,6 +156,45 @@
 	let canSubmit = $derived(roomId.trim().length > 0 && userName.trim().length > 0)
 </script>
 
+{#snippet roomStatePreview(rs: import('../lib/nostr-state').RoomState)}
+	<div class="session-preview">
+		{#if rs.topic}
+			<span class="preview-topic">{rs.topic}</span>
+		{/if}
+		<span class="preview-meta">
+			{rs.backlog.length} tickets · {rs.unit}
+			{#if rs.prepMode} · prep mode{:else} · meeting{/if}
+		</span>
+	</div>
+{/snippet}
+
+{#snippet namePicker(names: KnownName[])}
+	{#if names.length > 0}
+		<div class="name-picker">
+			<p>Who are you?</p>
+			<div class="name-pills">
+				{#each names as kn}
+					<button
+						class="name-pill"
+						class:selected={userName.trim().toLowerCase() === kn.name.toLowerCase()}
+						onclick={() => { userName = kn.name }}
+					>
+						{kn.name}
+						{#if kn.isCreator}<span class="pill-creator">✎</span>{/if}
+						{#if kn.ticketCount != null}<span class="pill-count">{kn.ticketCount}</span>{/if}
+					</button>
+				{/each}
+			</div>
+		</div>
+	{/if}
+	<input
+		type="text"
+		bind:value={userName}
+		placeholder="or type a new name"
+		maxlength="30"
+	/>
+{/snippet}
+
 <div class="lobby">
 	<h1 class="logo">
 		<svg class="logo-bg" viewBox="0 0 660 118" aria-hidden="true">
@@ -297,15 +336,7 @@
 		<div class="room-info">
 			<div class="room-code-large">{roomId}</div>
 			{#if roomPreview?.roomState}
-				<div class="session-preview">
-					{#if roomPreview.roomState.topic}
-						<span class="preview-topic">{roomPreview.roomState.topic}</span>
-					{/if}
-					<span class="preview-meta">
-						{roomPreview.roomState.backlog.length} tickets · {roomPreview.roomState.unit}
-						{#if roomPreview.roomState.prepMode} · prep mode{:else} · meeting{/if}
-					</span>
-				</div>
+				{@render roomStatePreview(roomPreview.roomState)}
 			{:else if selectedSession}
 				<div class="session-preview">
 					{#if selectedSession.topic}
@@ -317,30 +348,7 @@
 			{#if loadingPreview}
 				<span class="preview-loading">Loading session info…</span>
 			{/if}
-			{#if roomPreview && roomPreview.knownNames.length > 0}
-				<div class="name-picker">
-					<p>Who are you?</p>
-					<div class="name-pills">
-						{#each roomPreview.knownNames as kn}
-							<button
-								class="name-pill"
-								class:selected={userName.trim().toLowerCase() === kn.name.toLowerCase()}
-								onclick={() => { userName = kn.name }}
-							>
-								{kn.name}
-								{#if kn.isCreator}<span class="pill-creator">✎</span>{/if}
-								{#if kn.ticketCount != null}<span class="pill-count">{kn.ticketCount}</span>{/if}
-							</button>
-						{/each}
-					</div>
-				</div>
-			{/if}
-			<input
-				type="text"
-				bind:value={userName}
-				placeholder="or type a new name"
-				maxlength="30"
-			/>
+			{@render namePicker(roomPreview?.knownNames ?? [])}
 			<button class="primary" onclick={submitRejoin} disabled={userName.trim().length === 0}>
 				{#if userName.trim()}Join as {userName.trim()}{:else}Join{/if}
 			</button>
@@ -351,42 +359,11 @@
 			{#if roomPreview}
 				<div class="room-code-large">{roomId}</div>
 				{#if roomPreview.roomState}
-					<div class="session-preview">
-						{#if roomPreview.roomState.topic}
-							<span class="preview-topic">{roomPreview.roomState.topic}</span>
-						{/if}
-						<span class="preview-meta">
-							{roomPreview.roomState.backlog.length} tickets · {roomPreview.roomState.unit}
-							{#if roomPreview.roomState.prepMode} · prep mode{:else} · meeting{/if}
-						</span>
-					</div>
+					{@render roomStatePreview(roomPreview.roomState)}
 				{:else}
 					<p class="preview-empty">No session data found — join anyway?</p>
 				{/if}
-				{#if roomPreview.knownNames.length > 0}
-					<div class="name-picker">
-						<p>Who are you?</p>
-						<div class="name-pills">
-							{#each roomPreview.knownNames as kn}
-								<button
-									class="name-pill"
-									class:selected={userName.trim().toLowerCase() === kn.name.toLowerCase()}
-									onclick={() => { userName = kn.name }}
-								>
-									{kn.name}
-									{#if kn.isCreator}<span class="pill-creator">✎</span>{/if}
-									{#if kn.ticketCount != null}<span class="pill-count">{kn.ticketCount}</span>{/if}
-								</button>
-							{/each}
-						</div>
-					</div>
-				{/if}
-				<input
-					type="text"
-					bind:value={userName}
-					placeholder="or type a new name"
-					maxlength="30"
-				/>
+				{@render namePicker(roomPreview.knownNames)}
 				<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
 					{#if userName.trim() && roomPreview.knownNames.some((kn) => kn.name.toLowerCase() === userName.trim().toLowerCase())}Join as {userName.trim()}{:else}Join{/if}
 				</button>
@@ -439,8 +416,8 @@
 		flex-direction: column;
 		align-items: center;
 		min-height: 100vh;
-		padding: 48px 24px;
-		gap: 20px;
+		padding: 48px var(--sp-2xl);
+		gap: var(--sp-xl);
 		box-sizing: border-box;
 	}
 
@@ -463,8 +440,8 @@
 	}
 
 	label {
-		font-size: 1.1rem;
-		color: #8a8070;
+		font-size: var(--fs-lg);
+		color: var(--c-text-muted);
 	}
 
 	/* --- Room cards grid --- */
@@ -475,7 +452,7 @@
 		gap: 14px;
 		width: 100%;
 		max-width: 660px;
-		margin-top: 4px;
+		margin-top: var(--sp-xs);
 	}
 
 	.room-card {
@@ -483,47 +460,42 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-		padding: 16px 18px 14px;
-		border: 2px dashed #c0b89a;
+		padding: var(--sp-lg) 18px 14px;
+		border: 2px dashed var(--c-border);
 		border-radius: 5px;
 		background: rgba(245, 240, 230, 0.55);
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		cursor: pointer;
 		transition:
-			background 0.15s,
-			border-color 0.15s,
-			box-shadow 0.15s;
+			background var(--tr-fast),
+			border-color var(--tr-fast),
+			box-shadow var(--tr-fast);
 		text-align: left;
-		color: #3a3530;
+		color: var(--c-text);
 		min-height: 90px;
 	}
 
 	.room-card:hover:not(.disabled) {
 		background: rgba(59, 125, 216, 0.1);
-		border-color: #8a9ab0;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-	}
-
-	.room-card.disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
+		border-color: var(--c-accent-border);
+		box-shadow: var(--shadow-sm);
 	}
 
 	.room-name {
 		font-size: 1.35rem;
 		font-weight: 700;
-		color: #3a3530;
+		color: var(--c-text);
 		line-height: 1.2;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
 		-webkit-box-orient: vertical;
-		padding-right: 20px;
+		padding-right: var(--sp-xl);
 	}
 
 	.room-peers {
-		font-size: 1.05rem;
+		font-size: var(--fs-md);
 		color: #7a7060;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -533,16 +505,16 @@
 	.room-footer {
 		display: flex;
 		align-items: baseline;
-		gap: 8px;
+		gap: var(--sp-sm);
 		margin-top: auto;
 		font-size: 0.9rem;
-		color: #a09880;
+		color: var(--c-text-faint);
 	}
 
 	.room-code {
 		font-weight: 700;
 		letter-spacing: 0.12em;
-		color: #2a5090;
+		color: var(--c-accent-text);
 	}
 
 	.room-unit {
@@ -561,13 +533,13 @@
 		padding: 2px 6px;
 		border: none;
 		background: transparent;
-		font-size: 1.1rem;
-		color: #c0b89a;
+		font-size: var(--fs-lg);
+		color: var(--c-border);
 		cursor: pointer;
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		line-height: 1;
 		opacity: 0;
-		transition: opacity 0.15s;
+		transition: opacity var(--tr-fast);
 	}
 
 	.room-card:hover .room-delete {
@@ -575,107 +547,107 @@
 	}
 
 	.room-delete:hover {
-		color: #b56b6b;
+		color: var(--c-red-border);
 	}
 
 	/* --- New session actions --- */
 
 	.new-session {
 		display: flex;
-		gap: 12px;
-		margin-top: 4px;
+		gap: var(--sp-md);
+		margin-top: var(--sp-xs);
 	}
 
 	.room-info {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 12px;
+		gap: var(--sp-md);
 	}
 
 	.room-code-large {
 		font-size: 3rem;
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		letter-spacing: 0.3em;
 		background: rgba(210, 200, 180, 0.4);
-		padding: 12px 32px;
-		border: 2px dashed #b0a890;
-		border-radius: 3px;
+		padding: var(--sp-md) 32px;
+		border: 2px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
 		user-select: all;
-		color: #3a3530;
+		color: var(--c-text);
 	}
 
 	.unit-picker {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sp-sm);
 		font-size: 1.2rem;
 	}
 
 	.unit-picker select {
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		font-size: 1.2rem;
-		padding: 4px 8px;
-		border: 2px dashed #c0b89a;
-		border-radius: 3px;
+		padding: var(--sp-xs) var(--sp-sm);
+		border: 2px dashed var(--c-border);
+		border-radius: var(--radius-sm);
 		background: rgba(245, 240, 230, 0.5);
-		color: #3a3530;
+		color: var(--c-text);
 		cursor: pointer;
 	}
 
 	input {
-		font-family: 'Caveat', cursive;
-		font-size: 1.8rem;
+		font-family: var(--font);
+		font-size: var(--fs-3xl);
 		text-align: center;
 		letter-spacing: 0.15em;
-		padding: 8px 20px;
-		border: 2px dashed #c0b89a;
-		border-radius: 3px;
+		padding: var(--sp-sm) var(--sp-xl);
+		border: 2px dashed var(--c-border);
+		border-radius: var(--radius-sm);
 		background: rgba(245, 240, 230, 0.5);
-		color: #3a3530;
+		color: var(--c-text);
 		outline: none;
 		width: 220px;
 	}
 
 	input:focus {
-		border-color: #3b7dd8;
+		border-color: var(--c-accent);
 	}
 
 	input::placeholder {
-		color: #a09880;
+		color: var(--c-text-faint);
 	}
 
 	button {
 		padding: 10px 28px;
-		border: 1px dashed #8a9ab0;
-		border-radius: 3px;
-		font-family: 'Caveat', cursive;
-		font-size: 1.3rem;
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
+		font-family: var(--font);
+		font-size: var(--fs-xl);
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 0.15s;
+		transition: background var(--tr-fast);
 	}
 
 	.primary {
-		background: rgba(59, 125, 216, 0.2);
-		color: #2a5090;
+		background: var(--c-accent-bg);
+		color: var(--c-accent-text);
 	}
 
 	.primary:hover {
-		background: rgba(59, 125, 216, 0.35);
+		background: var(--c-accent-bg-hover);
 	}
 
 	.primary:disabled {
 		background: rgba(160, 150, 130, 0.2);
-		border-color: #c0b89a;
+		border-color: var(--c-border);
 		cursor: not-allowed;
-		color: #a09880;
+		color: var(--c-text-faint);
 	}
 
 	.secondary {
 		background: rgba(160, 150, 130, 0.2);
 		color: #5a5040;
-		border-color: #b0a890;
+		border-color: var(--c-border-soft);
 	}
 
 	.secondary:hover {
@@ -684,13 +656,13 @@
 
 	.back {
 		background: transparent;
-		color: #8a8070;
-		font-size: 1rem;
+		color: var(--c-text-muted);
+		font-size: var(--fs-base);
 		border-color: transparent;
 	}
 
 	.back:hover {
-		color: #3a3530;
+		color: var(--c-text);
 	}
 
 	/* --- Join preview --- */
@@ -699,62 +671,62 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 4px;
+		gap: var(--sp-xs);
 	}
 
 	.preview-topic {
-		font-size: 1.3rem;
+		font-size: var(--fs-xl);
 		font-weight: 700;
-		color: #3a3530;
+		color: var(--c-text);
 	}
 
 	.preview-meta {
-		font-size: 1rem;
-		color: #8a8070;
+		font-size: var(--fs-base);
+		color: var(--c-text-muted);
 	}
 
 	.preview-empty {
-		color: #9a9080;
+		color: var(--c-text-ghost);
 		font-style: italic;
 	}
 
 	.preview-loading {
-		color: #8a8070;
+		color: var(--c-text-muted);
 		font-style: italic;
-		font-size: 1rem;
+		font-size: var(--fs-base);
 	}
 
 	.name-picker {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sp-sm);
 	}
 
 	.name-picker p {
 		margin: 0;
-		color: #8a8070;
-		font-size: 1rem;
+		color: var(--c-text-muted);
+		font-size: var(--fs-base);
 	}
 
 	.name-pills {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sp-sm);
 		justify-content: center;
 	}
 
 	.name-pill {
-		padding: 6px 16px;
-		border: 2px dashed #c0b89a;
-		border-radius: 20px;
+		padding: 6px var(--sp-lg);
+		border: 2px dashed var(--c-border);
+		border-radius: var(--radius-lg);
 		background: rgba(245, 240, 230, 0.55);
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		font-size: 1.15rem;
 		font-weight: 600;
-		color: #3a3530;
+		color: var(--c-text);
 		cursor: pointer;
-		transition: background 0.15s, border-color 0.15s;
+		transition: background var(--tr-fast), border-color var(--tr-fast);
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -762,18 +734,18 @@
 
 	.name-pill:hover {
 		background: rgba(59, 125, 216, 0.12);
-		border-color: #8a9ab0;
+		border-color: var(--c-accent-border);
 	}
 
 	.name-pill.selected {
-		background: rgba(59, 125, 216, 0.2);
-		border-color: #3b7dd8;
-		color: #2a5090;
+		background: var(--c-accent-bg);
+		border-color: var(--c-accent);
+		color: var(--c-accent-text);
 	}
 
 	.pill-creator {
 		font-size: 0.85em;
-		color: #8a7a60;
+		color: var(--c-warm);
 	}
 
 	.pill-count {

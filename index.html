@@ -7,6 +7,105 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        /* — Colors — */
+        --c-bg:          #e8e0d0;
+        --c-surface:     #f5f0e6;
+        --c-surface-alt: #f0e8d8;
+        --c-text:        #3a3530;
+        --c-text-soft:   #6a6050;
+        --c-text-muted:  #8a8070;
+        --c-text-faint:  #a09880;
+        --c-text-ghost:  #9a9080;
+        --c-border:      #c0b89a;
+        --c-border-soft: #b0a890;
+
+        --c-accent:       #3b7dd8;
+        --c-accent-text:  #2a5090;
+        --c-accent-border:#8a9ab0;
+        --c-accent-bg:    rgba(59, 125, 216, 0.2);
+        --c-accent-bg-hover: rgba(59, 125, 216, 0.35);
+
+        --c-green:        #4a6a40;
+        --c-green-border: #8aaa7a;
+        --c-green-bg:     rgba(90, 140, 80, 0.2);
+        --c-green-bg-hover: rgba(90, 140, 80, 0.35);
+        --c-green-signal: #3a7a3a;
+
+        --c-warm:         #8a7040;
+        --c-warm-border:  #c0a870;
+        --c-warm-bg:      rgba(180, 140, 60, 0.15);
+
+        --c-red:          #7a3030;
+        --c-red-bg:       rgba(181, 107, 107, 0.2);
+        --c-red-border:   #b56b6b;
+        --c-danger:       #8a3020;
+        --c-danger-bg:    rgba(180, 80, 60, 0.2);
+
+        --c-neutral-bg:       rgba(210, 200, 180, 0.35);
+        --c-neutral-bg-hover: rgba(210, 200, 180, 0.45);
+        --c-neutral-bg-light: rgba(210, 200, 180, 0.2);
+        --c-neutral-text:     #6a6050;
+
+        --c-overlay:      rgba(58, 53, 48, 0.5);
+        --c-overlay-light:rgba(245, 240, 230, 0.85);
+
+        /* — Typography — */
+        --font:    'Caveat', cursive;
+        --fs-xs:   0.8rem;
+        --fs-sm:   0.85rem;
+        --fs-base: 1rem;
+        --fs-md:   1.05rem;
+        --fs-lg:   1.1rem;
+        --fs-xl:   1.3rem;
+        --fs-2xl:  1.6rem;
+        --fs-3xl:  1.8rem;
+
+        /* — Spacing — */
+        --sp-xs:  4px;
+        --sp-sm:  8px;
+        --sp-md:  12px;
+        --sp-lg:  16px;
+        --sp-xl:  20px;
+        --sp-2xl: 24px;
+
+        /* — Borders & Radii — */
+        --radius-sm:   3px;
+        --radius-md:   6px;
+        --radius-lg:   20px;
+        --radius-full: 50%;
+
+        /* — Shadows — */
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+        --shadow-md: 0 3px 12px rgba(0, 0, 0, 0.12);
+        --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.15);
+
+        /* — Transitions — */
+        --tr-fast:   0.15s;
+        --tr-normal: 0.2s;
+        --tr-slow:   0.3s;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        :root {
+          --tr-fast: 0s;
+          --tr-normal: 0s;
+          --tr-slow: 0s;
+        }
+      }
+
+      /* Shared overlay backdrop for all modal/dialog components */
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: var(--c-overlay);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 20;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

@@ -6,7 +6,7 @@
 		hitTestBlob,
 		mathToCanvasX,
 	} from '../lib/canvas'
-	import { combineEstimates, lognormalQuantile, muFromMode } from '../lib/lognormal'
+	import { combineEstimates, collectEstimates, lognormalQuantile, muFromMode } from '../lib/lognormal'
 	import type { HistoryEntry, ImportedTicket } from '../lib/types'
 
 	interface Props {
@@ -130,9 +130,7 @@
 			}
 
 			// Check combined blob outline area (outside individual blobs)
-			const selfEst = selfAbstained ? [] : [{ mu, sigma }]
-			const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
-			const combined = combineEstimates([...selfEst, ...peerEsts])
+			const combined = combineEstimates(collectEstimates({ mu, sigma }, peerEstimates, selfAbstained ?? false))
 			if (combined && hitTestBlob(combined.mu, combined.sigma, px, py, width, height)) {
 				tooltipText = 'Combined' + combinedTooltipSuffix()
 				tooltipX = e.clientX - rect.left
@@ -146,9 +144,7 @@
 	}
 
 	function combinedTooltipSuffix(): string {
-		const selfEst = selfAbstained ? [] : [{ mu, sigma }]
-		const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
-		const combined = combineEstimates([...selfEst, ...peerEsts])
+		const combined = combineEstimates(collectEstimates({ mu, sigma }, peerEstimates, selfAbstained ?? false))
 		if (!combined) return ''
 		const median = lognormalQuantile(0.5, combined.mu, combined.sigma)
 		const p10 = lognormalQuantile(0.1, combined.mu, combined.sigma)
@@ -272,21 +268,21 @@
 		display: block;
 		width: 100%;
 		height: 100%;
-		background: #f5f0e6;
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
+		background: var(--c-surface);
+		border: 1px dashed var(--c-border);
+		border-radius: var(--radius-sm);
 	}
 
 	.tooltip {
 		position: absolute;
 		pointer-events: none;
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		font-size: 1.1rem;
 		font-weight: 600;
-		color: #3a3530;
+		color: var(--c-text);
 		background: rgba(245, 240, 230, 0.9);
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
+		border: 1px dashed var(--c-border);
+		border-radius: var(--radius-sm);
 		padding: 2px 8px;
 		white-space: nowrap;
 		transform: translateX(-50%);
@@ -296,16 +292,16 @@
 		position: absolute;
 		bottom: 16px;
 		right: 16px;
-		padding: 8px 18px;
-		border: 1.5px dashed #c0b89a;
-		border-radius: 3px;
+		padding: var(--sp-sm) 18px;
+		border: 1.5px dashed var(--c-border);
+		border-radius: var(--radius-sm);
 		background: rgba(245, 240, 230, 0.7);
-		color: #8a8070;
-		font-family: 'Caveat', cursive;
+		color: var(--c-text-muted);
+		font-family: var(--font);
 		font-size: 1.15rem;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 0.15s, color 0.15s;
+		transition: background var(--tr-fast), color var(--tr-fast);
 		z-index: 2;
 	}
 

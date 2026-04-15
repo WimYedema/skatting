@@ -112,7 +112,22 @@ export function lognormalQuantile(p: number, mu: number, sigma: number): number 
 
 /**
  * Combine multiple log-normal estimates using precision weighting (Bayesian product of experts).
- * More certain estimates (lower σ) get more weight. Combined σ is always narrower.
+/**
+ * Collect all active (non-abstained) estimates into a single array.
+ * Encapsulates the "self + peers minus abstained" logic used across the app.
+ */
+export function collectEstimates(
+	myEstimate: { mu: number; sigma: number },
+	peerEstimates: Array<{ mu: number; sigma: number }>,
+	selfAbstained: boolean,
+): Array<{ mu: number; sigma: number }> {
+	const self = selfAbstained ? [] : [{ mu: myEstimate.mu, sigma: myEstimate.sigma }]
+	const peers = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
+	return [...self, ...peers]
+}
+
+/**
+ * Combine multiple log-normal estimates into one using precision-weighted averaging.
  */
 export function combineEstimates(
 	estimates: Array<{ mu: number; sigma: number }>,

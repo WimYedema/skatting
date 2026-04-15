@@ -164,7 +164,7 @@ Both strategies run simultaneously. Peers connect via whichever succeeds first. 
 
 ### Target: Single HTML File
 
-The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — open it in a browser, share the session code, done. Built with `vite-plugin-singlefile`.
+The app is deployable as a **single HTML file** (~680 KB, ~215 KB gzipped) — open it in a browser, share the session code, done. Built with `vite-plugin-singlefile`.
 
 ---
 
@@ -201,9 +201,30 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 - [x] Backlog panel — collapsible sidebar with ticket list, strikethrough for estimated items
 - [x] P2P backlog sync — creator broadcasts backlog to joining peers
 
+### Phase 2-5 — Implemented ✅
+
+- [x] Nostr event persistence (kind 30078/30079) for offline-first join with AES-256-GCM encryption
+- [x] 4-syllable room codes (31.6M namespace)
+- [x] Onboarding overlay with spotlight tour (adaptive to prep/meeting mode)
+- [x] Abstain ("No idea 🤷") and skip-peer for AFK participants
+- [x] Lock blobs after reveal (anti-anchoring)
+- [x] Ghost blob with "Drag me!" arrow for first-time users
+- [x] Auto-abstain when user never drags
+- [x] Post-reveal facilitation: convergence ring (green/amber/red), cluster lassos, pattern prompts
+- [x] Deferred verdict — withheld until convergence or facilitator conclusion curve
+- [x] Conclusion curve — facilitator drags combined curve to set verdict spatially
+- [x] Live-adjust mode (🔒/🔓) — unlock everyone's blobs post-reveal
+- [x] Per-person reveal skip (selective reveal for AFK participants)
+- [x] Name picker on rejoin (Nostr state query, prep-done preview)
+- [x] Late joiner catch-up banner
+- [x] Paste-a-list import (plain text, one title per line)
+- [x] Drag-and-drop CSV file import
+- [x] Import menu ("Add tickets ▾") in header and backlog panel
+- [x] Facilitator handoff ("The Mic 🎤") — hand off/reclaim navigation controls
+- [x] Mic-drop on disconnect with grab/claim actions
+
 ### Post-MVP (Not Yet Implemented)
 
-- [ ] Async pre-estimation with localStorage persistence — save pre-estimates offline, auto-load in session
 - [ ] Mobile-optimized touch interaction
 - [ ] Named reference points on X-axis (calibration anchors)
 - [ ] QR code for session joining
@@ -222,7 +243,7 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 
 1. **X-axis scale**: Configurable units — the session creator chooses "points" or "days" at creation time. This is synced to all peers and displayed on the axis. Range is 0–20.
 
-2. **Facilitator role**: The session creator acts as facilitator — they control ticket navigation, can trigger re-estimates, toggle live-adjust mode, and drag the conclusion curve to set verdicts. Other participants estimate and discuss.
+2. **Facilitator role**: The session creator starts as facilitator — they control ticket navigation, can trigger re-estimates, toggle live-adjust mode, and drag the conclusion curve to set verdicts. The 🎤 (mic) can be handed off to any peer, transferring all navigation controls. If the mic holder disconnects, a "mic-drop" toast notifies the team and anyone can grab or reclaim the mic. Other participants estimate and discuss.
 
 3. **Blob interaction feel**: The blob follows the cursor exactly (no inertia). Horizontal position controls mode (peak), vertical position controls sigma (certainty). The peak always tracks the cursor position precisely via `muFromMode`.
 

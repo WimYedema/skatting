@@ -189,12 +189,7 @@
 
 <style>
 	.overlay {
-		position: fixed;
-		inset: 0;
 		z-index: 100;
-		display: flex;
-		align-items: center;
-		justify-content: center;
 	}
 
 	.overlay:not(.tour-overlay) {
@@ -206,33 +201,33 @@
 	}
 
 	.welcome-card {
-		background: #f5f0e6;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
+		background: var(--c-surface);
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-md);
 		padding: 28px 36px;
 		max-width: 440px;
 		width: 90%;
-		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-		font-family: 'Caveat', cursive;
+		box-shadow: var(--shadow-lg);
+		font-family: var(--font);
 	}
 
 	.welcome-card h2 {
 		margin: 0 0 16px;
 		font-size: 1.7rem;
 		font-weight: 700;
-		color: #3a3530;
+		color: var(--c-text);
 	}
 
 	.concept p {
 		font-size: 1.15rem;
 		line-height: 1.4;
-		color: #3a3530;
+		color: var(--c-text);
 		margin: 10px 0;
 	}
 
 	.concept .detail {
-		font-size: 1rem;
-		color: #6a6050;
+		font-size: var(--fs-base);
+		color: var(--c-text-soft);
 	}
 
 	.axis-diagram {
@@ -244,18 +239,18 @@
 
 	.actions {
 		display: flex;
-		gap: 12px;
+		gap: var(--sp-md);
 		justify-content: center;
 		margin-top: 18px;
 	}
 
 	.tour-btn {
 		padding: 10px 24px;
-		border: 1px dashed #8a9ab0;
-		border-radius: 3px;
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
 		background: rgba(59, 125, 216, 0.2);
-		color: #2a5090;
-		font-family: 'Caveat', cursive;
+		color: var(--c-accent-text);
+		font-family: var(--font);
 		font-size: 1.15rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -267,11 +262,11 @@
 
 	.skip-btn {
 		padding: 10px 24px;
-		border: 1px dashed #b0a890;
-		border-radius: 3px;
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
 		background: rgba(160, 150, 130, 0.15);
-		color: #8a8070;
-		font-family: 'Caveat', cursive;
+		color: var(--c-text-muted);
+		font-family: var(--font);
 		font-size: 1.1rem;
 		cursor: pointer;
 	}
@@ -283,7 +278,7 @@
 	/* Tour spotlight */
 	.spotlight {
 		position: fixed;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		box-shadow: 0 0 0 9999px rgba(58, 53, 48, 0.45);
 		pointer-events: none;
 		z-index: 101;
@@ -292,19 +287,19 @@
 	.tour-tooltip {
 		position: fixed;
 		z-index: 102;
-		background: #f5f0e6;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
+		background: var(--c-surface);
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-md);
 		padding: 14px 20px;
 		max-width: 320px;
-		box-shadow: 0 3px 16px rgba(0, 0, 0, 0.12);
-		font-family: 'Caveat', cursive;
+		box-shadow: var(--shadow-md);
+		font-family: var(--font);
 	}
 
 	.tour-title {
 		font-size: 1.2rem;
 		font-weight: 700;
-		color: #3a3530;
+		color: var(--c-text);
 		margin-bottom: 4px;
 	}
 
@@ -329,21 +324,21 @@
 	.dot {
 		width: 7px;
 		height: 7px;
-		border-radius: 50%;
-		background: #c0b89a;
+		border-radius: var(--radius-full);
+		background: var(--c-border);
 	}
 
 	.dot.active {
-		background: #3b7dd8;
+		background: var(--c-accent);
 	}
 
 	.tour-next {
 		padding: 6px 16px;
-		border: 1px dashed #8a9ab0;
-		border-radius: 3px;
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
 		background: rgba(59, 125, 216, 0.2);
-		color: #2a5090;
-		font-family: 'Caveat', cursive;
+		color: var(--c-accent-text);
+		font-family: var(--font);
 		font-size: 1.05rem;
 		font-weight: 600;
 		cursor: pointer;

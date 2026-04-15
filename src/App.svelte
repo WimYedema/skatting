@@ -1,12 +1,17 @@
 <script lang="ts">
 	import BacklogPanel from './components/BacklogPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
+	import ImportConfirmDialog from './components/ImportConfirmDialog.svelte'
+	import ImportMenu from './components/ImportMenu.svelte'
 	import Onboarding from './components/Onboarding.svelte'
+	import ParticipantsList from './components/ParticipantsList.svelte'
+	import PasteListModal from './components/PasteListModal.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
-	import { parseCsv, parseList, exportToCsv, exportToXls, downloadFile } from './lib/csv'
+	import SessionSummaryDialog from './components/SessionSummaryDialog.svelte'
+	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import type { ImportedTicket } from './lib/types'
-	import { convergenceState } from './lib/canvas'
-	import { combineEstimates, snapVerdict } from './lib/lognormal'
+	import { convergenceState } from './lib/facilitation'
+	import { combineEstimates, collectEstimates, snapVerdict } from './lib/lognormal'
 	import {
 		generateSessionKeys,
 		publishRoomState,
@@ -20,7 +25,6 @@
 		createInitialState,
 		getCurrentTicket,
 		getEstimatedCount,
-		getAllParticipants,
 		getReadyCount,
 		getAllReady,
 		handleEstimateChange,
@@ -61,9 +65,7 @@
 	let connecting = $state(false)
 	let missedRounds = $state(0)
 	let showPasteModal = $state(false)
-	let pasteText = $state('')
 	let dragOver = $state(false)
-	let importMenuOpen = $state(false)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -120,25 +122,45 @@
 				name: s.peerNames.get(pe.peerId) ?? 'Peer',
 			})),
 	)
-	let allParticipants = $derived(getAllParticipants(s, selfId))
 	let activeCount = $derived(getActiveParticipants(s, selfId).length)
 	let readyCount = $derived(getReadyCount(s, selfId))
 	let allReady = $derived(getAllReady(s, selfId))
+	let participantsData = $derived([
+		{
+			id: selfId,
+			name: s.userName,
+			color: '',
+			isReady: s.selfReady,
+			isSkipped: false,
+			isAbstained: s.selfAbstained,
+			hasMic: holdsMic,
+			isLeader: s.isCreator,
+			isSelf: true,
+		},
+		...s.peerIds.map((peerId) => ({
+			id: peerId,
+			name: s.peerNames.get(peerId) ?? 'Connecting…',
+			color: getPeerColor(peerId, s.peerIds),
+			isReady: s.readyPeers.has(peerId),
+			isSkipped: s.skippedPeers.has(peerId),
+			isAbstained: s.abstainedPeers.has(peerId),
+			hasMic: s.micHolder === peerId,
+			isLeader: peerId === s.creatorPeerId,
+			isSelf: false,
+		})),
+	])
 
 	// Convergence state for post-reveal facilitation
 	let conclusionMode: number | null = $state(null)
 	let conclusionSigma: number | null = $state(null)
 	let combinedEstimate = $derived.by(() => {
 		if (!s.revealed) return null
-		const selfEst = s.selfAbstained ? [] : [{ mu: s.mu, sigma: s.sigma }]
-		const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
-		return combineEstimates([...selfEst, ...peerEsts])
+		return combineEstimates(collectEstimates({ mu: s.mu, sigma: s.sigma }, peerEstimates, s.selfAbstained))
 	})
 	let isConverged = $derived.by(() => {
 		if (!combinedEstimate) return true
-		const selfEst = s.selfAbstained ? [] : [{ mu: s.mu, sigma: s.sigma }]
-		const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
-		return convergenceState(combinedEstimate.mu, combinedEstimate.sigma, [...selfEst, ...peerEsts]).converged
+		const all = collectEstimates({ mu: s.mu, sigma: s.sigma }, peerEstimates, s.selfAbstained)
+		return convergenceState(combinedEstimate.mu, combinedEstimate.sigma, all).converged
 	})
 	let hasVerdict = $derived(isConverged || conclusionMode != null)
 
@@ -201,8 +223,7 @@
 		downloadFile(xls, `estimates-${timestamp}.xls`, 'application/vnd.ms-excel')
 	}
 
-	function handlePasteImport() {
-		const tickets = parseList(pasteText)
+	function handlePasteImport(tickets: ImportedTicket[]) {
 		if (tickets.length === 0) return
 		if (s.backlog.length > 0) {
 			pendingImport = tickets
@@ -210,7 +231,6 @@
 			processBacklogImport(s, deps, tickets)
 		}
 		showPasteModal = false
-		pasteText = ''
 	}
 
 	function handleFileDrop(e: DragEvent) {
@@ -289,36 +309,11 @@
 			</div>
 			<div class="header-center">
 				{#if s.isCreator && s.backlog.length === 0}
-					<div class="import-menu">
-						<button class="import-toggle" onclick={() => (importMenuOpen = !importMenuOpen)}>
-							+ Add tickets ▾
-						</button>
-						{#if importMenuOpen}
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<div class="import-menu-backdrop" onclick={() => (importMenuOpen = false)}></div>
-							<div class="import-menu-dropdown">
-								<label class="import-menu-item">
-									<input
-										type="file"
-										accept=".csv"
-										class="file-input"
-										onchange={(e) => {
-											const file = (e.target as HTMLInputElement).files?.[0]
-											if (file) handleBacklogImport(file)
-											;(e.target as HTMLInputElement).value = ''
-											importMenuOpen = false
-										}}
-									/>
-									📋 From CSV file
-								</label>
-								<button class="import-menu-item" onclick={() => { showPasteModal = true; importMenuOpen = false }}>
-									📝 Paste a list
-								</button>
-								<div class="import-menu-hint">or drop a file onto the page</div>
-							</div>
-						{/if}
-					</div>
+					<ImportMenu
+						label="+ Add tickets ▾"
+						onImportCsv={handleBacklogImport}
+						onPasteList={() => (showPasteModal = true)}
+					/>
 				{/if}
 				<button
 					class="past-toggle"
@@ -392,41 +387,20 @@
 			</div>
 		{/if}
 
-		<div class="participants">
-			<div class="participant" class:is-ready={s.selfReady}>
-				<span class="ready-dot" class:ready={s.selfReady}></span>
-				<span class="name">{s.userName} (you){#if s.selfAbstained} <span class="abstain-tag">🤷</span>{/if}{#if holdsMic}<span class="mic-tag"> 🎤</span>{/if}{#if s.isCreator}<span class="leader-tag"> ✎</span>{/if}</span>
-				{#if s.isCreator && s.micHolder !== null}
-					<button class="mic-action" title="Take mic back" onclick={() => takeMicBack(s)}>← Take 🎤</button>
-				{/if}
-			</div>
-			{#each s.peerIds as peerId}
-				<div class="participant" class:is-ready={s.readyPeers.has(peerId)} class:is-skipped={s.skippedPeers.has(peerId)}>
-					<span
-						class="ready-dot"
-						class:ready={s.readyPeers.has(peerId)}
-						style="--peer-color: {getPeerColor(peerId, s.peerIds)}"
-					></span>
-					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if s.skippedPeers.has(peerId)} <span class="skipped-tag">skipped</span>{/if}{#if s.micHolder === peerId}<span class="mic-tag"> 🎤</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎</span>{/if}</span>
-					{#if s.isCreator && s.micHolder !== peerId && !s.prepMode}
-						<button class="mic-action" title="Give mic to {s.peerNames.get(peerId) ?? 'peer'}" onclick={() => handOffMic(s, selfId, peerId)}>Give 🎤</button>
-					{/if}
-					{#if holdsMic && !s.prepMode && !s.revealed && !s.readyPeers.has(peerId) && !s.skippedPeers.has(peerId)}
-						<button class="skip-btn" title="Skip this participant" onclick={() => skipPeer(s, peerId)}>✕</button>
-					{/if}
-				</div>
-			{/each}
-			<span class="ready-count">{readyCount}/{activeCount} ready</span>
-			{#if s.prepMode && s.prepDone.length > 0}
-				<span class="prep-done-divider">│</span>
-				{#each s.prepDone as signal}
-					<span class="prep-done-signal" title="{signal.name} prepped {signal.ticketCount} tickets">
-						<span class="prep-done-dot"></span>
-						{signal.name} <span class="prep-done-count">({signal.ticketCount})</span>
-					</span>
-				{/each}
-			{/if}
-		</div>
+		<ParticipantsList
+			participants={participantsData}
+			{readyCount}
+			{activeCount}
+			isCreator={s.isCreator}
+			{holdsMic}
+			micHolder={s.micHolder}
+			prepMode={s.prepMode}
+			revealed={s.revealed}
+			prepDone={s.prepDone}
+			onTakeMicBack={() => takeMicBack(s)}
+			onHandOffMic={(peerId) => handOffMic(s, selfId, peerId)}
+			onSkipPeer={(peerId) => skipPeer(s, peerId)}
+		/>
 
 		<EstimationCanvas
 			mu={s.mu}
@@ -473,70 +447,31 @@
 		{/if}
 	</main>
 	{#if s.showSummary}
-		<div class="summary-overlay" role="dialog" aria-label="Session summary">
-			<div class="summary-panel">
-				<h2>Session Summary</h2>
-				<table class="summary-table">
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>Title</th>
-							<th>Estimate</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each s.backlog as ticket}
-							<tr class:unestimated={ticket.median == null}>
-								<td class="summary-id">{ticket.id}</td>
-								<td class="summary-title">{ticket.title}</td>
-								<td class="summary-verdict">
-									{ticket.median != null ? `${ticket.median.toFixed(1)} ${s.unit}` : '—'}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-				<div class="summary-actions">
-					<button class="export" onclick={handleExportCsv}>Export CSV ↓</button>
-					<button class="export" onclick={handleExportExcel}>Export Excel ↓</button>
-					<button class="summary-close" onclick={() => (s.showSummary = false)}>Back to session</button>
-				</div>
-			</div>
-		</div>
+		<SessionSummaryDialog
+			backlog={s.backlog}
+			unit={s.unit}
+			onExportCsv={handleExportCsv}
+			onExportExcel={handleExportExcel}
+			onClose={() => (s.showSummary = false)}
+		/>
 	{/if}
 	{#if showOnboarding}
 		<Onboarding userName={s.userName} prepMode={s.prepMode} onDismiss={dismissOnboarding} />
 	{/if}
 	{#if pendingImport}
-		<div class="summary-overlay" role="dialog" aria-label="Import backlog">
-			<div class="import-confirm">
-				<h2>You already have a backlog</h2>
-				<p>{s.backlog.length} tickets loaded — importing {pendingImport.length} new ones.</p>
-				<div class="import-actions">
-					<button class="primary" onclick={handleImportMerge}>Merge (add new)</button>
-					<button class="danger" onclick={handleImportReplace}>Replace all</button>
-					<button class="secondary" onclick={() => (pendingImport = null)}>Cancel</button>
-				</div>
-			</div>
-		</div>
+		<ImportConfirmDialog
+			existingCount={s.backlog.length}
+			importCount={pendingImport.length}
+			onMerge={handleImportMerge}
+			onReplace={handleImportReplace}
+			onCancel={() => (pendingImport = null)}
+		/>
 	{/if}
 	{#if showPasteModal}
-		<div class="summary-overlay" role="dialog" aria-label="Paste a list">
-			<div class="paste-modal">
-				<h2>Paste a list</h2>
-				<p>One ticket title per line</p>
-				<textarea
-					class="paste-textarea"
-					rows="10"
-					placeholder={"Login page redesign\nFix checkout bug\nAdd dark mode\n…"}
-					bind:value={pasteText}
-				></textarea>
-				<div class="import-actions">
-					<button class="primary" disabled={pasteText.trim().length === 0} onclick={handlePasteImport}>Import {parseList(pasteText).length || ''}</button>
-					<button class="secondary" onclick={() => { showPasteModal = false; pasteText = '' }}>Cancel</button>
-				</div>
-			</div>
-		</div>
+		<PasteListModal
+			onImport={handlePasteImport}
+			onCancel={() => { showPasteModal = false }}
+		/>
 	{/if}
 	{#if dragOver}
 		<div class="drop-overlay">
@@ -548,25 +483,25 @@
 <style>
 	:global(body) {
 		margin: 0;
-		font-family: 'Caveat', cursive;
-		background: #e8e0d0;
-		color: #3a3530;
+		font-family: var(--font);
+		background: var(--c-bg);
+		color: var(--c-text);
 	}
 
 	main {
 		display: flex;
 		flex-direction: column;
 		height: 100vh;
-		padding: 16px;
+		padding: var(--sp-lg);
 		box-sizing: border-box;
-		gap: 12px;
-		transition: padding-right 0.2s;
+		gap: var(--sp-md);
+		transition: padding-right var(--tr-normal);
 	}
 
 	header {
 		display: flex;
 		align-items: center;
-		gap: 12px;
+		gap: var(--sp-md);
 	}
 
 	.header-left {
@@ -577,16 +512,21 @@
 		min-width: 0;
 	}
 
+	:global(:focus-visible) {
+		outline: 2px solid var(--c-accent);
+		outline-offset: 2px;
+	}
+
 	.header-center {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sp-sm);
 	}
 
 	.header-right {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sp-sm);
 	}
 
 	h1, .logo {
@@ -606,20 +546,20 @@
 
 	.logo-text {
 		position: relative;
-		font-family: 'Caveat', cursive;
-		font-size: 1.8rem;
+		font-family: var(--font);
+		font-size: var(--fs-3xl);
 		font-weight: 700;
-		color: #3a3530;
-		padding: 4px 12px 4px 20px;
+		color: var(--c-text);
+		padding: var(--sp-xs) var(--sp-md) var(--sp-xs) var(--sp-xl);
 	}
 
 	.topic-input {
 		background: transparent;
 		border: 1px dashed transparent;
 		border-radius: 2px;
-		color: #3a3530;
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		color: var(--c-text);
+		font-family: var(--font);
+		font-size: var(--fs-lg);
 		font-weight: 600;
 		padding: 2px 6px;
 		flex: 1;
@@ -628,16 +568,16 @@
 	}
 
 	.topic-input::placeholder {
-		color: #a09880;
+		color: var(--c-text-faint);
 		font-style: italic;
 	}
 
 	.topic-input:hover {
-		border-color: #c0b89a;
+		border-color: var(--c-border);
 	}
 
 	.topic-input:focus {
-		border-color: #3b7dd8;
+		border-color: var(--c-accent);
 		background: rgba(245, 240, 230, 0.6);
 	}
 
@@ -646,23 +586,23 @@
 		align-items: center;
 		justify-content: center;
 		gap: 10px;
-		background: rgba(181, 107, 107, 0.2);
-		border: 1px dashed #b56b6b;
-		border-radius: 3px;
-		color: #7a3030;
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
-		padding: 8px 16px;
-		margin: 0 16px;
+		background: var(--c-red-bg);
+		border: 1px dashed var(--c-red-border);
+		border-radius: var(--radius-sm);
+		color: var(--c-red);
+		font-family: var(--font);
+		font-size: var(--fs-lg);
+		padding: var(--sp-sm) var(--sp-lg);
+		margin: 0 var(--sp-lg);
 	}
 
 	.connection-error button {
 		background: none;
 		border: none;
-		color: #7a3030;
+		color: var(--c-red);
 		font-size: 1.2rem;
 		cursor: pointer;
-		padding: 0 4px;
+		padding: 0 var(--sp-xs);
 	}
 
 	.missed-rounds {
@@ -670,35 +610,35 @@
 		align-items: center;
 		gap: 10px;
 		background: rgba(59, 125, 216, 0.12);
-		border: 1px dashed #8a9ab0;
-		border-radius: 3px;
-		color: #2a5090;
-		font-family: 'Caveat', cursive;
-		font-size: 1.05rem;
-		padding: 8px 16px;
-		margin: 0 16px;
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
+		color: var(--c-accent-text);
+		font-family: var(--font);
+		font-size: var(--fs-md);
+		padding: var(--sp-sm) var(--sp-lg);
+		margin: 0 var(--sp-lg);
 	}
 
 	.missed-rounds button {
 		background: none;
 		border: none;
-		color: #2a5090;
+		color: var(--c-accent-text);
 		font-size: 1.2rem;
 		cursor: pointer;
-		padding: 0 4px;
+		padding: 0 var(--sp-xs);
 	}
 
 	.room-badge {
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		font-family: var(--font);
+		font-size: var(--fs-lg);
 		background: rgba(210, 200, 180, 0.5);
 		padding: 2px 10px;
-		border-radius: 3px;
-		border: 1px dashed #b0a890;
-		color: #3a3530;
+		border-radius: var(--radius-sm);
+		border: 1px dashed var(--c-border-soft);
+		color: var(--c-text);
 		letter-spacing: 0.1em;
 		cursor: pointer;
-		transition: background 0.15s;
+		transition: background var(--tr-fast);
 	}
 
 	.room-badge:hover {
@@ -708,7 +648,7 @@
 	.copy-icon {
 		opacity: 0.4;
 		font-size: 0.9em;
-		transition: opacity 0.15s;
+		transition: opacity var(--tr-fast);
 	}
 
 	.room-badge:hover .copy-icon {
@@ -716,143 +656,43 @@
 	}
 
 	.unit-select {
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		font-size: 0.95rem;
 		background: rgba(210, 200, 180, 0.3);
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
-		padding: 1px 4px;
-		color: #6a6050;
+		border: 1px dashed var(--c-border);
+		border-radius: var(--radius-sm);
+		padding: 1px var(--sp-xs);
+		color: var(--c-text-soft);
 		cursor: pointer;
 	}
 
 	.unit-badge {
-		font-family: 'Caveat', cursive;
+		font-family: var(--font);
 		font-size: 0.95rem;
-		color: #8a8070;
-	}
-
-	.participants {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 6px 12px;
-		background: rgba(210, 200, 180, 0.35);
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
-		font-size: 1rem;
-		flex-wrap: wrap;
-	}
-
-	.participant {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		color: #8a8070;
-		transition: color 0.2s;
-	}
-
-	.participant.is-ready {
-		color: #3a3530;
-	}
-
-	.ready-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #c0b89a;
-		transition: background 0.3s;
-	}
-
-	.ready-dot.ready {
-		background: var(--peer-color, #22c55e);
-	}
-
-	.name {
-		white-space: nowrap;
-	}
-
-	.ready-count {
-		margin-left: auto;
-		color: #9a9080;
-		font-size: 0.85rem;
-	}
-
-	.participant.is-skipped {
-		opacity: 0.45;
-	}
-
-	.skipped-tag {
-		font-family: 'Caveat', cursive;
-		font-size: 0.8em;
-		color: #b0a090;
-		font-style: italic;
-	}
-
-	.skip-btn {
-		padding: 0 4px;
-		border: none;
-		background: none;
-		color: #b0a090;
-		font-size: 0.85rem;
-		cursor: pointer;
-		line-height: 1;
-		opacity: 0.6;
-		transition: opacity 0.15s, color 0.15s;
-	}
-
-	.skip-btn:hover {
-		opacity: 1;
-		color: #8a6040;
-	}
-
-	.prep-done-divider {
-		color: #c0b89a;
-		font-size: 0.85rem;
-	}
-
-	.prep-done-signal {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		color: #5a8a5a;
-		font-size: 0.9rem;
-		white-space: nowrap;
-	}
-
-	.prep-done-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #7aaa6a;
-	}
-
-	.prep-done-count {
-		color: #8a9a80;
-		font-size: 0.8rem;
+		color: var(--c-text-muted);
 	}
 
 	button {
-		padding: 8px 20px;
-		border: 1px dashed #8a9ab0;
-		border-radius: 3px;
-		background: rgba(59, 125, 216, 0.2);
-		color: #2a5090;
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		padding: var(--sp-sm) var(--sp-xl);
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
+		background: var(--c-accent-bg);
+		color: var(--c-accent-text);
+		font-family: var(--font);
+		font-size: var(--fs-lg);
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 0.15s;
+		transition: background var(--tr-fast);
 	}
 
 	button:hover {
-		background: rgba(59, 125, 216, 0.35);
+		background: var(--c-accent-bg-hover);
 	}
 
 	.leave {
 		background: rgba(160, 150, 130, 0.25);
-		border-color: #b0a890;
-		color: #6a6050;
+		border-color: var(--c-border-soft);
+		color: var(--c-text-soft);
 	}
 
 	.leave:hover {
@@ -863,39 +703,39 @@
 		width: 30px;
 		height: 30px;
 		padding: 0;
-		border: 1px dashed #b0a890;
-		border-radius: 50%;
-		background: rgba(210, 200, 180, 0.2);
-		color: #9a9080;
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-full);
+		background: var(--c-neutral-bg-light);
+		color: var(--c-text-ghost);
+		font-family: var(--font);
+		font-size: var(--fs-lg);
 		font-weight: 700;
 		cursor: pointer;
 		line-height: 1;
-		transition: background 0.15s, color 0.15s;
+		transition: background var(--tr-fast), color var(--tr-fast);
 	}
 
 	.help-btn:hover {
-		background: rgba(210, 200, 180, 0.45);
+		background: var(--c-neutral-bg-hover);
 		color: #5a5040;
 	}
 
 	.past-toggle {
-		padding: 4px 12px;
-		border: 1px dashed #b0a890;
-		border-radius: 3px;
+		padding: var(--sp-xs) var(--sp-md);
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
 		background: rgba(210, 200, 180, 0.15);
-		color: #9a9080;
-		font-family: 'Caveat', cursive;
+		color: var(--c-text-ghost);
+		font-family: var(--font);
 		font-size: 0.95rem;
 		cursor: pointer;
-		transition: background 0.15s, color 0.15s;
+		transition: background var(--tr-fast), color var(--tr-fast);
 		white-space: nowrap;
 	}
 
 	.past-toggle:hover {
-		background: rgba(210, 200, 180, 0.35);
-		color: #6a6050;
+		background: var(--c-neutral-bg);
+		color: var(--c-text-soft);
 	}
 
 	.past-toggle.past-active {
@@ -904,53 +744,18 @@
 		border-style: solid;
 	}
 
-	.leader-tag {
-		font-family: 'Caveat', cursive;
-		font-size: 0.85em;
-		color: #8a7a60;
-		font-style: italic;
-	}
-
-	.mic-tag {
-		font-size: 0.85em;
-	}
-
-	.mic-action {
-		padding: 1px 6px;
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
-		background: rgba(210, 200, 180, 0.2);
-		color: #8a7a60;
-		font-family: 'Caveat', cursive;
-		font-size: 0.8rem;
-		cursor: pointer;
-		line-height: 1.2;
-		opacity: 0;
-		transition: opacity 0.15s;
-		white-space: nowrap;
-	}
-
-	.participant:hover .mic-action {
-		opacity: 1;
-	}
-
-	.mic-action:hover {
-		background: rgba(210, 200, 180, 0.45);
-		color: #5a5040;
-	}
-
 	.mic-drop-toast {
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		background: rgba(180, 140, 60, 0.15);
-		border: 1px dashed #c0a870;
-		border-radius: 3px;
-		color: #8a7040;
-		font-family: 'Caveat', cursive;
-		font-size: 1.05rem;
-		padding: 8px 16px;
-		margin: 0 16px;
+		background: var(--c-warm-bg);
+		border: 1px dashed var(--c-warm-border);
+		border-radius: var(--radius-sm);
+		color: var(--c-warm);
+		font-family: var(--font);
+		font-size: var(--fs-md);
+		padding: var(--sp-sm) var(--sp-lg);
+		margin: 0 var(--sp-lg);
 	}
 
 	.mic-drop-toast button {
@@ -961,41 +766,37 @@
 	.mic-drop-toast .dismiss {
 		background: none;
 		border: none;
-		color: #8a7040;
+		color: var(--c-warm);
 		font-size: 1.2rem;
 		cursor: pointer;
-		padding: 0 4px;
+		padding: 0 var(--sp-xs);
 		margin-left: auto;
 	}
 
-	.abstain-tag {
-		font-size: 0.85em;
-	}
-
 	.next {
-		background: rgba(90, 140, 80, 0.2);
-		border-color: #8aaa7a;
-		color: #4a6a40;
+		background: var(--c-green-bg);
+		border-color: var(--c-green-border);
+		color: var(--c-green);
 	}
 
 	.next:hover {
-		background: rgba(90, 140, 80, 0.35);
+		background: var(--c-green-bg-hover);
 	}
 
 	.done {
-		background: rgba(59, 125, 216, 0.2);
+		background: var(--c-accent-bg);
 		border-color: #8aaacc;
-		color: #2a5090;
+		color: var(--c-accent-text);
 	}
 
 	.done:hover {
-		background: rgba(59, 125, 216, 0.35);
+		background: var(--c-accent-bg-hover);
 	}
 
 	.force-reveal {
-		background: rgba(180, 140, 60, 0.15);
-		border-color: #c0a870;
-		color: #8a7040;
+		background: var(--c-warm-bg);
+		border-color: var(--c-warm-border);
+		color: var(--c-warm);
 		font-size: 0.95rem;
 	}
 
@@ -1005,12 +806,12 @@
 
 	.live-adjust-toggle {
 		background: rgba(120, 120, 120, 0.1);
-		border: 1.5px solid #b0a890;
-		border-radius: 8px;
+		border: 1.5px solid var(--c-border-soft);
+		border-radius: var(--sp-sm);
 		font-size: 1.2rem;
-		padding: 4px 10px;
+		padding: var(--sp-xs) 10px;
 		cursor: pointer;
-		transition: background 0.15s;
+		transition: background var(--tr-fast);
 		line-height: 1;
 	}
 
@@ -1025,8 +826,8 @@
 
 	.mode-toggle {
 		background: rgba(90, 140, 80, 0.15);
-		border-color: #8aaa7a;
-		color: #4a6a40;
+		border-color: var(--c-green-border);
+		color: var(--c-green);
 		font-size: 0.9rem;
 		padding: 6px 14px;
 	}
@@ -1036,9 +837,9 @@
 	}
 
 	.topic-link {
-		color: #2a5090;
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
+		color: var(--c-accent-text);
+		font-family: var(--font);
+		font-size: var(--fs-lg);
 		font-weight: 600;
 		text-decoration: underline;
 		text-decoration-style: dashed;
@@ -1050,277 +851,26 @@
 	}
 
 	.topic-link:hover {
-		color: #3b7dd8;
-	}
-
-	.backlog-progress {
-		font-size: 0.9rem;
-		color: #6a6050;
-		white-space: nowrap;
-	}
-
-	.export {
-		background: rgba(90, 140, 80, 0.15);
-		border-color: #8aaa7a;
-		color: #4a6a40;
-		font-size: 0.95rem;
-	}
-
-	.export:hover {
-		background: rgba(90, 140, 80, 0.3);
-	}
-
-	.import-label {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 4px 12px;
-		border: 1px dashed #b0a890;
-		border-radius: 3px;
-		background: rgba(210, 200, 180, 0.25);
-		color: #6a6050;
-		font-family: 'Caveat', cursive;
-		font-size: 1rem;
-		cursor: pointer;
-		transition: background 0.15s;
-		white-space: nowrap;
-	}
-
-	.import-label:hover {
-		background: rgba(210, 200, 180, 0.45);
-	}
-
-	.file-input {
-		display: none;
-	}
-
-	.import-menu {
-		position: relative;
-	}
-
-	.import-toggle {
-		padding: 4px 12px;
-		border: 1px dashed #b0a890;
-		border-radius: 3px;
-		background: rgba(210, 200, 180, 0.25);
-		color: #6a6050;
-		font-family: 'Caveat', cursive;
-		font-size: 1rem;
-		cursor: pointer;
-		transition: background 0.15s;
-		white-space: nowrap;
-	}
-
-	.import-toggle:hover {
-		background: rgba(210, 200, 180, 0.45);
-	}
-
-	.import-menu-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 9;
-	}
-
-	.import-menu-dropdown {
-		position: absolute;
-		top: calc(100% + 4px);
-		left: 0;
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 4px;
-		box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
-		z-index: 10;
-		min-width: 160px;
-		padding: 4px 0;
-	}
-
-	.import-menu-item {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		width: 100%;
-		padding: 8px 14px;
-		border: none;
-		background: none;
-		color: #3a3530;
-		font-family: 'Caveat', cursive;
-		font-size: 1.05rem;
-		cursor: pointer;
-		white-space: nowrap;
-		text-align: left;
-	}
-
-	.import-menu-item:hover {
-		background: rgba(210, 200, 180, 0.4);
-	}
-
-	.import-menu-hint {
-		padding: 4px 14px 6px;
-		font-size: 0.85rem;
-		color: #a09880;
-		border-top: 1px solid rgba(176, 168, 144, 0.25);
-	}
-
-	.summary-overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(58, 53, 48, 0.5);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 20;
-	}
-
-	.summary-panel {
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
-		padding: 24px 32px;
-		max-width: 640px;
-		width: 90%;
-		max-height: 80vh;
-		overflow-y: auto;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-	}
-
-	.summary-panel h2 {
-		margin: 0 0 16px;
-		font-size: 1.6rem;
-		font-weight: 700;
-		color: #3a3530;
-	}
-
-	.summary-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-family: 'Caveat', cursive;
-		font-size: 1rem;
-		margin-bottom: 20px;
-	}
-
-	.summary-table th {
-		text-align: left;
-		padding: 6px 10px;
-		border-bottom: 1px dashed #b0a890;
-		color: #8a8070;
-		font-weight: 400;
-		font-size: 0.9rem;
-	}
-
-	.summary-table td {
-		padding: 6px 10px;
-		border-bottom: 1px solid rgba(176, 168, 144, 0.2);
-	}
-
-	.summary-id {
-		color: #8a8070;
-		font-size: 0.9rem;
-		white-space: nowrap;
-	}
-
-	.summary-title {
-		max-width: 300px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.summary-verdict {
-		font-weight: 600;
-		color: #4a6a40;
-		white-space: nowrap;
-	}
-
-	tr.unestimated .summary-verdict {
-		color: #a09880;
-	}
-
-	.summary-actions {
-		display: flex;
-		gap: 12px;
-		justify-content: center;
-	}
-
-	.summary-close {
-		background: rgba(160, 150, 130, 0.25);
-		border-color: #b0a890;
-		color: #6a6050;
-	}
-
-	.summary-close:hover {
-		background: rgba(160, 150, 130, 0.4);
-	}
-
-	.import-confirm {
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
-		padding: 24px 32px;
-		max-width: 400px;
-		font-family: 'Caveat', cursive;
-		text-align: center;
-	}
-
-	.import-confirm h2 {
-		margin: 0 0 8px;
-		font-size: 1.4rem;
-		color: #3a3530;
-	}
-
-	.import-confirm p {
-		margin: 0 0 16px;
-		font-size: 1.1rem;
-		color: #6a6050;
-	}
-
-	.import-actions {
-		display: flex;
-		gap: 10px;
-		justify-content: center;
-	}
-
-	.import-actions button {
-		font-family: 'Caveat', cursive;
-		font-size: 1.1rem;
-		padding: 6px 16px;
-		border-radius: 4px;
-		border: 1px dashed #b0a890;
-		cursor: pointer;
-	}
-
-	.import-actions .primary {
-		background: rgba(91, 123, 154, 0.25);
-		color: #3a3530;
-	}
-
-	.import-actions .danger {
-		background: rgba(180, 80, 60, 0.2);
-		color: #8a3020;
-		border-color: rgba(180, 80, 60, 0.4);
-	}
-
-	.import-actions .secondary {
-		background: rgba(160, 150, 130, 0.2);
-		color: #6a6050;
+		color: var(--c-accent);
 	}
 
 	.connecting-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(245, 240, 230, 0.85);
+		background: var(--c-overlay-light);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 16px;
+		gap: var(--sp-lg);
 		z-index: 30;
 	}
 
 	.connecting-spinner {
 		width: 32px;
 		height: 32px;
-		border: 3px dashed #8a8070;
-		border-radius: 50%;
+		border: 3px dashed var(--c-text-muted);
+		border-radius: var(--radius-full);
 		animation: spin 1.2s linear infinite;
 	}
 
@@ -1329,66 +879,16 @@
 	}
 
 	.connecting-text {
-		font-family: 'Caveat', cursive;
-		font-size: 1.3rem;
-		color: #6a6050;
-	}
-
-	.paste-modal {
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
-		padding: 24px 32px;
-		max-width: 420px;
-		width: 90%;
-		font-family: 'Caveat', cursive;
-	}
-
-	.paste-modal h2 {
-		margin: 0 0 4px;
-		font-size: 1.4rem;
-		color: #3a3530;
-	}
-
-	.paste-modal p {
-		margin: 0 0 12px;
-		font-size: 1rem;
-		color: #8a8070;
-	}
-
-	.paste-textarea {
-		width: 100%;
-		box-sizing: border-box;
-		font-family: 'Caveat', cursive;
-		font-size: 1.05rem;
-		color: #3a3530;
-		background: rgba(245, 240, 230, 0.6);
-		border: 1px dashed #c0b89a;
-		border-radius: 3px;
-		padding: 10px;
-		resize: vertical;
-		outline: none;
-		margin-bottom: 14px;
-	}
-
-	.paste-textarea:focus {
-		border-color: #3b7dd8;
-	}
-
-	.paste-textarea::placeholder {
-		color: #b0a890;
-	}
-
-	.import-actions .primary:disabled {
-		opacity: 0.4;
-		cursor: default;
+		font-family: var(--font);
+		font-size: var(--fs-xl);
+		color: var(--c-text-soft);
 	}
 
 	.drop-overlay {
 		position: fixed;
 		inset: 0;
 		background: rgba(59, 125, 216, 0.12);
-		border: 3px dashed #3b7dd8;
+		border: 3px dashed var(--c-accent);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1397,12 +897,12 @@
 	}
 
 	.drop-message {
-		font-family: 'Caveat', cursive;
-		font-size: 1.8rem;
-		color: #2a5090;
+		font-family: var(--font);
+		font-size: var(--fs-3xl);
+		color: var(--c-accent-text);
 		background: rgba(245, 240, 230, 0.9);
-		padding: 16px 32px;
-		border-radius: 6px;
+		padding: var(--sp-lg) 32px;
+		border-radius: var(--radius-md);
 		border: 1px dashed #8aaacc;
 	}
 </style>

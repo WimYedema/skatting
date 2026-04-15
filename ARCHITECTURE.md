@@ -25,24 +25,33 @@ estimate/
 │   ├── App.svelte                  ← root component (session state, P2P wiring, UI)
 │   ├── main.ts                     ← entry point
 │   ├── components/
-│   │   ├── SessionLobby.svelte     ← create/join session, user name, unit selection
+│   │   ├── SessionLobby.svelte     ← create/join/rejoin session, name picker, Nostr preview
 │   │   ├── EstimationCanvas.svelte ← canvas wrapper, pointer events, resize observer
-│   │   └── BacklogPanel.svelte     ← collapsible sidebar with ticket list
+│   │   ├── BacklogPanel.svelte     ← collapsible sidebar with ticket list, import/export
+│   │   └── Onboarding.svelte       ← welcome modal + spotlight tour (adaptive to mode)
 │   └── lib/
 │       ├── lognormal.ts            ← PDF math, CDF/quantile, area normalization, combine estimates
 │       ├── lognormal.test.ts       ← 40 tests
-│       ├── canvas.ts               ← all Canvas 2D drawing, annotations, coordinate mapping, hit testing
-│       ├── canvas.test.ts          ← 24 tests
-│       ├── csv.ts                  ← CSV/Excel import/export (flexible column matching)
-│       ├── csv.test.ts             ← 26 tests
+│       ├── canvas.ts               ← all Canvas 2D drawing, facilitation visuals, coordinate mapping
+│       ├── canvas.test.ts          ← 31 tests
+│       ├── facilitation.ts         ← convergence analysis, cluster detection, pattern prompts (pure)
+│       ├── facilitation.test.ts    ← 24 tests
+│       ├── csv.ts                  ← CSV/Excel import/export, paste-a-list parser
+│       ├── csv.test.ts             ← 31 tests
 │       ├── peer.ts                 ← Trystero wrapper, dual-strategy P2P, room management
 │       ├── peer.test.ts            ← 7 tests
 │       ├── session-store.ts        ← localStorage: session persistence, verdict history
-│       ├── session-store.test.ts   ← 19 tests
+│       ├── session-store.test.ts   ← 40 tests
+│       ├── session-controller.ts   ← state machine: all session logic, P2P callbacks, mic handoff
+│       ├── session-controller.test.ts ← 141 tests
 │       ├── verdict.ts              ← verdict computation, history upsert (pure functions)
 │       ├── verdict.test.ts         ← 11 tests
+│       ├── nostr-state.ts          ← Nostr event persistence (kind 30078/30079), encryption
+│       ├── nostr-state.test.ts     ← 4 tests
+│       ├── crypto.ts               ← AES-256-GCM encryption, HKDF key derivation
+│       ├── crypto.test.ts          ← 11 tests
+│       ├── config.ts               ← Nostr relay URLs, app ID
 │       └── types.ts                ← message types, SceneState, HistoryEntry, peer colors
-├── example-backlog.csv             ← sample CSV for testing import
 ├── index.html                      ← HTML shell with Google Fonts (Caveat)
 ├── vite.config.ts
 ├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
@@ -118,6 +127,11 @@ All session state lives as `$state` variables in `App.svelte`:
 | `myEstimates` | `Map<string, Estimate>` | Personal estimates per ticket ID |
 | `prepMode` | `boolean` | Solo prep mode vs meeting mode |
 | `showPersistentHistory` | `boolean` | Toggle for cross-session history scribbles |
+| `micHolder` | `string \| null` | Peer ID of current 🎤 holder (null = creator) |
+| `micDropMessage` | `string` | Toast for mic-drop on disconnect |
+| `liveAdjust` | `boolean` | Post-reveal unlock for collaborative adjustment |
+| `skippedPeers` | `Set<string>` | AFK participants excluded from reveal gate |
+| `abstainedPeers` | `Set<string>` | Peers who explicitly abstained |
 
 Auto-reveal triggers via `$effect` when all participants are ready.
 
@@ -129,11 +143,13 @@ Defined in `src/lib/types.ts`:
 |---|---|---|
 | `EstimateMessage` | `{ mu, sigma }` | On pointer drag, on peer join |
 | `RevealMessage` | `{ revealed }` | On auto-reveal, force-reveal, or "Next" (`false`) |
-| `NameMessage` | `{ name }` | On peer join |
+| `NameMessage` | `{ name, isCreator? }` | On peer join |
 | `TopicMessage` | `{ topic, url?, ticketId? }` | On topic change, on ticket select |
-| `ReadyMessage` | `{ ready }` | On "Ready" click |
+| `ReadyMessage` | `{ ready, abstained? }` | On "Ready" or "No idea" click |
 | `UnitMessage` | `{ unit }` | On peer join (creator only) |
-| `BacklogMessage` | `{ tickets }` | On backlog import (creator → peers) |
+| `BacklogMessage` | `{ tickets, prepMode? }` | On backlog import (creator → peers) |
+| `LiveAdjustMessage` | `{ liveAdjust }` | On 🔒/🔓 toggle (mic holder) |
+| `MicMessage` | `{ holder }` | On facilitator handoff / reclaim |
 
 ### Backlog & Prep Mode
 
@@ -162,7 +178,7 @@ More certain estimates (lower σ) get more weight. Estimates with σ ≤ 0 are f
 
 ## Deployment — GitHub Pages (Static)
 
-The app is fully static. `vite build` produces a single `dist/index.html` (~470 KB, ~146 KB gzipped).
+The app is fully static. `vite build` produces a single `dist/index.html` (~680 KB, ~215 KB gzipped).
 
 ### GitHub Pages Setup
 
@@ -184,7 +200,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (127 tests)
+npm run test         # vitest run (375 tests)
 ```
 
 ---

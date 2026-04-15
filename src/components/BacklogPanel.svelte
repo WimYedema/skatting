@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { EstimatedTicket } from '../lib/types'
+	import ImportMenu from './ImportMenu.svelte'
 
 	interface Props {
 		tickets: EstimatedTicket[]
@@ -22,7 +23,6 @@
 	let collapsed = $state(window.innerWidth < 768)
 	let dragIndex = $state(-1)
 	let dropIndex = $state(-1)
-	let addMenuOpen = $state(false)
 
 	function isEstimated(ticket: EstimatedTicket): boolean {
 		return ticket.median != null || myEstimates.has(ticket.id)
@@ -119,39 +119,12 @@
 		</ul>
 		{#if isCreator}
 			<div class="bottom-bar">
-				{#if onImportCsv || onPasteList}
-					<div class="add-menu">
-						<button class="bar-btn" onclick={() => (addMenuOpen = !addMenuOpen)}>+ Add more ▾</button>
-						{#if addMenuOpen}
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<div class="add-menu-backdrop" onclick={() => (addMenuOpen = false)}></div>
-							<div class="add-menu-dropdown">
-								{#if onImportCsv}
-									<label class="add-menu-item">
-										<input
-											type="file"
-											accept=".csv"
-											class="file-input"
-											onchange={(e) => {
-												const file = (e.target as HTMLInputElement).files?.[0]
-												if (file) onImportCsv(file)
-												;(e.target as HTMLInputElement).value = ''
-												addMenuOpen = false
-											}}
-										/>
-										📋 From CSV file
-									</label>
-								{/if}
-								{#if onPasteList}
-									<button class="add-menu-item" onclick={() => { onPasteList(); addMenuOpen = false }}>
-										📝 Paste a list
-									</button>
-								{/if}
-								<div class="add-menu-hint">or drop a file onto the page</div>
-							</div>
-						{/if}
-					</div>
+				{#if onImportCsv && onPasteList}
+					<ImportMenu
+						label="+ Add more ▾"
+						onImportCsv={onImportCsv}
+						onPasteList={onPasteList}
+					/>
 				{/if}
 				{#if estimatedCount > 0}
 					<button class="bar-btn export" onclick={onExportCsv}>CSV ↓</button>
@@ -170,11 +143,11 @@
 		bottom: 0;
 		width: 260px;
 		background: rgba(232, 224, 208, 0.95);
-		border-left: 1px dashed #b0a890;
+		border-left: 1px dashed var(--c-border-soft);
 		display: flex;
 		flex-direction: column;
 		z-index: 10;
-		transition: width 0.2s;
+		transition: width var(--tr-normal);
 	}
 
 	.backlog-panel.collapsed {
@@ -182,13 +155,13 @@
 	}
 
 	.toggle {
-		padding: 8px 10px;
+		padding: var(--sp-sm) 10px;
 		background: none;
 		border: none;
-		border-bottom: 1px dashed #c0b89a;
-		color: #6a6050;
-		font-family: 'Caveat', cursive;
-		font-size: 1rem;
+		border-bottom: 1px dashed var(--c-border);
+		color: var(--c-text-soft);
+		font-family: var(--font);
+		font-size: var(--fs-base);
 		cursor: pointer;
 		text-align: left;
 		white-space: nowrap;
@@ -200,14 +173,14 @@
 
 	.prep-count {
 		margin-left: auto;
-		font-size: 0.8rem;
-		color: #8a8070;
+		font-size: var(--fs-xs);
+		color: var(--c-text-muted);
 	}
 
 	.ticket-list {
 		list-style: none;
 		margin: 0;
-		padding: 4px 0;
+		padding: var(--sp-xs) 0;
 		overflow-y: auto;
 		flex: 1;
 	}
@@ -226,15 +199,15 @@
 		padding: 6px 10px;
 		background: none;
 		border: none;
-		color: #6a6050;
-		font-family: 'Caveat', cursive;
+		color: var(--c-text-soft);
+		font-family: var(--font);
 		font-size: 0.95rem;
 		cursor: pointer;
 		text-align: left;
 	}
 
 	.ticket-btn:hover:not(:disabled) {
-		background: rgba(210, 200, 180, 0.35);
+		background: var(--c-neutral-bg);
 	}
 
 	.ticket-btn:disabled {
@@ -243,24 +216,24 @@
 
 	.ticket.current .ticket-btn {
 		background: rgba(59, 125, 216, 0.12);
-		color: #2a5090;
+		color: var(--c-accent-text);
 		font-weight: 600;
 	}
 
 	.ticket.estimated .ticket-btn {
-		color: #8a8070;
+		color: var(--c-text-muted);
 	}
 
 	.ticket.estimated .ticket-title {
 		text-decoration: line-through;
 		text-decoration-color: rgba(90, 80, 64, 0.4);
-		color: #a09880;
+		color: var(--c-text-faint);
 	}
 
 	.ticket.estimated .ticket-id {
 		text-decoration: line-through;
 		text-decoration-color: rgba(90, 80, 64, 0.3);
-		color: #a09880;
+		color: var(--c-text-faint);
 	}
 
 	.ticket.prepared .ticket-status {
@@ -274,8 +247,8 @@
 	}
 
 	.ticket-id {
-		font-size: 0.85rem;
-		color: #8a8070;
+		font-size: var(--fs-sm);
+		color: var(--c-text-muted);
 		flex-shrink: 0;
 	}
 
@@ -287,8 +260,8 @@
 	}
 
 	.ticket-verdict {
-		font-size: 0.8rem;
-		color: #4a6a40;
+		font-size: var(--fs-xs);
+		color: var(--c-green);
 		background: rgba(90, 140, 80, 0.12);
 		padding: 1px 5px;
 		border-radius: 2px;
@@ -307,13 +280,13 @@
 		padding: 0;
 		border: none;
 		background: none;
-		color: #b0a890;
+		color: var(--c-border-soft);
 		font-size: 0.9rem;
 		cursor: pointer;
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		line-height: 1;
 		opacity: 0;
-		transition: opacity 0.15s;
+		transition: opacity var(--tr-fast);
 	}
 
 	.ticket:hover .remove-btn {
@@ -336,22 +309,22 @@
 	.bottom-bar {
 		display: flex;
 		gap: 6px;
-		padding: 8px 10px;
-		border-top: 1px dashed #c0b89a;
+		padding: var(--sp-sm) 10px;
+		border-top: 1px dashed var(--c-border);
 		flex-wrap: wrap;
 	}
 
 	.bar-btn {
 		flex: 1;
 		padding: 5px 10px;
-		border: 1px dashed #b0a890;
-		border-radius: 3px;
-		background: rgba(210, 200, 180, 0.2);
-		color: #6a6050;
-		font-family: 'Caveat', cursive;
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
+		background: var(--c-neutral-bg-light);
+		color: var(--c-neutral-text);
+		font-family: var(--font);
 		font-size: 0.95rem;
 		cursor: pointer;
-		transition: background 0.15s;
+		transition: background var(--tr-fast);
 		text-align: center;
 		white-space: nowrap;
 	}
@@ -362,66 +335,11 @@
 
 	.bar-btn.export {
 		background: rgba(59, 125, 216, 0.12);
-		border-color: #8a9ab0;
-		color: #2a5090;
+		border-color: var(--c-accent-border);
+		color: var(--c-accent-text);
 	}
 
 	.bar-btn.export:hover {
 		background: rgba(59, 125, 216, 0.25);
-	}
-
-	.add-menu {
-		position: relative;
-		flex: 1;
-	}
-
-	.add-menu-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 9;
-	}
-
-	.add-menu-dropdown {
-		position: absolute;
-		bottom: calc(100% + 4px);
-		left: 0;
-		right: 0;
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 4px;
-		box-shadow: 0 -3px 12px rgba(0, 0, 0, 0.12);
-		z-index: 10;
-		padding: 4px 0;
-	}
-
-	.add-menu-item {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		width: 100%;
-		padding: 8px 14px;
-		border: none;
-		background: none;
-		color: #3a3530;
-		font-family: 'Caveat', cursive;
-		font-size: 1.05rem;
-		cursor: pointer;
-		white-space: nowrap;
-		text-align: left;
-	}
-
-	.add-menu-item:hover {
-		background: rgba(210, 200, 180, 0.4);
-	}
-
-	.add-menu-hint {
-		padding: 4px 14px 6px;
-		font-size: 0.85rem;
-		color: #a09880;
-		border-top: 1px solid rgba(176, 168, 144, 0.25);
-	}
-
-	.file-input {
-		display: none;
 	}
 </style>

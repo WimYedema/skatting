@@ -237,10 +237,12 @@ Phase 5 remaining work:
 4. ~~**5.3c** (pattern prompts)~~ ✅
 5. ~~**5.3d** (deferred verdict + conclusion curve)~~ ✅
 6. ~~**5.3e** (live adjust mode)~~ ✅
-7. **5.4** (selective reveal) — independent, touches reveal logic
-8. **5.5a+5.5b** (identity + joining) — independent pair
-9. **5.6a+5.6b** (onboarding + import) — independent pair
-10. **5.7a+5.7b+5.7c** (facilitator handoff) — lightweight, depends on 5.5a for rejoin reclaim
+7. ~~**5.4** (selective reveal)~~ ✅
+8. ~~**5.5a+5.5b** (identity + joining)~~ ✅
+9. ~~**5.6a+5.6b** (onboarding + import + drag-drop CSV)~~ ✅
+10. ~~**5.7a+5.7b+5.7c** (facilitator handoff — The Mic 🎤)~~ ✅
+
+**Phase 5 complete. 375 tests, ~215 KB gzipped.**
 
 ---
 
