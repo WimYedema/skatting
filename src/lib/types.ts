@@ -15,6 +15,7 @@ export type EstimateMessage = {
 
 export type RevealMessage = {
 	revealed: boolean
+	reEstimate?: boolean
 }
 
 export type NameMessage = {

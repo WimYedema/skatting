@@ -427,11 +427,27 @@ export function startMeeting(s: SessionState, deps: SessionDeps): void {
 	publishState(s, deps)
 }
 
+export function returnToPrep(s: SessionState): void {
+	if (!s.isCreator) return
+	s.prepMode = true
+	resetRound(s)
+	s.session?.sendBacklog({ tickets: s.backlog, prepMode: true })
+}
+
 export function checkAutoReveal(s: SessionState, allReady: boolean): void {
 	if (!s.prepMode && allReady && !s.revealed) {
 		s.revealed = true
 		s.session?.sendReveal({ revealed: true })
 	}
+}
+
+export function reEstimate(s: SessionState): void {
+	s.revealed = false
+	s.selfReady = false
+	s.selfAbstained = false
+	s.readyPeers = new Set()
+	s.abstainedPeers = new Set()
+	s.session?.sendReveal({ revealed: false, reEstimate: true })
 }
 
 export function leaveSession(s: SessionState): void {
@@ -503,9 +519,15 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		onEstimate(estimate: PeerEstimate) {
 			s.peerEstimateMap = new Map(s.peerEstimateMap).set(estimate.peerId, estimate)
 		},
-		onReveal(rev: boolean) {
+		onReveal(rev: boolean, reEstimate?: boolean) {
 			s.revealed = rev
-			if (!rev) {
+			if (!rev && reEstimate) {
+				// Re-estimate: reset ready state but keep positions
+				s.selfReady = false
+				s.selfAbstained = false
+				s.readyPeers = new Set()
+				s.abstainedPeers = new Set()
+			} else if (!rev) {
 				saveRoundToHistory(s)
 				resetRound(s)
 			}

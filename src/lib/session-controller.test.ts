@@ -29,6 +29,8 @@ import {
 	saveRoundToHistory,
 	selectTicket,
 	startMeeting,
+	returnToPrep,
+	reEstimate,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -584,6 +586,46 @@ describe('startMeeting', () => {
 			url: undefined,
 			ticketId: 'T1',
 		})
+	})
+})
+
+// ---------------------------------------------------------------------------
+// returnToPrep
+// ---------------------------------------------------------------------------
+
+describe('returnToPrep', () => {
+	it('sets prepMode true, resets round, and broadcasts', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.isCreator = true
+		s.prepMode = false
+		s.revealed = true
+		s.selfReady = true
+		s.readyPeers = new Set(['p1'])
+
+		returnToPrep(s)
+
+		expect(s.prepMode).toBe(true)
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
+			tickets: s.backlog,
+			prepMode: true,
+		})
+	})
+
+	it('does nothing for non-creator', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = false
+		s.prepMode = false
+
+		returnToPrep(s)
+
+		expect(s.prepMode).toBe(false)
+		expect(s.session!.sendBacklog).not.toHaveBeenCalled()
 	})
 })
 
@@ -1478,5 +1520,98 @@ describe('abstain persistence', () => {
 		handleNext(s, mockDeps())
 
 		expect(s.myEstimates.has('T1')).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// reEstimate
+// ---------------------------------------------------------------------------
+
+describe('reEstimate', () => {
+	it('resets revealed and ready state, keeps blob positions', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.revealed = true
+		s.selfReady = true
+		s.selfAbstained = true
+		s.readyPeers = new Set(['p1'])
+		s.abstainedPeers = new Set(['p2'])
+		s.mu = 3.0
+		s.sigma = 0.5
+
+		reEstimate(s)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+		expect(s.abstainedPeers.size).toBe(0)
+		// Blob position preserved
+		expect(s.mu).toBe(3.0)
+		expect(s.sigma).toBe(0.5)
+	})
+
+	it('sends reEstimate flag in RevealMessage', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.revealed = true
+
+		reEstimate(s)
+
+		expect(s.session!.sendReveal).toHaveBeenCalledWith({
+			revealed: false,
+			reEstimate: true,
+		})
+	})
+})
+
+// ---------------------------------------------------------------------------
+// onReveal with reEstimate flag
+// ---------------------------------------------------------------------------
+
+describe('onReveal with reEstimate flag', () => {
+	let s: SessionState
+	let callbacks: PeerCallbacks
+
+	beforeEach(() => {
+		s = createInitialState()
+		withSession(s)
+		s.revealed = true
+		s.selfReady = true
+		s.readyPeers = new Set(['p1'])
+		s.abstainedPeers = new Set(['p2'])
+		s.selfAbstained = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		callbacks = createPeerCallbacks(s)
+	})
+
+	it('reEstimate=true resets ready but keeps blob positions', () => {
+		callbacks.onReveal(false, true)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+		expect(s.abstainedPeers.size).toBe(0)
+		// Blob position preserved
+		expect(s.mu).toBe(3.0)
+		expect(s.sigma).toBe(0.5)
+	})
+
+	it('reEstimate=false (next round) saves history and resets', () => {
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
+		callbacks.onReveal(false, false)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+	})
+
+	it('reEstimate=undefined (next round) saves history and resets', () => {
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
+		callbacks.onReveal(false)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
 	})
 })

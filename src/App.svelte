@@ -31,6 +31,8 @@
 		handleReorder,
 		handleRemove,
 		startMeeting,
+		returnToPrep,
+		reEstimate,
 		checkAutoReveal,
 		prepareJoin,
 		applyNostrState,
@@ -206,10 +208,16 @@
 					<button class="next" onclick={() => handleNext(s, deps)}>
 						{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 					</button>
+					{#if s.isCreator}
+						<button class="mode-toggle" onclick={() => reEstimate(s)}>Re-estimate ↺</button>
+					{/if}
 				{:else if !s.selfReady}
 					<button class="done" data-tour="ready" onclick={() => handleDone(s)}>Ready ✓</button>
 				{:else if !allReady}
 					<button class="force-reveal" onclick={() => handleForceReveal(s)}>Reveal anyway</button>
+				{/if}
+				{#if !s.prepMode && s.isCreator && s.backlog.length > 0}
+					<button class="mode-toggle" onclick={() => returnToPrep(s)}>Back to prep</button>
 				{/if}
 				<button class="leave" onclick={() => leaveSession(s)}>Leave</button>
 				<button class="help-btn" title="How does this work?" onclick={() => (showOnboarding = true)}>?</button>

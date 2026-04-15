@@ -33,7 +33,7 @@ export interface PeerCallbacks {
 	onPeerJoin: (peerId: string) => void
 	onPeerLeave: (peerId: string) => void
 	onEstimate: (estimate: PeerEstimate) => void
-	onReveal: (revealed: boolean) => void
+	onReveal: (revealed: boolean, reEstimate?: boolean) => void
 	onName: (peerId: string, name: string, isCreator: boolean) => void
 	onTopic: (topic: string, url?: string, ticketId?: string) => void
 	onReady: (peerId: string, ready: boolean, abstained?: boolean) => void
@@ -180,7 +180,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onEstimate((data, peerId) => {
 			callbacks.onEstimate({ peerId, mu: data.mu, sigma: data.sigma })
 		})
-		onReveal((data) => callbacks.onReveal(data.revealed))
+		onReveal((data) => callbacks.onReveal(data.revealed, data.reEstimate))
 		onName((data, peerId) => callbacks.onName(peerId, data.name, !!data.isCreator))
 		onTopic((data) => callbacks.onTopic(data.topic, data.url, data.ticketId))
 		onReady((data, peerId) => callbacks.onReady(peerId, data.ready, data.abstained))
