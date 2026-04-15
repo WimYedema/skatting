@@ -241,6 +241,15 @@
 				</div>
 			{/each}
 			<span class="ready-count">{readyCount}/{allParticipants.length} ready</span>
+			{#if s.prepMode && s.prepDone.length > 0}
+				<span class="prep-done-divider">│</span>
+				{#each s.prepDone as signal}
+					<span class="prep-done-signal" title="{signal.name} prepped {signal.ticketCount} tickets">
+						<span class="prep-done-dot"></span>
+						{signal.name} <span class="prep-done-count">({signal.ticketCount})</span>
+					</span>
+				{/each}
+			{/if}
 		</div>
 
 		<EstimationCanvas
@@ -499,6 +508,32 @@
 		margin-left: auto;
 		color: #9a9080;
 		font-size: 0.85rem;
+	}
+
+	.prep-done-divider {
+		color: #c0b89a;
+		font-size: 0.85rem;
+	}
+
+	.prep-done-signal {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		color: #5a8a5a;
+		font-size: 0.9rem;
+		white-space: nowrap;
+	}
+
+	.prep-done-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #7aaa6a;
+	}
+
+	.prep-done-count {
+		color: #8a9a80;
+		font-size: 0.8rem;
 	}
 
 	button {
