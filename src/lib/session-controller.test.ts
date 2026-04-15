@@ -26,6 +26,8 @@ import {
 	persistSession,
 	addOrUpdateHistory,
 	saveRoundToHistory,
+	prepareJoin,
+	connectSession,
 } from './session-controller'
 import type { EstimatedTicket, ImportedTicket } from './types'
 
@@ -670,6 +672,91 @@ describe('joinSession', () => {
 		expect(s.backlogIndex).toBe(0)
 		expect(s.mu).toBe(4.0)
 		expect(s.sigma).toBe(0.3)
+	})
+
+	it('applies preloaded Nostr state for joiners', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro', 'Bob', null, {
+			backlog: [{ id: 'N1', title: 'From Nostr' }],
+			unit: 'days',
+			prepMode: true,
+			topic: 'Sprint 42',
+		})
+
+		expect(s.unit).toBe('days')
+		expect(s.topic).toBe('Sprint 42')
+		expect(s.backlog.length).toBe(1)
+		expect(s.backlog[0].title).toBe('From Nostr')
+		expect(s.prepMode).toBe(true)
+	})
+
+	it('preloaded state does not override unit for creator', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro', 'Alice', 'points', {
+			unit: 'days',
+		})
+
+		expect(s.unit).toBe('points')
+	})
+
+	it('localStorage backlog does not override Nostr-preloaded backlog', () => {
+		const deps = mockDeps({
+			getBacklog: vi.fn().mockReturnValue([{ id: 'L1', title: 'Local' }]),
+		})
+		const s = createInitialState()
+
+		joinSession(s, deps, 'te-st-ro', 'Bob', null, {
+			backlog: [{ id: 'N1', title: 'From Nostr' }],
+		})
+
+		// Nostr backlog wins — localStorage is skipped because backlog is already populated
+		expect(s.backlog.length).toBe(1)
+		expect(s.backlog[0].id).toBe('N1')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// prepareJoin + connectSession (split flow for Phase 2 async)
+// ---------------------------------------------------------------------------
+
+describe('prepareJoin + connectSession', () => {
+	it('prepareJoin sets state without creating P2P session', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		prepareJoin(s, deps, 'te-st-ro', 'Alice', 'points')
+
+		expect(s.userName).toBe('Alice')
+		expect(s.isCreator).toBe(true)
+		expect(s.session).toBeNull()
+		expect(deps.createSession).not.toHaveBeenCalled()
+	})
+
+	it('connectSession creates P2P session', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		prepareJoin(s, deps, 'te-st-ro', 'Alice', 'points')
+		connectSession(s, deps, 'te-st-ro')
+
+		expect(s.session).toBeTruthy()
+		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object))
+	})
+
+	it('mimics joinSession when called sequentially', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		prepareJoin(s, deps, 'te-st-ro', 'Bob', null)
+		connectSession(s, deps, 'te-st-ro')
+
+		expect(s.userName).toBe('Bob')
+		expect(s.isCreator).toBe(false)
+		expect(s.session).toBeTruthy()
 	})
 })
 

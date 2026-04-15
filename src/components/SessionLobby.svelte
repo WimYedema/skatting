@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { generateRoomId } from '../lib/peer'
+	import { generateRoomId } from '../lib/config'
 	import {
 		deleteSession,
 		getLastUserName,

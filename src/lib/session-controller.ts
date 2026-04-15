@@ -468,17 +468,41 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 // Session join / create
 // ---------------------------------------------------------------------------
 
-export function joinSession(
+/** State that can be pre-loaded from Nostr relays before connecting P2P. */
+export interface PreloadedState {
+	backlog?: ImportedTicket[]
+	unit?: string
+	prepMode?: boolean
+	topic?: string
+}
+
+/**
+ * Phase 1: Set up local state for join (synchronous).
+ * Phase 2 can call this, then query Nostr, then call connectSession.
+ */
+export function prepareJoin(
 	s: SessionState,
 	deps: SessionDeps,
 	roomId: string,
 	name: string,
 	selectedUnit: string | null,
+	preloaded?: PreloadedState,
 ): void {
 	s.userName = name
 	s.isCreator = selectedUnit !== null
 	if (selectedUnit) s.unit = selectedUnit
 	s.connectionError = ''
+
+	// Apply pre-loaded state from Nostr (if any) before localStorage
+	if (preloaded) {
+		if (preloaded.unit && !s.isCreator) s.unit = preloaded.unit
+		if (preloaded.topic) s.topic = preloaded.topic
+		if (preloaded.prepMode !== undefined) s.prepMode = preloaded.prepMode
+		if (preloaded.backlog && preloaded.backlog.length > 0 && s.backlog.length === 0) {
+			s.backlog = preloaded.backlog.map((t) => ({ ...t }))
+			s.prepMode = preloaded.prepMode ?? true
+		}
+	}
 
 	s.persistentHistory = deps.getVerdictHistory(s.unit, roomId)
 
@@ -492,16 +516,37 @@ export function joinSession(
 		lastUsed: Date.now(),
 	})
 
+	// Restore from localStorage (only if not already loaded from Nostr)
 	const savedBacklog = deps.getBacklog(roomId)
 	if (savedBacklog.length > 0 && s.backlog.length === 0) {
 		s.backlog = savedBacklog.map((t) => ({ ...t }))
 		s.prepMode = true
+	}
+
+	// Load pre-estimates into in-memory map
+	if (s.backlog.length > 0) {
 		const savedEstimates = deps.getPreEstimates(roomId)
 		for (const [ticketId, est] of savedEstimates) {
 			s.myEstimates.set(ticketId, est)
 		}
 		selectTicket(s, deps, 0)
 	}
+}
 
+/** Phase 2: Connect to P2P network (can be called after async Nostr query). */
+export function connectSession(s: SessionState, deps: SessionDeps, roomId: string): void {
 	s.session = deps.createSession(roomId, createPeerCallbacks(s, deps))
+}
+
+/** Convenience: prepareJoin + connectSession in one call. */
+export function joinSession(
+	s: SessionState,
+	deps: SessionDeps,
+	roomId: string,
+	name: string,
+	selectedUnit: string | null,
+	preloaded?: PreloadedState,
+): void {
+	prepareJoin(s, deps, roomId, name, selectedUnit, preloaded)
+	connectSession(s, deps, roomId)
 }

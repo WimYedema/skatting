@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { generateRoomId, getPeerColor } from './peer'
+import { getPeerColor } from './peer'
+import { generateRoomId } from './config'
 import { PEER_COLORS } from './types'
 
 describe('getPeerColor', () => {
@@ -29,13 +30,13 @@ describe('getPeerColor', () => {
 })
 
 describe('generateRoomId', () => {
-	it('returns a 6-character string of 3 syllables', () => {
+	it('returns an 8-character string of 4 syllables', () => {
 		const id = generateRoomId()
-		expect(id).toHaveLength(6)
+		expect(id).toHaveLength(8)
 	})
 
 	it('follows consonant-vowel syllable pattern', () => {
-		const pattern = /^([bdfghjkmnprstvz][aeiou]){3}$/
+		const pattern = /^([bdfghjkmnprstvz][aeiou]){4}$/
 		for (let i = 0; i < 50; i++) {
 			expect(generateRoomId()).toMatch(pattern)
 		}
@@ -43,7 +44,7 @@ describe('generateRoomId', () => {
 
 	it('generates different IDs on subsequent calls', () => {
 		const ids = new Set(Array.from({ length: 20 }, () => generateRoomId()))
-		// With (15*5)^3 = 421,875 combinations, 20 calls should all be unique
+		// With (15*5)^4 ≈ 31.6M combinations, 20 calls should all be unique
 		expect(ids.size).toBe(20)
 	})
 })

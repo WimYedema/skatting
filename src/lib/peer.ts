@@ -2,6 +2,7 @@ import type { Room } from '@trystero-p2p/core'
 import { selfId } from '@trystero-p2p/core'
 import { joinRoom as joinMqttRoom, getRelaySockets as getMqttSockets } from '@trystero-p2p/mqtt'
 import { joinRoom as joinNostrRoom, getRelaySockets as getNostrSockets } from '@trystero-p2p/nostr'
+import { APP_ID, NOSTR_RELAY_URLS } from './config'
 import type {
 	BacklogMessage,
 	EstimateMessage,
@@ -14,13 +15,6 @@ import type {
 	UnitMessage,
 } from './types'
 import { PEER_COLORS } from './types'
-
-const APP_ID = 'estimate-p2p-tool'
-
-const NOSTR_RELAY_URLS = [
-	'wss://nos.lol',
-	'wss://relay.primal.net',
-]
 
 export interface PeerSession {
 	roomId: string
@@ -224,17 +218,6 @@ export function getPeerColor(peerId: string, allPeerIds: string[]): string {
 	const index = allPeerIds.indexOf(peerId)
 	if (index < 0) return PEER_COLORS[0]
 	return PEER_COLORS[index % PEER_COLORS.length]
-}
-
-export function generateRoomId(): string {
-	const consonants = 'bdfghjkmnprstvz'
-	const vowels = 'aeiou'
-	let id = ''
-	for (let i = 0; i < 3; i++) {
-		id += consonants[Math.floor(Math.random() * consonants.length)]
-		id += vowels[Math.floor(Math.random() * vowels.length)]
-	}
-	return id
 }
 
 export { selfId }
