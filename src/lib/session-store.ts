@@ -61,6 +61,7 @@ export interface HistoryVerdict {
 	unit: string
 	timestamp: number
 	roomId?: string
+	ticketId?: string
 }
 
 const HISTORY_KEY = 'estimate-history'
@@ -92,9 +93,12 @@ export function getVerdictHistory(unit?: string, roomId?: string): HistoryVerdic
 
 export function saveVerdict(entry: HistoryVerdict): void {
 	const all = getVerdictHistory()
-	// Replace existing entry with same label+unit+roomId, or append
+	// Replace existing entry with same ticket (or label fallback) + unit + roomId
 	const idx = all.findIndex(
-		(v) => v.label === entry.label && v.unit === entry.unit && v.roomId === entry.roomId,
+		(v) =>
+			v.unit === entry.unit &&
+			v.roomId === entry.roomId &&
+			(entry.ticketId ? v.ticketId === entry.ticketId : v.label === entry.label),
 	)
 	if (idx >= 0) {
 		all[idx] = entry

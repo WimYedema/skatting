@@ -3,448 +3,93 @@
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
 	import SessionLobby from './components/SessionLobby.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
-	import { createSession, getPeerColor, selfId, type PeerSession } from './lib/peer'
+	import { createSession, getPeerColor, selfId } from './lib/peer'
 	import { saveSession, getVerdictHistory, saveVerdict, savePreEstimate, getPreEstimates, saveBacklog, getBacklog } from './lib/session-store'
-	import type { EstimatedTicket, HistoryEntry, ImportedTicket, PeerEstimate } from './lib/types'
-	import { applyVerdict, computeVerdict, upsertHistory } from './lib/verdict'
+	import {
+		createInitialState,
+		getCurrentTicket,
+		getEstimatedCount,
+		getAllParticipants,
+		getReadyCount,
+		getAllReady,
+		handleEstimateChange,
+		handleDone,
+		handleTopicChange,
+		handleForceReveal,
+		handleNext,
+		selectTicket,
+		processBacklogImport,
+		handleReorder,
+		handleRemove,
+		startMeeting,
+		checkAutoReveal,
+		joinSession,
+		leaveSession,
+		type SessionDeps,
+	} from './lib/session-controller'
 
-	let mu = $state(2.0)
-	let sigma = $state(0.6)
-	let revealed = $state(false)
-	let session = $state<PeerSession | null>(null)
-	let peerIds = $state<string[]>([])
-	let peerEstimateMap = $state<Map<string, PeerEstimate>>(new Map())
+	let s = $state(createInitialState())
 
-	let userName = $state('')
-	let topic = $state('')
-	let topicUrl = $state('')
-	let peerNames = $state<Map<string, string>>(new Map())
-	let creatorPeerId = $state<string | null>(null)
-	let readyPeers = $state<Set<string>>(new Set())
-	let selfReady = $state(false)
-	let history = $state<HistoryEntry[]>([])
-	let persistentHistory = $state<HistoryEntry[]>([])
-	let showPersistentHistory = $state(true)
-	let unit = $state('points')
-	let isCreator = $state(false)
-	let connectionError = $state('')
+	const deps: SessionDeps = {
+		selfId,
+		createSession,
+		saveSession,
+		saveVerdict,
+		savePreEstimate,
+		getPreEstimates,
+		getVerdictHistory,
+		saveBacklog,
+		getBacklog,
+	}
 
-	// Backlog state
-	let backlog = $state<EstimatedTicket[]>([])
-	let backlogIndex = $state(-1)
-	/** Personal estimates per ticket ID — preserved across ticket switches */
-	let myEstimates = $state<Map<string, { mu: number; sigma: number }>>(new Map())
-
-	let currentTicket = $derived<EstimatedTicket | undefined>(
-		backlogIndex >= 0 && backlogIndex < backlog.length ? backlog[backlogIndex] : undefined,
-	)
-
-	let estimatedCount = $derived(backlog.filter((t) => t.median != null || myEstimates.has(t.id)).length)
-
-	/** Prep mode: each person goes through backlog independently. Meeting mode: Ready/Reveal flow. */
-	let prepMode = $state(false)
-	let showSummary = $state(false)
-
+	// Derived values
+	let currentTicket = $derived(getCurrentTicket(s))
+	let estimatedCount = $derived(getEstimatedCount(s))
 	let peerEstimates = $derived(
-		Array.from(peerEstimateMap.values()).map((pe) => ({
+		Array.from(s.peerEstimateMap.values()).map((pe) => ({
 			mu: pe.mu,
 			sigma: pe.sigma,
-			color: getPeerColor(pe.peerId, peerIds),
-			name: peerNames.get(pe.peerId) ?? 'Peer',
+			color: getPeerColor(pe.peerId, s.peerIds),
+			name: s.peerNames.get(pe.peerId) ?? 'Peer',
 		})),
 	)
-
-	let peerCount = $derived(peerIds.length)
-
-	/** All peer IDs including self, for ready tracking */
-	let allParticipants = $derived([selfId, ...peerIds])
-
-	let readyCount = $derived(
-		allParticipants.filter((id) => id === selfId ? selfReady : readyPeers.has(id)).length,
-	)
-
-	let allReady = $derived(readyCount === allParticipants.length && allParticipants.length > 0)
+	let allParticipants = $derived(getAllParticipants(s, selfId))
+	let readyCount = $derived(getReadyCount(s, selfId))
+	let allReady = $derived(getAllReady(s, selfId))
 
 	// Auto-reveal when everyone has placed their estimate (meeting mode only)
 	$effect(() => {
-		if (!prepMode && allReady && !revealed) {
-			revealed = true
-			session?.sendReveal({ revealed: true })
-		}
+		checkAutoReveal(s, allReady)
 	})
 
-	function handleEstimateChange(newMu: number, newSigma: number) {
-		mu = newMu
-		sigma = newSigma
-		// In prep mode, estimates are personal — don't broadcast
-		if (!prepMode) {
-			session?.sendEstimate({ mu: newMu, sigma: newSigma })
-		}
-	}
-
-	function handleDone() {
-		if (selfReady) return
-		selfReady = true
-		session?.sendReady({ ready: true })
-	}
-
-	function handleTopicChange() {
-		// Auto-detect URL typed as topic
-		const trimmed = topic.trim()
-		if (/^https?:\/\//.test(trimmed) && !topicUrl) {
-			topicUrl = trimmed
-		}
-		session?.sendTopic({
-			topic: trimmed,
-			url: topicUrl || undefined,
-			ticketId: currentTicket?.id,
-		})
-		persistSession()
-	}
-
-	function persistSession() {
-		if (!session) return
-		saveSession({
-			roomId: session.roomId,
-			userName,
-			topic: topic.trim(),
-			unit,
-			isCreator,
-			peerNames: Array.from(peerNames.values()),
-			lastUsed: Date.now(),
-		})
-	}
-
-	function handleForceReveal() {
-		revealed = true
-		session?.sendReveal({ revealed: true })
-	}
-
-	function addOrUpdateHistory(entry: HistoryEntry) {
-		history = upsertHistory(history, entry)
-		if (session) {
-			saveVerdict({ ...entry, unit, roomId: session.roomId, timestamp: Date.now() })
-			persistentHistory = getVerdictHistory(unit, session.roomId)
-		}
-	}
-
-	function saveRoundToHistory() {
-		const label = currentTicket?.title || topic.trim() || `Item ${history.length + 1}`
-		const peerEsts = Array.from(peerEstimateMap.values()).map((pe) => ({
-			mu: pe.mu,
-			sigma: pe.sigma,
-		}))
-		const verdict = computeVerdict(label, { mu, sigma }, peerEsts)
-
-		if (currentTicket && verdict) {
-			applyVerdict(currentTicket, verdict, unit)
-			addOrUpdateHistory(verdict.historyEntry)
-		} else if (verdict && peerEsts.length > 0) {
-			addOrUpdateHistory(verdict.historyEntry)
-		}
-	}
-
-	function resetRound() {
-		revealed = false
-		selfReady = false
-		readyPeers = new Set()
-		peerEstimateMap = new Map()
-		mu = 2.0
-		sigma = 0.6
-	}
-
-	function handleNext() {
-		if (!prepMode && !revealed) return
-		// Save personal estimate for this ticket
-		if (currentTicket) {
-			myEstimates.set(currentTicket.id, { mu, sigma })
-			if (session) savePreEstimate(session.roomId, currentTicket.id, mu, sigma)
-		}
-		saveRoundToHistory()
-		resetRound()
-		if (!prepMode) {
-			session?.sendReveal({ revealed: false })
-		}
-
-		// Auto-advance to next backlog ticket (skip save — already done above)
-		if (backlog.length > 0 && backlogIndex < backlog.length - 1) {
-			selectTicket(backlogIndex + 1, true)
-		} else if (backlog.length > 0) {
-			// Last ticket — show summary
-			showSummary = true
-		}
-	}
-
-	function selectTicket(index: number, skipSave = false) {
-		if (index < 0 || index >= backlog.length) return
-
-		// Save current personal estimate and verdict before switching
-		if (!skipSave && currentTicket) {
-			myEstimates.set(currentTicket.id, { mu, sigma })
-			if (session) savePreEstimate(session.roomId, currentTicket.id, mu, sigma)
-			saveRoundToHistory()
-		}
-
-		// Reset round state for the new ticket
-		revealed = false
-		selfReady = false
-		readyPeers = new Set()
-		peerEstimateMap = new Map()
-
-		backlogIndex = index
-		const ticket = backlog[index]
-
-		// Restore personal estimate: in-memory first, then localStorage
-		const saved = myEstimates.get(ticket.id)
-		if (saved) {
-			mu = saved.mu
-			sigma = saved.sigma
-		} else if (session) {
-			const stored = getPreEstimates(session.roomId)
-			const pre = stored.get(ticket.id)
-			if (pre) {
-				mu = pre.mu
-				sigma = pre.sigma
-				myEstimates.set(ticket.id, pre)
-			} else {
-				mu = 2.0
-				sigma = 0.6
-			}
-		} else {
-			mu = 2.0
-			sigma = 0.6
-		}
-
-		// In meeting mode, sync ticket navigation to peers
-		if (!prepMode) {
-			session?.sendTopic({
-				topic: '',
-				url: ticket.url,
-				ticketId: ticket.id,
-			})
-		}
-	}
-
+	// CSV import handler (file-reading stays in component)
 	function handleBacklogImport(file: File) {
 		const reader = new FileReader()
 		reader.onload = () => {
 			const text = reader.result as string
 			const tickets = parseCsv(text)
-			if (tickets.length === 0) return
-			backlog = tickets.map((t) => ({ ...t }))
-			backlogIndex = -1
-			prepMode = true
-			if (session) saveBacklog(session.roomId, tickets)
-			session?.sendBacklog({ tickets, prepMode })
-			// Auto-select first ticket
-			selectTicket(0)
+			processBacklogImport(s, deps, tickets)
 		}
 		reader.readAsText(file)
 	}
 
 	function handleExportCsv() {
-		const csv = exportToCsv(backlog)
+		const csv = exportToCsv(s.backlog)
 		const timestamp = new Date().toISOString().slice(0, 10)
 		downloadFile(csv, `estimates-${timestamp}.csv`, 'text/csv')
 	}
 
 	function handleExportExcel() {
-		const xls = exportToXls(backlog)
+		const xls = exportToXls(s.backlog)
 		const timestamp = new Date().toISOString().slice(0, 10)
 		downloadFile(xls, `estimates-${timestamp}.xls`, 'application/vnd.ms-excel')
 	}
-
-	function handleReorder(fromIndex: number, toIndex: number) {
-		const item = backlog[fromIndex]
-		backlog.splice(fromIndex, 1)
-		backlog.splice(toIndex, 0, item)
-		// Update current index to follow the current ticket
-		if (backlogIndex === fromIndex) {
-			backlogIndex = toIndex
-		} else if (fromIndex < backlogIndex && toIndex >= backlogIndex) {
-			backlogIndex--
-		} else if (fromIndex > backlogIndex && toIndex <= backlogIndex) {
-			backlogIndex++
-		}
-		// Sync reordered backlog to peers and localStorage
-		if (session) {
-			session.sendBacklog({ tickets: backlog, prepMode })
-			saveBacklog(session.roomId, backlog)
-		}
-	}
-
-	function handleRemove(index: number) {
-		if (index < 0 || index >= backlog.length) return
-		backlog.splice(index, 1)
-		// Adjust current index
-		if (backlog.length === 0) {
-			backlogIndex = -1
-			topic = ''
-			topicUrl = ''
-		} else if (index < backlogIndex) {
-			backlogIndex--
-		} else if (index === backlogIndex) {
-			// Current ticket was removed — select next (or last)
-			const newIndex = Math.min(backlogIndex, backlog.length - 1)
-			selectTicket(newIndex)
-		}
-		// Sync to peers and localStorage
-		if (session) {
-			session.sendBacklog({ tickets: backlog, prepMode })
-			saveBacklog(session.roomId, backlog)
-		}
-	}
-
-	function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
-		userName = name
-		isCreator = selectedUnit !== null
-		if (selectedUnit) unit = selectedUnit
-		connectionError = ''
-
-		// Load persistent history for this room and unit
-		persistentHistory = getVerdictHistory(unit, roomId)
-
-		saveSession({
-			roomId,
-			userName: name,
-			topic: '',
-			unit: selectedUnit ?? unit,
-			isCreator,
-			peerNames: [],
-			lastUsed: Date.now(),
-		})
-
-		// Restore persisted backlog and pre-estimates for this room
-		const savedBacklog = getBacklog(roomId)
-		if (savedBacklog.length > 0 && backlog.length === 0) {
-			backlog = savedBacklog.map((t) => ({ ...t }))
-			prepMode = true
-			// Load pre-estimates into in-memory map
-			const savedEstimates = getPreEstimates(roomId)
-			for (const [ticketId, est] of savedEstimates) {
-				myEstimates.set(ticketId, est)
-			}
-			// Auto-select first ticket
-			selectTicket(0)
-		}
-
-		session = createSession(roomId, {
-			onPeerJoin(peerId) {
-				peerIds = [...peerIds, peerId]
-				// Send current state to the new peer
-				session?.sendEstimate({ mu, sigma })
-				session?.sendName({ name: userName, isCreator })
-				if (isCreator) {
-					session?.sendUnit({ unit })
-					if (backlog.length > 0) {
-						session?.sendBacklog({ tickets: backlog, prepMode })
-					}
-				}
-				if (topic) {
-					session?.sendTopic({
-						topic,
-						url: topicUrl || undefined,
-						ticketId: currentTicket?.id,
-					})
-				}
-				if (selfReady) {
-					session?.sendReady({ ready: true })
-				}
-			},
-			onPeerLeave(peerId) {
-				peerIds = peerIds.filter((id) => id !== peerId)
-				const em = new Map(peerEstimateMap)
-				em.delete(peerId)
-				peerEstimateMap = em
-				const pn = new Map(peerNames)
-				pn.delete(peerId)
-				peerNames = pn
-				const rp = new Set(readyPeers)
-				rp.delete(peerId)
-				readyPeers = rp
-			},
-			onEstimate(estimate) {
-				peerEstimateMap = new Map(peerEstimateMap).set(estimate.peerId, estimate)
-			},
-			onReveal(rev) {
-				revealed = rev
-				// When reveal is turned off (Next was pressed by someone),
-				// save history and reset local state for a new round
-				if (!rev) {
-					saveRoundToHistory()
-					resetRound()
-				}
-			},
-			onName(peerId, name, peerIsCreator) {
-				peerNames = new Map(peerNames).set(peerId, name)
-				if (peerIsCreator) creatorPeerId = peerId
-				persistSession()
-			},
-			onTopic(newTopic, url, ticketId) {
-				// If it's a ticket navigation, sync the backlog index
-				if (ticketId && backlog.length > 0) {
-					const idx = backlog.findIndex((t) => t.id === ticketId)
-					if (idx >= 0) backlogIndex = idx
-				}
-				// Only update session topic if an actual topic was sent
-				if (newTopic) {
-					topic = newTopic
-					topicUrl = url ?? ''
-				}
-			},
-			onReady(peerId, ready) {
-				if (ready) {
-					readyPeers = new Set(readyPeers).add(peerId)
-				} else {
-					const rp = new Set(readyPeers)
-					rp.delete(peerId)
-					readyPeers = rp
-				}
-			},
-			onUnit(peerUnit) {
-				if (!isCreator) {
-					unit = peerUnit
-					if (session) persistentHistory = getVerdictHistory(unit, session.roomId)
-				}
-			},
-			onBacklog(tickets, peerPrepMode) {
-				if (!isCreator && tickets.length > 0) {
-					backlog = tickets.map((t) => ({ ...t }))
-					backlogIndex = -1
-					prepMode = peerPrepMode ?? true
-				} else if (!isCreator && peerPrepMode !== undefined) {
-					prepMode = peerPrepMode
-				}
-			},
-			onConnectionError(message) {
-				connectionError = message
-			},
-		})
-	}
-
-	function handleLeave() {
-		session?.leave()
-		session = null
-		peerIds = []
-		peerNames = new Map()
-		creatorPeerId = null
-		resetRound()
-		history = []
-		unit = 'points'
-		isCreator = false
-		connectionError = ''
-		backlog = []
-		backlogIndex = -1
-		topicUrl = ''
-		myEstimates = new Map()
-		prepMode = false
-	}
 </script>
 
-{#if !session}
-	<SessionLobby onJoin={handleJoin} />
+{#if !s.session}
+	<SessionLobby onJoin={(roomId, name, selectedUnit) => joinSession(s, deps, roomId, name, selectedUnit)} />
 {:else}
-	<main style:padding-right="{backlog.length > 0 ? '276px' : '16px'}">
+	<main style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}">
 		<header>
 			<div class="header-left">
 				<h1 class="logo">
@@ -465,30 +110,30 @@
 				</svg>
 				<span class="logo-text">Skatting</span>
 			</h1>
-				<span class="room-badge" role="button" tabindex="0" title="Copy room code" onclick={() => navigator.clipboard.writeText(session!.roomId)}>{session.roomId} <span class="copy-icon">⎘</span></span>
-				{#if topicUrl}
+				<span class="room-badge" role="button" tabindex="0" title="Copy room code" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
+				{#if s.topicUrl}
 					<a
 						class="topic-link"
-						href={topicUrl}
+						href={s.topicUrl}
 						target="_blank"
 						rel="noopener noreferrer"
-						title={topicUrl}
+						title={s.topicUrl}
 					>
-						{topic || topicUrl}
+						{s.topic || s.topicUrl}
 					</a>
 				{:else}
 					<input
 						class="topic-input"
 						type="text"
-						bind:value={topic}
+						bind:value={s.topic}
 						placeholder="Session name…"
 						maxlength="100"
-						onchange={handleTopicChange}
+						onchange={() => handleTopicChange(s, deps)}
 					/>
 				{/if}
 			</div>
 			<div class="header-center">
-				{#if isCreator && backlog.length === 0}
+				{#if s.isCreator && s.backlog.length === 0}
 					<label class="import-label">
 						<input
 							type="file"
@@ -504,98 +149,90 @@
 				{/if}
 				<button
 					class="past-toggle"
-					class:past-active={showPersistentHistory}
-					onclick={() => (showPersistentHistory = !showPersistentHistory)}
+					class:past-active={s.showPersistentHistory}
+					onclick={() => (s.showPersistentHistory = !s.showPersistentHistory)}
 				>
-					{showPersistentHistory ? '↩ Hide past' : '↪ Show past'}
+					{s.showPersistentHistory ? '↩ Hide past' : '↪ Show past'}
 				</button>
 			</div>
 			<div class="header-right">
-				{#if prepMode}
-					<button class="next" onclick={handleNext}>
-						{backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
+				{#if s.prepMode}
+					<button class="next" onclick={() => handleNext(s, deps)}>
+						{s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
 					</button>
-					{#if isCreator}
-						<button class="mode-toggle" onclick={() => {
-							prepMode = false
-							session?.sendBacklog({ tickets: backlog, prepMode: false })
-							// Sync current ticket and estimate now that we're in meeting mode
-							session?.sendEstimate({ mu, sigma })
-							if (currentTicket) {
-								session?.sendTopic({ topic: '', url: currentTicket.url, ticketId: currentTicket.id })
-							}
-						}}>Start meeting</button>
+					{#if s.isCreator}
+						<button class="mode-toggle" onclick={() => startMeeting(s)}>Start meeting</button>
 					{/if}
-				{:else if revealed}
-					<button class="next" onclick={handleNext}>
-						{backlog.length > 0 && backlogIndex < backlog.length - 1 ? 'Next issue →' : 'Next →'}
+				{:else if s.revealed}
+					<button class="next" onclick={() => handleNext(s, deps)}>
+						{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 					</button>
-				{:else if !selfReady}
-					<button class="done" onclick={handleDone}>Ready ✓</button>
+				{:else if !s.selfReady}
+					<button class="done" onclick={() => handleDone(s)}>Ready ✓</button>
 				{:else if !allReady}
-					<button class="force-reveal" onclick={handleForceReveal}>Reveal anyway</button>
+					<button class="force-reveal" onclick={() => handleForceReveal(s)}>Reveal anyway</button>
 				{/if}
-				<button class="leave" onclick={handleLeave}>Leave</button>
+				<button class="leave" onclick={() => leaveSession(s)}>Leave</button>
 			</div>
 		</header>
 
-		{#if connectionError}
+		{#if s.connectionError}
 			<div class="connection-error">
-				{connectionError}
-				<button onclick={() => (connectionError = '')}>×</button>
+				{s.connectionError}
+				<button onclick={() => (s.connectionError = '')}>×</button>
 			</div>
 		{/if}
 
 		<div class="participants">
-			<div class="participant" class:is-ready={selfReady}>
-				<span class="ready-dot" class:ready={selfReady}></span>
-				<span class="name">{userName} (you){#if isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+			<div class="participant" class:is-ready={s.selfReady}>
+				<span class="ready-dot" class:ready={s.selfReady}></span>
+				<span class="name">{s.userName} (you){#if s.isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 			</div>
-			{#each peerIds as peerId}
-				<div class="participant" class:is-ready={readyPeers.has(peerId)}>
+			{#each s.peerIds as peerId}
+				<div class="participant" class:is-ready={s.readyPeers.has(peerId)}>
 					<span
 						class="ready-dot"
-						class:ready={readyPeers.has(peerId)}
-						style="--peer-color: {getPeerColor(peerId, peerIds)}"
+						class:ready={s.readyPeers.has(peerId)}
+						style="--peer-color: {getPeerColor(peerId, s.peerIds)}"
 					></span>
-					<span class="name">{peerNames.get(peerId) ?? 'Connecting…'}{#if peerId === creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
 				</div>
 			{/each}
 			<span class="ready-count">{readyCount}/{allParticipants.length} ready</span>
 		</div>
 
 		<EstimationCanvas
-			{mu}
-			{sigma}
+			mu={s.mu}
+			sigma={s.sigma}
 			{peerEstimates}
-			{revealed}
-			{userName}
-			{history}
-			persistentHistory={showPersistentHistory ? persistentHistory : []}
-			{unit}
+			revealed={s.revealed}
+			userName={s.userName}
+			history={s.history}
+			persistentHistory={s.showPersistentHistory ? s.persistentHistory : []}
+			unit={s.unit}
 			{currentTicket}
-			onEstimateChange={handleEstimateChange}
+			onEstimateChange={(mu, sigma) => handleEstimateChange(s, mu, sigma)}
 		/>
 
-		{#if backlog.length > 0}
+		{#if s.backlog.length > 0}
 			<BacklogPanel
-				tickets={backlog}
-				currentIndex={backlogIndex}
-				{isCreator}
-				{prepMode}
-				{myEstimates}
+				tickets={s.backlog}
+				currentIndex={s.backlogIndex}
+				isCreator={s.isCreator}
+				prepMode={s.prepMode}
+				myEstimates={s.myEstimates}
 				{estimatedCount}
 				onSelect={(index) => {
-					if (isCreator || prepMode) selectTicket(index)
+					if (s.isCreator || s.prepMode) selectTicket(s, deps, index)
 				}}
-				onReorder={handleReorder}
-				onRemove={handleRemove}
+				onReorder={(from, to) => handleReorder(s, deps, from, to)}
+				onRemove={(index) => handleRemove(s, deps, index)}
 				onExportCsv={handleExportCsv}
 				onExportExcel={handleExportExcel}
 			/>
 		{/if}
 	</main>
-	{#if showSummary}
+	{#if s.showSummary}
 		<div class="summary-overlay" role="dialog" aria-label="Session summary">
 			<div class="summary-panel">
 				<h2>Session Summary</h2>
@@ -608,12 +245,12 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each backlog as ticket}
+						{#each s.backlog as ticket}
 							<tr class:unestimated={ticket.median == null}>
 								<td class="summary-id">{ticket.id}</td>
 								<td class="summary-title">{ticket.title}</td>
 								<td class="summary-verdict">
-									{ticket.median != null ? `${ticket.median.toFixed(1)} ${unit}` : '—'}
+									{ticket.median != null ? `${ticket.median.toFixed(1)} ${s.unit}` : '—'}
 								</td>
 							</tr>
 						{/each}
@@ -622,7 +259,7 @@
 				<div class="summary-actions">
 					<button class="export" onclick={handleExportCsv}>Export CSV ↓</button>
 					<button class="export" onclick={handleExportExcel}>Export Excel ↓</button>
-					<button class="summary-close" onclick={() => (showSummary = false)}>Back to session</button>
+					<button class="summary-close" onclick={() => (s.showSummary = false)}>Back to session</button>
 				</div>
 			</div>
 		</div>

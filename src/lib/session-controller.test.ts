@@ -1,0 +1,920 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { PeerCallbacks, PeerSession } from './peer'
+import type { SessionDeps, SessionState } from './session-controller'
+import {
+	createInitialState,
+	getCurrentTicket,
+	getEstimatedCount,
+	getAllParticipants,
+	getReadyCount,
+	getAllReady,
+	handleEstimateChange,
+	handleDone,
+	handleNext,
+	selectTicket,
+	processBacklogImport,
+	handleReorder,
+	handleRemove,
+	handleForceReveal,
+	handleTopicChange,
+	startMeeting,
+	checkAutoReveal,
+	joinSession,
+	leaveSession,
+	resetRound,
+	createPeerCallbacks,
+	persistSession,
+	addOrUpdateHistory,
+	saveRoundToHistory,
+} from './session-controller'
+import type { EstimatedTicket, ImportedTicket } from './types'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function mockSession(): PeerSession {
+	return {
+		roomId: 'te-st-ro',
+		selfId: 'self-id',
+		sendEstimate: vi.fn().mockResolvedValue(undefined),
+		sendReveal: vi.fn().mockResolvedValue(undefined),
+		sendName: vi.fn().mockResolvedValue(undefined),
+		sendTopic: vi.fn().mockResolvedValue(undefined),
+		sendReady: vi.fn().mockResolvedValue(undefined),
+		sendUnit: vi.fn().mockResolvedValue(undefined),
+		sendBacklog: vi.fn().mockResolvedValue(undefined),
+		leave: vi.fn(),
+	}
+}
+
+function mockDeps(overrides?: Partial<SessionDeps>): SessionDeps {
+	return {
+		selfId: 'self-id',
+		createSession: vi.fn((_roomId: string, _callbacks: PeerCallbacks) => mockSession()),
+		saveSession: vi.fn(),
+		saveVerdict: vi.fn(),
+		savePreEstimate: vi.fn(),
+		getPreEstimates: vi.fn().mockReturnValue(new Map()),
+		getVerdictHistory: vi.fn().mockReturnValue([]),
+		saveBacklog: vi.fn(),
+		getBacklog: vi.fn().mockReturnValue([]),
+		...overrides,
+	}
+}
+
+function ticket(id: string, title?: string): EstimatedTicket {
+	return { id, title: title ?? `Ticket ${id}` }
+}
+
+function withSession(s: SessionState, session?: PeerSession): SessionState {
+	s.session = session ?? mockSession()
+	return s
+}
+
+function withBacklog(s: SessionState, count = 3): SessionState {
+	s.backlog = Array.from({ length: count }, (_, i) => ticket(`T${i + 1}`, `Ticket ${i + 1}`))
+	s.backlogIndex = 0
+	return s
+}
+
+// ---------------------------------------------------------------------------
+// createInitialState
+// ---------------------------------------------------------------------------
+
+describe('createInitialState', () => {
+	it('returns default values', () => {
+		const s = createInitialState()
+		expect(s.mu).toBe(2.0)
+		expect(s.sigma).toBe(0.6)
+		expect(s.revealed).toBe(false)
+		expect(s.session).toBeNull()
+		expect(s.peerIds).toEqual([])
+		expect(s.unit).toBe('points')
+		expect(s.isCreator).toBe(false)
+		expect(s.prepMode).toBe(false)
+		expect(s.showSummary).toBe(false)
+		expect(s.hasMoved).toBe(false)
+		expect(s.backlogIndex).toBe(-1)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Derived-value helpers
+// ---------------------------------------------------------------------------
+
+describe('derived-value helpers', () => {
+	it('getCurrentTicket returns undefined when no backlog', () => {
+		const s = createInitialState()
+		expect(getCurrentTicket(s)).toBeUndefined()
+	})
+
+	it('getCurrentTicket returns the ticket at backlogIndex', () => {
+		const s = createInitialState()
+		withBacklog(s)
+		expect(getCurrentTicket(s)?.id).toBe('T1')
+		s.backlogIndex = 2
+		expect(getCurrentTicket(s)?.id).toBe('T3')
+	})
+
+	it('getEstimatedCount counts tickets with median or personal estimate', () => {
+		const s = createInitialState()
+		withBacklog(s)
+		expect(getEstimatedCount(s)).toBe(0)
+		s.myEstimates.set('T1', { mu: 2, sigma: 0.5 })
+		expect(getEstimatedCount(s)).toBe(1)
+		s.backlog[1].median = 5
+		expect(getEstimatedCount(s)).toBe(2)
+	})
+
+	it('getAllParticipants includes self + peers', () => {
+		const s = createInitialState()
+		s.peerIds = ['p1', 'p2']
+		expect(getAllParticipants(s, 'self')).toEqual(['self', 'p1', 'p2'])
+	})
+
+	it('getReadyCount counts ready participants', () => {
+		const s = createInitialState()
+		s.peerIds = ['p1', 'p2']
+		s.selfReady = true
+		s.readyPeers = new Set(['p1'])
+		expect(getReadyCount(s, 'self')).toBe(2)
+	})
+
+	it('getAllReady is true only when everyone is ready', () => {
+		const s = createInitialState()
+		s.peerIds = ['p1']
+		expect(getAllReady(s, 'self')).toBe(false)
+		s.selfReady = true
+		expect(getAllReady(s, 'self')).toBe(false)
+		s.readyPeers = new Set(['p1'])
+		expect(getAllReady(s, 'self')).toBe(true)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleEstimateChange
+// ---------------------------------------------------------------------------
+
+describe('handleEstimateChange', () => {
+	it('updates mu, sigma, and sets hasMoved', () => {
+		const s = createInitialState()
+		handleEstimateChange(s, 3.0, 0.8)
+		expect(s.mu).toBe(3.0)
+		expect(s.sigma).toBe(0.8)
+		expect(s.hasMoved).toBe(true)
+	})
+
+	it('broadcasts estimate in meeting mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		handleEstimateChange(s, 3.0, 0.8)
+		expect(s.session!.sendEstimate).toHaveBeenCalledWith({ mu: 3.0, sigma: 0.8 })
+	})
+
+	it('does not broadcast in prep mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = true
+		handleEstimateChange(s, 3.0, 0.8)
+		expect(s.session!.sendEstimate).not.toHaveBeenCalled()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleDone
+// ---------------------------------------------------------------------------
+
+describe('handleDone', () => {
+	it('marks selfReady and sends ready message', () => {
+		const s = createInitialState()
+		withSession(s)
+		handleDone(s)
+		expect(s.selfReady).toBe(true)
+		expect(s.session!.sendReady).toHaveBeenCalledWith({ ready: true })
+	})
+
+	it('is idempotent', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.selfReady = true
+		handleDone(s)
+		expect(s.session!.sendReady).not.toHaveBeenCalled()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleForceReveal
+// ---------------------------------------------------------------------------
+
+describe('handleForceReveal', () => {
+	it('sets revealed and sends', () => {
+		const s = createInitialState()
+		withSession(s)
+		handleForceReveal(s)
+		expect(s.revealed).toBe(true)
+		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+	})
+})
+
+// ---------------------------------------------------------------------------
+// resetRound
+// ---------------------------------------------------------------------------
+
+describe('resetRound', () => {
+	it('resets all round state to defaults', () => {
+		const s = createInitialState()
+		s.revealed = true
+		s.selfReady = true
+		s.readyPeers = new Set(['p1'])
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 3, sigma: 0.5 }]])
+		s.mu = 5.0
+		s.sigma = 1.0
+		s.hasMoved = true
+
+		resetRound(s)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+		expect(s.peerEstimateMap.size).toBe(0)
+		expect(s.mu).toBe(2.0)
+		expect(s.sigma).toBe(0.6)
+		expect(s.hasMoved).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleNext
+// ---------------------------------------------------------------------------
+
+describe('handleNext', () => {
+	it('does nothing in meeting mode when not revealed', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		s.prepMode = false
+		s.revealed = false
+		handleNext(s, deps)
+		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+	})
+
+	it('saves estimate when hasMoved and advances to next ticket', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		handleNext(s, deps)
+
+		expect(deps.savePreEstimate).toHaveBeenCalledWith('te-st-ro', 'T1', 3.0, 0.5)
+		expect(s.backlogIndex).toBe(1)
+	})
+
+	it('does NOT save estimate when hasMoved is false', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.hasMoved = false
+
+		handleNext(s, deps)
+
+		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+	})
+
+	it('shows summary on last ticket', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s, 2)
+		s.backlogIndex = 1
+		s.prepMode = true
+
+		handleNext(s, deps)
+
+		expect(s.showSummary).toBe(true)
+	})
+
+	it('resets round state after advancing', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.selfReady = true
+		s.revealed = true
+
+		handleNext(s, deps)
+
+		expect(s.selfReady).toBe(false)
+		expect(s.hasMoved).toBe(false)
+	})
+
+	it('sends reveal:false in meeting mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		s.revealed = true
+		s.prepMode = false
+
+		handleNext(s, deps)
+
+		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: false })
+	})
+})
+
+// ---------------------------------------------------------------------------
+// selectTicket
+// ---------------------------------------------------------------------------
+
+describe('selectTicket', () => {
+	it('sets backlogIndex and resets round state', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withBacklog(s)
+		s.selfReady = true
+		s.revealed = true
+
+		selectTicket(s, deps, 2)
+
+		expect(s.backlogIndex).toBe(2)
+		expect(s.selfReady).toBe(false)
+		expect(s.revealed).toBe(false)
+	})
+
+	it('ignores out-of-range index', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withBacklog(s)
+
+		selectTicket(s, deps, 99)
+		expect(s.backlogIndex).toBe(0)
+
+		selectTicket(s, deps, -1)
+		expect(s.backlogIndex).toBe(0)
+	})
+
+	it('restores personal estimate from in-memory map', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withBacklog(s)
+		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
+
+		selectTicket(s, deps, 1)
+
+		expect(s.mu).toBe(4.0)
+		expect(s.sigma).toBe(0.3)
+		expect(s.hasMoved).toBe(true)
+	})
+
+	it('restores from localStorage when not in memory', () => {
+		const stored = new Map([['T2', { mu: 5.0, sigma: 0.4 }]])
+		const deps = mockDeps({ getPreEstimates: vi.fn().mockReturnValue(stored) })
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+
+		selectTicket(s, deps, 1)
+
+		expect(s.mu).toBe(5.0)
+		expect(s.sigma).toBe(0.4)
+		expect(s.hasMoved).toBe(true)
+		expect(s.myEstimates.get('T2')).toEqual({ mu: 5.0, sigma: 0.4 })
+	})
+
+	it('resets to default when no saved estimate exists', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.mu = 5.0
+		s.sigma = 1.0
+
+		selectTicket(s, deps, 1)
+
+		expect(s.mu).toBe(2.0)
+		expect(s.sigma).toBe(0.6)
+	})
+
+	it('saves current estimate before switching when hasMoved (no skipSave)', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		selectTicket(s, deps, 1)
+
+		expect(deps.savePreEstimate).toHaveBeenCalledWith('te-st-ro', 'T1', 3.0, 0.5)
+	})
+
+	it('does not save current estimate when skipSave is true', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.hasMoved = true
+
+		selectTicket(s, deps, 1, true)
+
+		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+	})
+
+	it('syncs topic to peers in meeting mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+
+		selectTicket(s, deps, 1)
+
+		expect(s.session!.sendTopic).toHaveBeenCalledWith({
+			topic: '',
+			url: undefined,
+			ticketId: 'T2',
+		})
+	})
+})
+
+// ---------------------------------------------------------------------------
+// processBacklogImport
+// ---------------------------------------------------------------------------
+
+describe('processBacklogImport', () => {
+	it('sets backlog, prepMode, and selects first ticket', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		const tickets: ImportedTicket[] = [
+			{ id: 'A', title: 'Alpha' },
+			{ id: 'B', title: 'Beta' },
+		]
+
+		processBacklogImport(s, deps, tickets)
+
+		expect(s.backlog.length).toBe(2)
+		expect(s.prepMode).toBe(true)
+		expect(s.backlogIndex).toBe(0)
+		expect(deps.saveBacklog).toHaveBeenCalled()
+		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
+			tickets,
+			prepMode: true,
+		})
+	})
+
+	it('does nothing for empty tickets', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		processBacklogImport(s, deps, [])
+		expect(s.backlog.length).toBe(0)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleReorder
+// ---------------------------------------------------------------------------
+
+describe('handleReorder', () => {
+	it('moves ticket and updates backlogIndex', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		// Current is index 0 (T1), move T1 to index 2
+		handleReorder(s, deps, 0, 2)
+		expect(s.backlog[2].id).toBe('T1')
+		expect(s.backlogIndex).toBe(2)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// handleRemove
+// ---------------------------------------------------------------------------
+
+describe('handleRemove', () => {
+	it('removes ticket and clears state when last ticket removed', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		s.backlog = [ticket('T1')]
+		s.backlogIndex = 0
+
+		handleRemove(s, deps, 0)
+
+		expect(s.backlog.length).toBe(0)
+		expect(s.backlogIndex).toBe(-1)
+		expect(s.topic).toBe('')
+	})
+
+	it('adjusts index when removing before current', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.backlogIndex = 2
+
+		handleRemove(s, deps, 0)
+
+		expect(s.backlogIndex).toBe(1)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// startMeeting
+// ---------------------------------------------------------------------------
+
+describe('startMeeting', () => {
+	it('sets prepMode false and sends backlog with prepMode:false', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.mu = 3.0
+		s.sigma = 0.5
+
+		startMeeting(s)
+
+		expect(s.prepMode).toBe(false)
+		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
+			tickets: s.backlog,
+			prepMode: false,
+		})
+		expect(s.session!.sendEstimate).toHaveBeenCalledWith({ mu: 3.0, sigma: 0.5 })
+		expect(s.session!.sendTopic).toHaveBeenCalledWith({
+			topic: '',
+			url: undefined,
+			ticketId: 'T1',
+		})
+	})
+})
+
+// ---------------------------------------------------------------------------
+// checkAutoReveal
+// ---------------------------------------------------------------------------
+
+describe('checkAutoReveal', () => {
+	it('reveals when allReady in meeting mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.revealed = false
+
+		checkAutoReveal(s, true)
+
+		expect(s.revealed).toBe(true)
+		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+	})
+
+	it('does not reveal in prep mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = true
+
+		checkAutoReveal(s, true)
+
+		expect(s.revealed).toBe(false)
+	})
+
+	it('does not reveal when already revealed', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.revealed = true
+
+		checkAutoReveal(s, true)
+
+		// sendReveal not called because already revealed
+		expect(s.session!.sendReveal).not.toHaveBeenCalled()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// leaveSession
+// ---------------------------------------------------------------------------
+
+describe('leaveSession', () => {
+	it('calls leave and resets all state', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.userName = 'Alice'
+		s.peerIds = ['p1']
+		s.isCreator = true
+		s.prepMode = true
+		s.unit = 'days'
+
+		leaveSession(s)
+
+		expect(s.session).toBeNull()
+		expect(s.peerIds).toEqual([])
+		expect(s.isCreator).toBe(false)
+		expect(s.prepMode).toBe(false)
+		expect(s.unit).toBe('points')
+		expect(s.backlog).toEqual([])
+	})
+})
+
+// ---------------------------------------------------------------------------
+// joinSession
+// ---------------------------------------------------------------------------
+
+describe('joinSession', () => {
+	it('sets creator state and creates P2P session', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro', 'Alice', 'points')
+
+		expect(s.userName).toBe('Alice')
+		expect(s.isCreator).toBe(true)
+		expect(s.unit).toBe('points')
+		expect(s.session).toBeTruthy()
+		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object))
+		expect(deps.saveSession).toHaveBeenCalled()
+	})
+
+	it('sets joiner state (no unit selection)', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+
+		joinSession(s, deps, 'te-st-ro', 'Bob', null)
+
+		expect(s.isCreator).toBe(false)
+		expect(s.unit).toBe('points') // default
+	})
+
+	it('restores persisted backlog and pre-estimates', () => {
+		const savedBacklog: ImportedTicket[] = [
+			{ id: 'X1', title: 'Saved ticket' },
+			{ id: 'X2', title: 'Another' },
+		]
+		const savedEstimates = new Map([['X1', { mu: 4.0, sigma: 0.3 }]])
+		const deps = mockDeps({
+			getBacklog: vi.fn().mockReturnValue(savedBacklog),
+			getPreEstimates: vi.fn().mockReturnValue(savedEstimates),
+		})
+		const s = createInitialState()
+
+		joinSession(s, deps, 'te-st-ro', 'Alice', 'points')
+
+		expect(s.backlog.length).toBe(2)
+		expect(s.prepMode).toBe(true)
+		expect(s.myEstimates.get('X1')).toEqual({ mu: 4.0, sigma: 0.3 })
+		// First ticket selected — restores estimate
+		expect(s.backlogIndex).toBe(0)
+		expect(s.mu).toBe(4.0)
+		expect(s.sigma).toBe(0.3)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// P2P callbacks
+// ---------------------------------------------------------------------------
+
+describe('createPeerCallbacks', () => {
+	let s: SessionState
+	let deps: SessionDeps
+	let callbacks: PeerCallbacks
+
+	beforeEach(() => {
+		s = createInitialState()
+		deps = mockDeps()
+		withSession(s)
+		s.userName = 'Alice'
+		callbacks = createPeerCallbacks(s, deps)
+	})
+
+	it('onPeerJoin adds peer and sends state', () => {
+		callbacks.onPeerJoin('p1')
+		expect(s.peerIds).toContain('p1')
+		expect(s.session!.sendEstimate).toHaveBeenCalled()
+		expect(s.session!.sendName).toHaveBeenCalled()
+	})
+
+	it('onPeerJoin sends unit and backlog when creator', () => {
+		s.isCreator = true
+		s.backlog = [ticket('T1')]
+		callbacks.onPeerJoin('p1')
+		expect(s.session!.sendUnit).toHaveBeenCalledWith({ unit: 'points' })
+		expect(s.session!.sendBacklog).toHaveBeenCalled()
+	})
+
+	it('onPeerLeave removes peer from all maps', () => {
+		s.peerIds = ['p1', 'p2']
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.5 }]])
+		s.peerNames = new Map([['p1', 'Peer1'], ['p2', 'Peer2']])
+		s.readyPeers = new Set(['p1'])
+
+		callbacks.onPeerLeave('p1')
+
+		expect(s.peerIds).toEqual(['p2'])
+		expect(s.peerEstimateMap.has('p1')).toBe(false)
+		expect(s.peerNames.has('p1')).toBe(false)
+		expect(s.readyPeers.has('p1')).toBe(false)
+	})
+
+	it('onEstimate adds peer estimate via clone-and-reassign', () => {
+		callbacks.onEstimate({ peerId: 'p1', mu: 3, sigma: 0.5 })
+		expect(s.peerEstimateMap.get('p1')).toEqual({ peerId: 'p1', mu: 3, sigma: 0.5 })
+	})
+
+	it('onReveal sets revealed state', () => {
+		callbacks.onReveal(true)
+		expect(s.revealed).toBe(true)
+	})
+
+	it('onReveal false triggers saveRoundToHistory + resetRound', () => {
+		s.revealed = true
+		s.selfReady = true
+		callbacks.onReveal(false)
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+	})
+
+	it('onName sets peer name and tracks creator', () => {
+		callbacks.onName('p1', 'Bob', true)
+		expect(s.peerNames.get('p1')).toBe('Bob')
+		expect(s.creatorPeerId).toBe('p1')
+	})
+
+	it('onTopic syncs backlog index by ticketId', () => {
+		withBacklog(s)
+		callbacks.onTopic('', undefined, 'T2')
+		expect(s.backlogIndex).toBe(1)
+	})
+
+	it('onTopic sets topic text', () => {
+		callbacks.onTopic('Sprint 1', 'https://example.com', undefined)
+		expect(s.topic).toBe('Sprint 1')
+		expect(s.topicUrl).toBe('https://example.com')
+	})
+
+	it('onReady adds/removes from readyPeers', () => {
+		callbacks.onReady('p1', true)
+		expect(s.readyPeers.has('p1')).toBe(true)
+		callbacks.onReady('p1', false)
+		expect(s.readyPeers.has('p1')).toBe(false)
+	})
+
+	it('onUnit updates unit for non-creators', () => {
+		s.isCreator = false
+		callbacks.onUnit('days')
+		expect(s.unit).toBe('days')
+		expect(deps.saveSession).toHaveBeenCalled()
+	})
+
+	it('onUnit is ignored for creators', () => {
+		s.isCreator = true
+		callbacks.onUnit('days')
+		expect(s.unit).toBe('points')
+	})
+
+	it('onBacklog sets backlog for non-creators', () => {
+		s.isCreator = false
+		const tickets: ImportedTicket[] = [{ id: 'A', title: 'Alpha' }]
+		callbacks.onBacklog!(tickets, true)
+		expect(s.backlog.length).toBe(1)
+		expect(s.prepMode).toBe(true)
+		expect(deps.saveBacklog).toHaveBeenCalled()
+	})
+
+	it('onBacklog is ignored for creators', () => {
+		s.isCreator = true
+		callbacks.onBacklog!([{ id: 'A', title: 'Alpha' }], true)
+		expect(s.backlog.length).toBe(0)
+	})
+
+	it('onBacklog updates prepMode without tickets for non-creators', () => {
+		s.isCreator = false
+		s.prepMode = true
+		callbacks.onBacklog!([], false)
+		expect(s.prepMode).toBe(false)
+	})
+
+	it('onConnectionError sets error message', () => {
+		callbacks.onConnectionError!('Connection failed')
+		expect(s.connectionError).toBe('Connection failed')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// End-to-end sequences (per PLAN.md)
+// ---------------------------------------------------------------------------
+
+describe('state machine sequences', () => {
+	it('import CSV → prepMode → next through all → showSummary', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+
+		// Import 2 tickets
+		processBacklogImport(s, deps, [
+			{ id: 'A', title: 'Alpha' },
+			{ id: 'B', title: 'Beta' },
+		])
+		expect(s.prepMode).toBe(true)
+		expect(s.backlogIndex).toBe(0)
+
+		// Estimate first ticket
+		handleEstimateChange(s, 3.0, 0.5)
+		expect(s.hasMoved).toBe(true)
+
+		// Next → advances to ticket B
+		handleNext(s, deps)
+		expect(s.backlogIndex).toBe(1)
+		expect(s.hasMoved).toBe(false)
+
+		// Estimate second ticket
+		handleEstimateChange(s, 4.0, 0.7)
+
+		// Next → last ticket → showSummary
+		handleNext(s, deps)
+		expect(s.showSummary).toBe(true)
+	})
+
+	it('selectTicket without moving → no save on selectTicket', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+
+		// Don't move the blob, just select next ticket
+		selectTicket(s, deps, 1)
+
+		expect(deps.savePreEstimate).not.toHaveBeenCalled()
+	})
+
+	it('Start meeting → sendBacklog with prepMode:false', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.isCreator = true
+
+		startMeeting(s)
+
+		expect(s.prepMode).toBe(false)
+		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
+			tickets: s.backlog,
+			prepMode: false,
+		})
+	})
+
+	it('allReady → auto-reveal', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.selfReady = true
+		s.peerIds = ['p1']
+		s.readyPeers = new Set(['p1'])
+
+		const allReady = getAllReady(s, 'self-id')
+		checkAutoReveal(s, allReady)
+
+		expect(s.revealed).toBe(true)
+		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+	})
+
+	it('full meeting cycle: join → estimate → ready → reveal → next', () => {
+		const s = createInitialState()
+		const sess = mockSession()
+		const deps = mockDeps({
+			createSession: vi.fn().mockReturnValue(sess),
+		})
+
+		// Join
+		joinSession(s, deps, 'te-st-ro', 'Alice', 'points')
+		expect(s.session).toBe(sess)
+
+		// Set topic
+		s.topic = 'Sprint planning'
+		handleTopicChange(s, deps)
+		expect(sess.sendTopic).toHaveBeenCalled()
+
+		// Estimate
+		handleEstimateChange(s, 3.0, 0.5)
+		expect(sess.sendEstimate).toHaveBeenCalled()
+
+		// Ready
+		handleDone(s)
+		expect(s.selfReady).toBe(true)
+
+		// Simulate auto-reveal (normally done by effect)
+		s.revealed = true
+
+		// Next round
+		handleNext(s, deps)
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+
+		// Leave
+		leaveSession(s)
+		expect(s.session).toBeNull()
+	})
+})

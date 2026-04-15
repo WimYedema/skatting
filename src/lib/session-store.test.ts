@@ -208,6 +208,28 @@ describe('verdict history', () => {
 		expect(getVerdictHistory()).toHaveLength(2)
 	})
 
+	it('deduplicates by ticketId when present, ignoring label', () => {
+		saveVerdict(makeVerdict({ label: 'Old title', ticketId: 'PROJ-42', mu: 1.0 }))
+		saveVerdict(makeVerdict({ label: 'Renamed title', ticketId: 'PROJ-42', mu: 3.0 }))
+		const results = getVerdictHistory()
+		expect(results).toHaveLength(1)
+		expect(results[0].mu).toBe(3.0)
+		expect(results[0].label).toBe('Renamed title')
+	})
+
+	it('keeps tickets with same label but different ticketIds separate', () => {
+		saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-1' }))
+		saveVerdict(makeVerdict({ label: 'Setup', ticketId: 'PROJ-2' }))
+		expect(getVerdictHistory()).toHaveLength(2)
+	})
+
+	it('falls back to label dedup when ticketId is absent', () => {
+		saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 1.0 }))
+		saveVerdict(makeVerdict({ label: 'Ad-hoc topic', mu: 2.0 }))
+		expect(getVerdictHistory()).toHaveLength(1)
+		expect(getVerdictHistory()[0].mu).toBe(2.0)
+	})
+
 	it('limits to 50 entries', () => {
 		for (let i = 0; i < 60; i++) {
 			saveVerdict(makeVerdict({ label: `Task ${i}`, timestamp: i }))
