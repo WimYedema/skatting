@@ -37,6 +37,10 @@ import {
 	skipPeer,
 	unskipPeer,
 	getActiveParticipants,
+	hasMic,
+	handOffMic,
+	takeMicBack,
+	claimMic,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -57,6 +61,7 @@ function mockSession(): PeerSession {
 		sendUnit: vi.fn().mockResolvedValue(undefined),
 		sendBacklog: vi.fn().mockResolvedValue(undefined),
 		sendLiveAdjust: vi.fn().mockResolvedValue(undefined),
+		sendMic: vi.fn().mockResolvedValue(undefined),
 		leave: vi.fn(),
 	}
 }
@@ -1841,14 +1846,14 @@ describe('toggleLiveAdjust', () => {
 		expect(s.session!.sendLiveAdjust).toHaveBeenCalledWith({ liveAdjust: false })
 	})
 
-	it('does nothing for non-creators', () => {
+	it('works for non-creators (mic holder can toggle)', () => {
 		const s = createInitialState()
 		withSession(s)
 		s.isCreator = false
 
 		toggleLiveAdjust(s)
-		expect(s.liveAdjust).toBe(false)
-		expect(s.session!.sendLiveAdjust).not.toHaveBeenCalled()
+		expect(s.liveAdjust).toBe(true)
+		expect(s.session!.sendLiveAdjust).toHaveBeenCalledWith({ liveAdjust: true })
 	})
 })
 
@@ -1903,14 +1908,14 @@ describe('skipPeer', () => {
 		expect(s.skippedPeers.has('b')).toBe(false)
 	})
 
-	it('does nothing when not creator', () => {
+	it('works for non-creators (mic holder can skip)', () => {
 		const s = createInitialState()
 		s.isCreator = false
 		s.peerIds = ['a']
 
 		skipPeer(s, 'a')
 
-		expect(s.skippedPeers.size).toBe(0)
+		expect(s.skippedPeers.has('a')).toBe(true)
 	})
 })
 
@@ -1999,5 +2004,156 @@ describe('resetRound resets skippedPeers', () => {
 		resetRound(s)
 
 		expect(s.skippedPeers.size).toBe(0)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Mic (facilitator handoff)
+// ---------------------------------------------------------------------------
+
+describe('hasMic', () => {
+	it('returns true for creator when micHolder is null', () => {
+		const s = createInitialState()
+		s.isCreator = true
+		s.micHolder = null
+		expect(hasMic(s, 'self')).toBe(true)
+	})
+
+	it('returns false for non-creator when micHolder is null', () => {
+		const s = createInitialState()
+		s.isCreator = false
+		s.micHolder = null
+		expect(hasMic(s, 'self')).toBe(false)
+	})
+
+	it('returns true when micHolder matches selfId', () => {
+		const s = createInitialState()
+		s.isCreator = false
+		s.micHolder = 'peer-a'
+		expect(hasMic(s, 'peer-a')).toBe(true)
+	})
+
+	it('returns false when micHolder is another peer', () => {
+		const s = createInitialState()
+		s.isCreator = true
+		s.micHolder = 'peer-b'
+		expect(hasMic(s, 'self')).toBe(false)
+	})
+})
+
+describe('handOffMic', () => {
+	it('sets micHolder and broadcasts', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = true
+
+		handOffMic(s, 'self', 'peer-a')
+
+		expect(s.micHolder).toBe('peer-a')
+		expect(s.session!.sendMic).toHaveBeenCalledWith({ holder: 'peer-a' })
+	})
+
+	it('does nothing for non-creators', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = false
+
+		handOffMic(s, 'self', 'peer-a')
+
+		expect(s.micHolder).toBeNull()
+	})
+})
+
+describe('takeMicBack', () => {
+	it('resets micHolder to null and broadcasts', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = true
+		s.micHolder = 'peer-a'
+		s.micDropMessage = 'someone dropped'
+
+		takeMicBack(s)
+
+		expect(s.micHolder).toBeNull()
+		expect(s.micDropMessage).toBe('')
+		expect(s.session!.sendMic).toHaveBeenCalledWith({ holder: null })
+	})
+})
+
+describe('claimMic', () => {
+	it('claims mic when mic-drop is active', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.micDropMessage = 'Bob dropped the mic 🎤'
+
+		claimMic(s, 'peer-b')
+
+		expect(s.micHolder).toBe('peer-b')
+		expect(s.micDropMessage).toBe('')
+		expect(s.session!.sendMic).toHaveBeenCalledWith({ holder: 'peer-b' })
+	})
+
+	it('does nothing when no mic-drop is active', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.micDropMessage = ''
+
+		claimMic(s, 'peer-b')
+
+		expect(s.micHolder).toBeNull()
+	})
+})
+
+describe('mic-drop on peer leave', () => {
+	it('triggers mic-drop when mic holder disconnects', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.peerIds = ['peer-a']
+		s.peerNames = new Map([['peer-a', 'Alice']])
+		s.micHolder = 'peer-a'
+
+		const callbacks = createPeerCallbacks(s, mockDeps())
+		callbacks.onPeerLeave('peer-a')
+
+		expect(s.micHolder).toBeNull()
+		expect(s.micDropMessage).toBe('Alice dropped the mic 🎤')
+	})
+
+	it('does not trigger mic-drop for regular peer leave', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.peerIds = ['peer-a', 'peer-b']
+		s.peerNames = new Map([['peer-a', 'Alice'], ['peer-b', 'Bob']])
+		s.micHolder = 'peer-a'
+
+		const callbacks = createPeerCallbacks(s, mockDeps())
+		callbacks.onPeerLeave('peer-b')
+
+		expect(s.micHolder).toBe('peer-a')
+		expect(s.micDropMessage).toBe('')
+	})
+})
+
+describe('onMic callback', () => {
+	it('updates micHolder from peer message', () => {
+		const s = createInitialState()
+		withSession(s)
+
+		const callbacks = createPeerCallbacks(s, mockDeps())
+		callbacks.onMic!('peer-a')
+
+		expect(s.micHolder).toBe('peer-a')
+		expect(s.micDropMessage).toBe('')
+	})
+
+	it('resets micHolder to null', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.micHolder = 'peer-a'
+
+		const callbacks = createPeerCallbacks(s, mockDeps())
+		callbacks.onMic!(null)
+
+		expect(s.micHolder).toBeNull()
 	})
 })

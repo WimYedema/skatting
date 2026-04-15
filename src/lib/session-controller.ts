@@ -49,6 +49,10 @@ export interface SessionState {
 	prepDone: PrepDoneSignal[]
 	/** User-scoped localStorage (created at join time) */
 	storage: ScopedStorage | null
+	/** Peer ID of the current 🎤 holder, null = creator holds mic */
+	micHolder: string | null
+	/** Toast-style message for mic drop */
+	micDropMessage: string
 }
 
 export function createInitialState(): SessionState {
@@ -89,6 +93,8 @@ export function createInitialState(): SessionState {
 		publicKeyHex: '',
 		prepDone: [],
 		storage: null,
+		micHolder: null,
+		micDropMessage: '',
 	}
 }
 
@@ -271,7 +277,6 @@ export function saveRoundToHistory(s: SessionState, verdictOverride: number | nu
 }
 
 export function skipPeer(s: SessionState, peerId: string): void {
-	if (!s.isCreator) return
 	s.skippedPeers = new Set(s.skippedPeers).add(peerId)
 }
 
@@ -495,7 +500,6 @@ export function checkAutoReveal(s: SessionState, allReady: boolean): void {
 }
 
 export function toggleLiveAdjust(s: SessionState): void {
-	if (!s.isCreator) return
 	s.liveAdjust = !s.liveAdjust
 	s.session?.sendLiveAdjust({ liveAdjust: s.liveAdjust })
 }
@@ -514,6 +518,40 @@ export function changeUnit(s: SessionState, newUnit: string): void {
 	s.unit = newUnit
 	s.session?.sendUnit({ unit: newUnit })
 	if (s.storage) s.persistentHistory = s.storage.getVerdictHistory(newUnit)
+}
+
+// ---------------------------------------------------------------------------
+// Mic (facilitator handoff)
+// ---------------------------------------------------------------------------
+
+/** Does the local user currently hold the 🎤? */
+export function hasMic(s: SessionState, selfId: string): boolean {
+	if (s.micHolder === null) return s.isCreator
+	return s.micHolder === selfId
+}
+
+/** Creator hands the 🎤 to a peer */
+export function handOffMic(s: SessionState, selfId: string, peerId: string): void {
+	if (!s.isCreator) return
+	s.micHolder = peerId
+	s.session?.sendMic({ holder: peerId })
+}
+
+/** Take the 🎤 back (creator only) */
+export function takeMicBack(s: SessionState): void {
+	if (!s.isCreator) return
+	s.micHolder = null
+	s.micDropMessage = ''
+	s.session?.sendMic({ holder: null })
+}
+
+/** Claim the open 🎤 after a mic-drop (anyone) */
+export function claimMic(s: SessionState, selfId: string): void {
+	// Can only claim when mic-drop is active (holder disconnected)
+	if (s.micDropMessage === '') return
+	s.micHolder = selfId
+	s.micDropMessage = ''
+	s.session?.sendMic({ holder: selfId })
 }
 
 export function leaveSession(s: SessionState): void {
@@ -537,6 +575,8 @@ export function leaveSession(s: SessionState): void {
 	s.publicKeyHex = ''
 	s.prepDone = []
 	s.storage = null
+	s.micHolder = null
+	s.micDropMessage = ''
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +597,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				if (s.liveAdjust) {
 					s.session?.sendLiveAdjust({ liveAdjust: true })
 				}
+				if (s.micHolder !== null) {
+					s.session?.sendMic({ holder: s.micHolder })
+				}
 			}
 			if (s.topic) {
 				const currentTicket = getCurrentTicket(s)
@@ -576,6 +619,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			em.delete(peerId)
 			s.peerEstimateMap = em
 			const pn = new Map(s.peerNames)
+			const leaverName = pn.get(peerId) ?? 'Someone'
 			pn.delete(peerId)
 			s.peerNames = pn
 			const rp = new Set(s.readyPeers)
@@ -587,6 +631,11 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			const sp = new Set(s.skippedPeers)
 			sp.delete(peerId)
 			s.skippedPeers = sp
+			// Mic-drop: if the 🎤 holder disconnects, open it up
+			if (s.micHolder === peerId) {
+				s.micHolder = null
+				s.micDropMessage = `${leaverName} dropped the mic 🎤`
+			}
 		},
 		onEstimate(estimate: PeerEstimate) {
 			s.peerEstimateMap = new Map(s.peerEstimateMap).set(estimate.peerId, estimate)
@@ -650,6 +699,10 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		},
 		onLiveAdjust(liveAdjust: boolean) {
 			s.liveAdjust = liveAdjust
+		},
+		onMic(holder: string | null) {
+			s.micHolder = holder
+			s.micDropMessage = ''
 		},
 		onBacklog(tickets: ImportedTicket[], peerPrepMode?: boolean) {
 			if (!s.isCreator && tickets.length > 0) {

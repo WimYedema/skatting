@@ -46,6 +46,10 @@
 		leaveSession,
 		skipPeer,
 		getActiveParticipants,
+		hasMic,
+		handOffMic,
+		takeMicBack,
+		claimMic,
 		type SessionDeps,
 	} from './lib/session-controller'
 
@@ -105,6 +109,7 @@
 	// Derived values
 	let currentTicket = $derived(getCurrentTicket(s))
 	let estimatedCount = $derived(getEstimatedCount(s))
+	let holdsMic = $derived(hasMic(s, selfId))
 	let peerEstimates = $derived(
 		Array.from(s.peerEstimateMap.values())
 			.filter((pe) => !s.abstainedPeers.has(pe.peerId))
@@ -332,7 +337,7 @@
 						<button class="mode-toggle" onclick={() => startMeeting(s, deps)}>Start meeting</button>
 					{/if}
 				{:else if s.revealed}
-					{#if s.isCreator}
+					{#if holdsMic}
 						<button
 							class="live-adjust-toggle"
 							class:live-adjust-on={s.liveAdjust}
@@ -340,12 +345,12 @@
 							onclick={() => toggleLiveAdjust(s)}
 						>{s.liveAdjust ? '🔓' : '🔒'}</button>
 					{/if}
-					{#if hasVerdict}
+					{#if hasVerdict && holdsMic}
 						<button class="next" onclick={() => { const vo = verdictValue; conclusionMode = null; conclusionSigma = null; handleNext(s, deps, vo) }}>
 							{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 						</button>
 					{/if}
-					{#if s.isCreator}
+					{#if holdsMic}
 						<button class="mode-toggle" onclick={() => reEstimate(s)}>Re-estimate ↺</button>
 					{/if}
 				{:else if !s.selfReady}
@@ -375,10 +380,25 @@
 			</div>
 		{/if}
 
+		{#if s.micDropMessage}
+			<div class="mic-drop-toast">
+				{s.micDropMessage}
+				{#if s.isCreator}
+					<button onclick={() => takeMicBack(s)}>Take 🎤</button>
+				{:else}
+					<button onclick={() => claimMic(s, selfId)}>Grab 🎤</button>
+				{/if}
+				<button class="dismiss" onclick={() => (s.micDropMessage = '')}>×</button>
+			</div>
+		{/if}
+
 		<div class="participants">
 			<div class="participant" class:is-ready={s.selfReady}>
 				<span class="ready-dot" class:ready={s.selfReady}></span>
-				<span class="name">{s.userName} (you){#if s.selfAbstained} <span class="abstain-tag">🤷</span>{/if}{#if s.isCreator}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
+				<span class="name">{s.userName} (you){#if s.selfAbstained} <span class="abstain-tag">🤷</span>{/if}{#if holdsMic}<span class="mic-tag"> 🎤</span>{/if}{#if s.isCreator}<span class="leader-tag"> ✎</span>{/if}</span>
+				{#if s.isCreator && s.micHolder !== null}
+					<button class="mic-action" title="Take mic back" onclick={() => takeMicBack(s)}>← Take 🎤</button>
+				{/if}
 			</div>
 			{#each s.peerIds as peerId}
 				<div class="participant" class:is-ready={s.readyPeers.has(peerId)} class:is-skipped={s.skippedPeers.has(peerId)}>
@@ -387,8 +407,11 @@
 						class:ready={s.readyPeers.has(peerId)}
 						style="--peer-color: {getPeerColor(peerId, s.peerIds)}"
 					></span>
-					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if s.skippedPeers.has(peerId)} <span class="skipped-tag">skipped</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎ in charge</span>{/if}</span>
-					{#if s.isCreator && !s.prepMode && !s.revealed && !s.readyPeers.has(peerId) && !s.skippedPeers.has(peerId)}
+					<span class="name">{s.peerNames.get(peerId) ?? 'Connecting…'}{#if s.abstainedPeers.has(peerId)} <span class="abstain-tag">🤷</span>{/if}{#if s.skippedPeers.has(peerId)} <span class="skipped-tag">skipped</span>{/if}{#if s.micHolder === peerId}<span class="mic-tag"> 🎤</span>{/if}{#if peerId === s.creatorPeerId}<span class="leader-tag"> ✎</span>{/if}</span>
+					{#if s.isCreator && s.micHolder !== peerId && !s.prepMode}
+						<button class="mic-action" title="Give mic to {s.peerNames.get(peerId) ?? 'peer'}" onclick={() => handOffMic(s, selfId, peerId)}>Give 🎤</button>
+					{/if}
+					{#if holdsMic && !s.prepMode && !s.revealed && !s.readyPeers.has(peerId) && !s.skippedPeers.has(peerId)}
 						<button class="skip-btn" title="Skip this participant" onclick={() => skipPeer(s, peerId)}>✕</button>
 					{/if}
 				</div>
@@ -421,7 +444,7 @@
 			hasMoved={s.hasMoved}
 			hasEverDragged={s.hasEverDragged}
 			liveAdjust={s.liveAdjust}
-			isCreator={s.isCreator}
+			isCreator={holdsMic}
 			{conclusionMode}
 			{conclusionSigma}
 			onConclusionChange={(mode, sig) => { conclusionMode = mode; conclusionSigma = sig }}
@@ -438,7 +461,7 @@
 				myEstimates={s.myEstimates}
 				{estimatedCount}
 				onSelect={(index) => {
-					if (s.isCreator || s.prepMode) selectTicket(s, index)
+					if (holdsMic || s.prepMode) selectTicket(s, index)
 				}}
 				onReorder={(from, to) => handleReorder(s, deps, from, to)}
 				onRemove={(index) => handleRemove(s, deps, index)}
@@ -886,6 +909,63 @@
 		font-size: 0.85em;
 		color: #8a7a60;
 		font-style: italic;
+	}
+
+	.mic-tag {
+		font-size: 0.85em;
+	}
+
+	.mic-action {
+		padding: 1px 6px;
+		border: 1px dashed #c0b89a;
+		border-radius: 3px;
+		background: rgba(210, 200, 180, 0.2);
+		color: #8a7a60;
+		font-family: 'Caveat', cursive;
+		font-size: 0.8rem;
+		cursor: pointer;
+		line-height: 1.2;
+		opacity: 0;
+		transition: opacity 0.15s;
+		white-space: nowrap;
+	}
+
+	.participant:hover .mic-action {
+		opacity: 1;
+	}
+
+	.mic-action:hover {
+		background: rgba(210, 200, 180, 0.45);
+		color: #5a5040;
+	}
+
+	.mic-drop-toast {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background: rgba(180, 140, 60, 0.15);
+		border: 1px dashed #c0a870;
+		border-radius: 3px;
+		color: #8a7040;
+		font-family: 'Caveat', cursive;
+		font-size: 1.05rem;
+		padding: 8px 16px;
+		margin: 0 16px;
+	}
+
+	.mic-drop-toast button {
+		padding: 3px 10px;
+		font-size: 0.95rem;
+	}
+
+	.mic-drop-toast .dismiss {
+		background: none;
+		border: none;
+		color: #8a7040;
+		font-size: 1.2rem;
+		cursor: pointer;
+		padding: 0 4px;
+		margin-left: auto;
 	}
 
 	.abstain-tag {

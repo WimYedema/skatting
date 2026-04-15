@@ -42,6 +42,10 @@ export type LiveAdjustMessage = {
 	liveAdjust: boolean
 }
 
+export type MicMessage = {
+	holder: string | null
+}
+
 export type ImportedTicket = {
 	id: string
 	title: string
