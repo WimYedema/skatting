@@ -153,7 +153,7 @@
 				<span class="logo-text">Skatting</span>
 			</h1>
 				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
-				{#if s.isCreator}
+				{#if s.isCreator && estimatedCount === 0 && s.history.length === 0}
 					<select class="unit-select" value={s.unit} onchange={(e) => changeUnit(s, (e.target as HTMLSelectElement).value)}>
 						<option value="points">points</option>
 						<option value="days">days</option>
