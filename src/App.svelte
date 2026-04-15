@@ -6,7 +6,7 @@
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
 	import type { ImportedTicket } from './lib/types'
 	import { convergenceState } from './lib/canvas'
-	import { combineEstimates } from './lib/lognormal'
+	import { combineEstimates, snapVerdict } from './lib/lognormal'
 	import {
 		generateSessionKeys,
 		publishRoomState,
@@ -37,6 +37,7 @@
 		startMeeting,
 		returnToPrep,
 		reEstimate,
+		toggleLiveAdjust,
 		changeUnit,
 		checkAutoReveal,
 		prepareJoin,
@@ -52,7 +53,6 @@
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
 	let connecting = $state(false)
-	let showVerdictPicker = $state(false)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -109,7 +109,8 @@
 	let allReady = $derived(getAllReady(s, selfId))
 
 	// Convergence state for post-reveal facilitation
-	let verdictOverride: number | null = $state(null)
+	let conclusionMode: number | null = $state(null)
+	let conclusionSigma: number | null = $state(null)
 	let combinedEstimate = $derived.by(() => {
 		if (!s.revealed) return null
 		const selfEst = s.selfAbstained ? [] : [{ mu: s.mu, sigma: s.sigma }]
@@ -122,14 +123,22 @@
 		const peerEsts = peerEstimates.map((p) => ({ mu: p.mu, sigma: p.sigma }))
 		return convergenceState(combinedEstimate.mu, combinedEstimate.sigma, [...selfEst, ...peerEsts]).converged
 	})
-	let hasVerdict = $derived(isConverged || verdictOverride != null)
+	let hasVerdict = $derived(isConverged || conclusionMode != null)
 
-	// Reset verdict override when moving to a new ticket or re-estimating
+	// Compute the snapped verdict value from the conclusion curve position
+	let verdictValue = $derived.by(() => {
+		if (conclusionMode == null) return null
+		const snapped = snapVerdict(conclusionMode, s.unit)
+		// Parse numeric value from snap string for handleNext
+		const match = snapped.match(/([\d.]+)/)
+		return match ? Number.parseFloat(match[1]) : null
+	})
+
+	// Reset conclusion when moving to a new ticket or re-estimating
 	$effect(() => {
-		// Track these reactive values to reset override
 		void s.backlogIndex
 		void s.revealed
-		if (!s.revealed) verdictOverride = null
+		if (!s.revealed) { conclusionMode = null; conclusionSigma = null }
 	})
 
 	// Auto-reveal when everyone has placed their estimate (meeting mode only)
@@ -269,16 +278,21 @@
 						<button class="mode-toggle" onclick={() => startMeeting(s, deps)}>Start meeting</button>
 					{/if}
 				{:else if s.revealed}
+					{#if s.isCreator}
+						<button
+							class="live-adjust-toggle"
+							class:live-adjust-on={s.liveAdjust}
+							title={s.liveAdjust ? 'Lock estimates' : 'Unlock for live adjustment'}
+							onclick={() => toggleLiveAdjust(s)}
+						>{s.liveAdjust ? '🔓' : '🔒'}</button>
+					{/if}
 					{#if hasVerdict}
-						<button class="next" onclick={() => { const vo = verdictOverride; verdictOverride = null; handleNext(s, deps, vo) }}>
+						<button class="next" onclick={() => { const vo = verdictValue; conclusionMode = null; conclusionSigma = null; handleNext(s, deps, vo) }}>
 							{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 						</button>
 					{/if}
 					{#if s.isCreator}
 						<button class="mode-toggle" onclick={() => reEstimate(s)}>Re-estimate ↺</button>
-					{/if}
-					{#if !hasVerdict && s.isCreator}
-						<button class="force-reveal call-it-anyway" onclick={() => (showVerdictPicker = true)}>Call it anyway…</button>
 					{/if}
 				{:else if !s.selfReady}
 					<button class="done" data-tour="ready" onclick={() => handleDone(s)}>Ready ✓</button>
@@ -342,7 +356,11 @@
 			selfAbstained={s.selfAbstained}
 			hasMoved={s.hasMoved}
 			hasEverDragged={s.hasEverDragged}
-			{verdictOverride}
+			liveAdjust={s.liveAdjust}
+			isCreator={s.isCreator}
+			{conclusionMode}
+			{conclusionSigma}
+			onConclusionChange={(mode, sig) => { conclusionMode = mode; conclusionSigma = sig }}
 			showAbstainButton={!s.selfReady && !s.revealed}
 			onAbstain={() => handleAbstain(s)}
 		/>
@@ -410,29 +428,6 @@
 					<button class="danger" onclick={handleImportReplace}>Replace all</button>
 					<button class="secondary" onclick={() => (pendingImport = null)}>Cancel</button>
 				</div>
-			</div>
-		</div>
-	{/if}
-	{#if showVerdictPicker}
-		<div class="summary-overlay" role="dialog" aria-label="Override verdict" onclick={() => (showVerdictPicker = false)}>
-			<!-- svelte-ignore a11y_click_events_have_key_events -->
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="verdict-picker" onclick={(e) => e.stopPropagation()}>
-				<h3>Call it…</h3>
-				<div class="verdict-options">
-					{#if s.unit === 'points'}
-						{#each [1, 2, 3, 5, 8, 13, 21] as v}
-							<button class="verdict-btn" onclick={() => { verdictOverride = v; showVerdictPicker = false }}>{v}</button>
-						{/each}
-					{:else}
-						{#each [0.5, 1, 2, 3, 5, 8, 13, 21] as v}
-							<button class="verdict-btn" onclick={() => { verdictOverride = v; showVerdictPicker = false }}>
-								{v === 0.5 ? '½' : v} {v === 1 ? 'day' : 'days'}
-							</button>
-						{/each}
-					{/if}
-				</div>
-				<button class="verdict-cancel" onclick={() => (showVerdictPicker = false)}>Cancel</button>
 			</div>
 		</div>
 	{/if}
@@ -788,6 +783,26 @@
 		background: rgba(180, 140, 60, 0.3);
 	}
 
+	.live-adjust-toggle {
+		background: rgba(120, 120, 120, 0.1);
+		border: 1.5px solid #b0a890;
+		border-radius: 8px;
+		font-size: 1.2rem;
+		padding: 4px 10px;
+		cursor: pointer;
+		transition: background 0.15s;
+		line-height: 1;
+	}
+
+	.live-adjust-toggle:hover {
+		background: rgba(120, 120, 120, 0.2);
+	}
+
+	.live-adjust-toggle.live-adjust-on {
+		background: rgba(80, 160, 80, 0.15);
+		border-color: #8aba7a;
+	}
+
 	.mode-toggle {
 		background: rgba(90, 140, 80, 0.15);
 		border-color: #8aaa7a;
@@ -1000,72 +1015,6 @@
 	.import-actions .secondary {
 		background: rgba(160, 150, 130, 0.2);
 		color: #6a6050;
-	}
-
-	.call-it-anyway {
-		background: rgba(160, 120, 60, 0.12);
-		border-color: #c0a870;
-		color: #8a7040;
-		font-size: 0.9rem;
-	}
-
-	.call-it-anyway:hover {
-		background: rgba(160, 120, 60, 0.25);
-	}
-
-	.verdict-picker {
-		background: #f0e8d8;
-		border: 1px dashed #b0a890;
-		border-radius: 6px;
-		padding: 20px 24px;
-		max-width: 320px;
-		font-family: 'Caveat', cursive;
-		text-align: center;
-	}
-
-	.verdict-picker h3 {
-		margin: 0 0 12px;
-		font-size: 1.4rem;
-		color: #3a3530;
-	}
-
-	.verdict-options {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-		justify-content: center;
-		margin-bottom: 12px;
-	}
-
-	.verdict-btn {
-		font-family: 'Caveat', cursive;
-		font-size: 1.2rem;
-		padding: 8px 16px;
-		border-radius: 4px;
-		border: 1px dashed #b0a890;
-		background: rgba(91, 123, 154, 0.15);
-		color: #3a3530;
-		cursor: pointer;
-		min-width: 48px;
-	}
-
-	.verdict-btn:hover {
-		background: rgba(91, 123, 154, 0.35);
-	}
-
-	.verdict-cancel {
-		font-family: 'Caveat', cursive;
-		font-size: 1rem;
-		padding: 4px 14px;
-		border-radius: 4px;
-		border: 1px dashed #b0a890;
-		background: rgba(160, 150, 130, 0.2);
-		color: #6a6050;
-		cursor: pointer;
-	}
-
-	.verdict-cancel:hover {
-		background: rgba(160, 150, 130, 0.4);
 	}
 
 	.connecting-overlay {

@@ -24,7 +24,6 @@ export interface SessionState {
 	abstainedPeers: Set<string>
 	selfReady: boolean
 	selfAbstained: boolean
-	selfAbstained: boolean
 	history: HistoryEntry[]
 	persistentHistory: HistoryEntry[]
 	showPersistentHistory: boolean
@@ -37,6 +36,7 @@ export interface SessionState {
 	abstainedTickets: Set<string>
 	hasMoved: boolean
 	hasEverDragged: boolean
+	liveAdjust: boolean
 	prepMode: boolean
 	showSummary: boolean
 	/** Room code (needed for Nostr key derivation and publication) */
@@ -79,6 +79,7 @@ export function createInitialState(): SessionState {
 		abstainedTickets: new Set(),
 		hasMoved: false,
 		hasEverDragged: false,
+		liveAdjust: false,
 		prepMode: false,
 		showSummary: false,
 		roomCode: '',
@@ -273,9 +274,14 @@ export function resetRound(s: SessionState): void {
 	s.mu = 2.0
 	s.sigma = 0.6
 	s.hasMoved = false
+	s.liveAdjust = false
 }
 
-export function handleNext(s: SessionState, deps: SessionDeps, verdictOverride: number | null = null): void {
+export function handleNext(
+	s: SessionState,
+	deps: SessionDeps,
+	verdictOverride: number | null = null,
+): void {
 	if (!s.prepMode && !s.revealed) return
 	const currentTicket = getCurrentTicket(s)
 	if (currentTicket && s.hasMoved && !s.selfAbstained) {
@@ -469,6 +475,12 @@ export function checkAutoReveal(s: SessionState, allReady: boolean): void {
 	}
 }
 
+export function toggleLiveAdjust(s: SessionState): void {
+	if (!s.isCreator) return
+	s.liveAdjust = !s.liveAdjust
+	s.session?.sendLiveAdjust({ liveAdjust: s.liveAdjust })
+}
+
 export function reEstimate(s: SessionState): void {
 	s.revealed = false
 	s.selfReady = false
@@ -522,6 +534,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.session?.sendUnit({ unit: s.unit })
 				if (s.backlog.length > 0) {
 					s.session?.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })
+				}
+				if (s.liveAdjust) {
+					s.session?.sendLiveAdjust({ liveAdjust: true })
 				}
 			}
 			if (s.topic) {
@@ -603,6 +618,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				if (s.storage) s.persistentHistory = s.storage.getVerdictHistory(peerUnit)
 				persistSession(s, deps)
 			}
+		},
+		onLiveAdjust(liveAdjust: boolean) {
+			s.liveAdjust = liveAdjust
 		},
 		onBacklog(tickets: ImportedTicket[], peerPrepMode?: boolean) {
 			if (!s.isCreator && tickets.length > 0) {

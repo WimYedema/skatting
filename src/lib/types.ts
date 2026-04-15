@@ -38,6 +38,10 @@ export type UnitMessage = {
 	unit: string
 }
 
+export type LiveAdjustMessage = {
+	liveAdjust: boolean
+}
+
 export type ImportedTicket = {
 	id: string
 	title: string
@@ -76,8 +80,14 @@ export interface SceneState {
 	selfAbstained?: boolean
 	hasMoved?: boolean
 	hasEverDragged?: boolean
-	/** When set, forces the verdict to this value even if divergent */
-	verdictOverride?: number | null
+	/** Whether blobs are unlocked for live adjustment post-reveal */
+	liveAdjust?: boolean
+	/** Mode position of the facilitator's conclusion curve (math-space) */
+	conclusionMode?: number | null
+	/** Sigma of the facilitator's conclusion curve */
+	conclusionSigma?: number | null
+	/** Whether the current user is the facilitator/creator */
+	isCreator?: boolean
 }
 
 /** Muted colors assigned to peers — like colored pencils on paper */

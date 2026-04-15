@@ -32,6 +32,7 @@ import {
 	returnToPrep,
 	reEstimate,
 	changeUnit,
+	toggleLiveAdjust,
 	mergeBacklogImport,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
@@ -52,6 +53,7 @@ function mockSession(): PeerSession {
 		sendReady: vi.fn().mockResolvedValue(undefined),
 		sendUnit: vi.fn().mockResolvedValue(undefined),
 		sendBacklog: vi.fn().mockResolvedValue(undefined),
+		sendLiveAdjust: vi.fn().mockResolvedValue(undefined),
 		leave: vi.fn(),
 	}
 }
@@ -1626,6 +1628,7 @@ describe('reEstimate', () => {
 describe('onReveal with reEstimate flag', () => {
 	let s: SessionState
 	let callbacks: PeerCallbacks
+	const deps = mockDeps()
 
 	beforeEach(() => {
 		s = createInitialState()
@@ -1637,7 +1640,7 @@ describe('onReveal with reEstimate flag', () => {
 		s.selfAbstained = true
 		s.mu = 3.0
 		s.sigma = 0.5
-		callbacks = createPeerCallbacks(s)
+		callbacks = createPeerCallbacks(s, deps)
 	})
 
 	it('reEstimate=true resets ready but keeps blob positions', () => {
@@ -1811,5 +1814,72 @@ describe('mergeBacklogImport', () => {
 		mergeBacklogImport(s, d, [{ id: 'T4', title: 'New' }])
 
 		expect(s.backlogIndex).toBe(1)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// toggleLiveAdjust
+// ---------------------------------------------------------------------------
+
+describe('toggleLiveAdjust', () => {
+	it('toggles liveAdjust and broadcasts to peers', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = true
+
+		expect(s.liveAdjust).toBe(false)
+
+		toggleLiveAdjust(s)
+		expect(s.liveAdjust).toBe(true)
+		expect(s.session!.sendLiveAdjust).toHaveBeenCalledWith({ liveAdjust: true })
+
+		toggleLiveAdjust(s)
+		expect(s.liveAdjust).toBe(false)
+		expect(s.session!.sendLiveAdjust).toHaveBeenCalledWith({ liveAdjust: false })
+	})
+
+	it('does nothing for non-creators', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = false
+
+		toggleLiveAdjust(s)
+		expect(s.liveAdjust).toBe(false)
+		expect(s.session!.sendLiveAdjust).not.toHaveBeenCalled()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// onLiveAdjust callback
+// ---------------------------------------------------------------------------
+
+describe('onLiveAdjust callback', () => {
+	it('sets liveAdjust state from peer message', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		const callbacks = createPeerCallbacks(s, deps)
+
+		callbacks.onLiveAdjust(true)
+		expect(s.liveAdjust).toBe(true)
+
+		callbacks.onLiveAdjust(false)
+		expect(s.liveAdjust).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// resetRound resets liveAdjust
+// ---------------------------------------------------------------------------
+
+describe('resetRound resets liveAdjust', () => {
+	it('sets liveAdjust back to false', () => {
+		const s = createInitialState()
+		s.liveAdjust = true
+		s.revealed = true
+
+		resetRound(s)
+
+		expect(s.liveAdjust).toBe(false)
 	})
 })

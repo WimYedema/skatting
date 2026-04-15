@@ -120,7 +120,7 @@ function generateLogSpaceBlob(
  * only on sigma: blobArea / (sigma * sqrt(2pi)). Independent of mu (mode).
  */
 export function peakCanvasY(
-	mu: number,
+	_mu: number,
 	sigma: number,
 	canvasHeight: number,
 	config: CanvasConfig = DEFAULT_CONFIG,
@@ -485,6 +485,154 @@ function drawDragMeArrow(
 	ctx.rotate(0.05 + jitter(rng, 0.02))
 	ctx.fillText('Drag me!', 0, 0)
 	ctx.restore()
+
+	ctx.restore()
+}
+
+/**
+ * Draw a sketchy grab handle at the blob's peak — a small circle with
+ * crosshair arrows (↔ effort, ↕ certainty) to indicate draggability.
+ */
+function drawGrabHandle(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const mode = Math.exp(mu - sigma ** 2)
+	const cx = mathToCanvasX(mode, canvasWidth, config)
+	const cy = peakCanvasY(mu, sigma, canvasHeight, config)
+
+	const r = 8
+	const armLen = 14
+	const seed = Math.round(mu * 2000) + Math.round(sigma * 5555)
+	const rng = seededRng(seed)
+	const tipLen = 5
+
+	ctx.save()
+	ctx.globalAlpha = 0.5
+	ctx.strokeStyle = '#5b7b9a'
+	ctx.lineWidth = 1.8
+	ctx.fillStyle = 'rgba(245, 240, 230, 0.7)'
+
+	// Sketchy circle at the peak
+	ctx.beginPath()
+	const steps = 24
+	for (let i = 0; i <= steps; i++) {
+		const angle = (i / steps) * Math.PI * 2
+		const px = cx + (r + jitter(rng, 1)) * Math.cos(angle)
+		const py = cy + (r + jitter(rng, 1)) * Math.sin(angle)
+		if (i === 0) ctx.moveTo(px, py)
+		else ctx.lineTo(px, py)
+	}
+	ctx.closePath()
+	ctx.fill()
+	ctx.stroke()
+
+	// Horizontal arrows (effort ↔)
+	ctx.lineWidth = 1.4
+	// Left arm
+	ctx.beginPath()
+	ctx.moveTo(cx - r - 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
+	ctx.lineTo(cx - r - armLen + jitter(rng, 1), cy + jitter(rng, 1))
+	ctx.stroke()
+	// Left arrowhead
+	ctx.beginPath()
+	ctx.moveTo(cx - r - armLen, cy)
+	ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
+	ctx.moveTo(cx - r - armLen, cy)
+	ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
+	ctx.stroke()
+	// Right arm
+	ctx.beginPath()
+	ctx.moveTo(cx + r + 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
+	ctx.lineTo(cx + r + armLen + jitter(rng, 1), cy + jitter(rng, 1))
+	ctx.stroke()
+	// Right arrowhead
+	ctx.beginPath()
+	ctx.moveTo(cx + r + armLen, cy)
+	ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
+	ctx.moveTo(cx + r + armLen, cy)
+	ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
+	ctx.stroke()
+
+	// Vertical arrows (certainty ↕)
+	// Up arm
+	ctx.beginPath()
+	ctx.moveTo(cx + jitter(rng, 0.5), cy - r - 2 + jitter(rng, 0.5))
+	ctx.lineTo(cx + jitter(rng, 1), cy - r - armLen + jitter(rng, 1))
+	ctx.stroke()
+	// Up arrowhead
+	ctx.beginPath()
+	ctx.moveTo(cx, cy - r - armLen)
+	ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
+	ctx.moveTo(cx, cy - r - armLen)
+	ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
+	ctx.stroke()
+	// Down arm
+	ctx.beginPath()
+	ctx.moveTo(cx + jitter(rng, 0.5), cy + r + 2 + jitter(rng, 0.5))
+	ctx.lineTo(cx + jitter(rng, 1), cy + r + armLen + jitter(rng, 1))
+	ctx.stroke()
+	// Down arrowhead
+	ctx.beginPath()
+	ctx.moveTo(cx, cy + r + armLen)
+	ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
+	ctx.moveTo(cx, cy + r + armLen)
+	ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
+	ctx.stroke()
+
+	ctx.restore()
+}
+
+/**
+ * Draw a faint ghost marker at the original combined position —
+ * a small dotted ring with "was here" label, so the facilitator can see
+ * how far they've moved the conclusion from the group's math result.
+ */
+function drawCombinedGhost(
+	ctx: CanvasRenderingContext2D,
+	mu: number,
+	sigma: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): void {
+	const mode = Math.exp(mu - sigma ** 2)
+	const cx = mathToCanvasX(mode, canvasWidth, config)
+	const cy = peakCanvasY(mu, sigma, canvasHeight, config)
+	const seed = Math.round(mu * 1500) + Math.round(sigma * 4444)
+	const rng = seededRng(seed)
+
+	ctx.save()
+	ctx.globalAlpha = 0.3
+	ctx.strokeStyle = '#2a2520'
+	ctx.lineWidth = 1.5
+	ctx.setLineDash([3, 4])
+
+	// Small wobbly ring
+	const r = 6
+	ctx.beginPath()
+	const steps = 20
+	for (let i = 0; i <= steps; i++) {
+		const angle = (i / steps) * Math.PI * 2
+		const px = cx + (r + jitter(rng, 0.8)) * Math.cos(angle)
+		const py = cy + (r + jitter(rng, 0.8)) * Math.sin(angle)
+		if (i === 0) ctx.moveTo(px, py)
+		else ctx.lineTo(px, py)
+	}
+	ctx.closePath()
+	ctx.stroke()
+
+	// "combined" label
+	ctx.setLineDash([])
+	ctx.font = '11px Caveat, cursive'
+	ctx.fillStyle = '#2a2520'
+	ctx.globalAlpha = 0.25
+	ctx.textAlign = 'center'
+	ctx.fillText('combined', cx, cy + r + 14)
 
 	ctx.restore()
 }
@@ -1004,7 +1152,7 @@ export function detectClusters(
 	const right = indexed.slice(maxGapIdx)
 
 	// Check if either half has a secondary large gap (→ 3 clusters)
-	const trySplit = (group: typeof indexed): typeof indexed[] => {
+	const trySplit = (group: typeof indexed): (typeof indexed)[] => {
 		if (group.length < 2) return [group]
 		const r = group[group.length - 1].mode - group[0].mode
 		if (r === 0) return [group]
@@ -1116,10 +1264,7 @@ export function lognormalOverlap(
 ): number {
 	// Integration range: from near-zero to well beyond the larger P99
 	const lo = 0.01
-	const hi = Math.max(
-		lognormalQuantile(0.995, mu1, sigma1),
-		lognormalQuantile(0.995, mu2, sigma2),
-	)
+	const hi = Math.max(lognormalQuantile(0.995, mu1, sigma1), lognormalQuantile(0.995, mu2, sigma2))
 	const dx = (hi - lo) / numSteps
 	let sum = 0
 	for (let i = 0; i <= numSteps; i++) {
@@ -1181,7 +1326,6 @@ export function detectPattern(
 
 	const clusters = detectClusters(estimates)
 	const sigmas = estimates.map((e) => e.sigma)
-	const avgSigma = sigmas.reduce((a, b) => a + b, 0) / sigmas.length
 	const highUncertaintyThreshold = 0.8
 	const lowUncertaintyThreshold = 0.4
 
@@ -1297,7 +1441,6 @@ function drawAgreementRing(
 	const centerY = peakY + blobHeight * 0.4
 
 	const seed = Math.round(mu * 1000) + Math.round(sigma * 5555)
-	const rng = seededRng(seed)
 
 	ctx.save()
 	ctx.globalAlpha = 0.5
@@ -1337,11 +1480,10 @@ function drawVerdict(
 	height: number,
 	unit: string,
 	config: CanvasConfig = DEFAULT_CONFIG,
-	verdictOverride: number | null = null,
 ): void {
 	const pad = config.padding
 	const median = lognormalQuantile(0.5, mu, sigma)
-	const verdict = verdictOverride != null ? verdictOverride : snapVerdict(median, unit)
+	const verdict = snapVerdict(median, unit)
 
 	const baselineY = height - pad
 	const chartHeight = baselineY - pad
@@ -1392,8 +1534,16 @@ export function drawScene(
 	height: number,
 	scene: SceneState,
 ): void {
-	const { myEstimate, peerEstimates, revealed, history, unit, currentTicket, persistentHistory, selfAbstained } =
-		scene
+	const {
+		myEstimate,
+		peerEstimates,
+		revealed,
+		history,
+		unit,
+		currentTicket,
+		persistentHistory,
+		selfAbstained,
+	} = scene
 
 	ctx.clearRect(0, 0, width, height)
 
@@ -1446,6 +1596,12 @@ export function drawScene(
 		if (!revealed && hasMoved) {
 			drawAnnotations(ctx, myEstimate.mu, myEstimate.sigma, width, height, unit)
 		}
+
+		// Grab handle: show when blob is draggable (pre-reveal, or live-adjust)
+		const canDrag = !revealed || (scene.liveAdjust ?? false)
+		if (canDrag) {
+			drawGrabHandle(ctx, myEstimate.mu, myEstimate.sigma, width, height)
+		}
 	} else if (!revealed) {
 		// Draw a big sketchy "?" when user has no idea — same hatched style as blobs
 		const fontSize = Math.min(height * 0.45, 200)
@@ -1491,9 +1647,28 @@ export function drawScene(
 		]
 		const combined = combineEstimates(allEstimates)
 		if (combined) {
-			drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
+			const conclusionMode = scene.conclusionMode ?? null
+			const isCreator = scene.isCreator ?? false
 
-			// Agreement ring — colour-coded by convergence
+			// If the facilitator has dragged a conclusion, use their mode + sigma
+			const conclusionSigma =
+				conclusionMode != null ? (scene.conclusionSigma ?? combined.sigma) : null
+			const conclusionMu =
+				conclusionSigma != null && conclusionMode != null
+					? muFromMode(conclusionMode, conclusionSigma)
+					: null
+
+			if (conclusionMu != null && conclusionSigma != null) {
+				// Ghost marker at original combined position
+				drawCombinedGhost(ctx, combined.mu, combined.sigma, width, height)
+				// Conclusion curve — drawn like combined but represents the facilitator's call
+				drawCombinedBlob(ctx, conclusionMu, conclusionSigma, width, height)
+			} else {
+				// No conclusion yet — draw the original combined blob
+				drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
+			}
+
+			// Agreement ring — colour-coded by convergence (always on combined, not conclusion)
 			const conv = convergenceState(combined.mu, combined.sigma, allEstimates)
 			drawAgreementRing(ctx, combined.mu, combined.sigma, width, height, conv.color)
 
@@ -1513,19 +1688,18 @@ export function drawScene(
 				drawPatternPrompt(ctx, prompt, width, height, conv.color)
 			}
 
-			// Verdict: show only when converged or manually overridden
-			const verdictOverride = scene.verdictOverride ?? null
-			if (conv.converged || verdictOverride != null) {
-				drawVerdict(
-					ctx,
-					combined.mu,
-					combined.sigma,
-					width,
-					height,
-					unit,
-					DEFAULT_CONFIG,
-					verdictOverride,
-				)
+			// Grab handle on combined/conclusion curve for facilitator
+			if (isCreator) {
+				const handleMu = conclusionMu ?? combined.mu
+				const handleSigma = conclusionSigma ?? combined.sigma
+				drawGrabHandle(ctx, handleMu, handleSigma, width, height)
+			}
+
+			// Verdict: show when converged OR when facilitator has placed a conclusion
+			if (conv.converged || conclusionMode != null) {
+				const effectiveMu = conclusionMu ?? combined.mu
+				const effectiveSigma = conclusionSigma ?? combined.sigma
+				drawVerdict(ctx, effectiveMu, effectiveSigma, width, height, unit, DEFAULT_CONFIG)
 			}
 		}
 	}

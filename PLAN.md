@@ -272,41 +272,48 @@ The certainty-axis patterns are unique to Skatting — poker can't detect "every
 
 Click-to-expand (optional): the facilitator can click the prompt text to see which names are in which cluster. Expansion is local (only visible to the person who clicked). Psychologically safe by default, detailed on demand.
 
-#### Deferred Verdict
+#### Deferred Verdict ✅
 
 The key design decision: **the "call it N" verdict is withheld until convergence.**
 
-**Converged flow** (P90/P10 < 3):
+**Converged flow** (high pairwise overlap):
 ```
 Reveal → green ring → "You're all on the same page"
        → "Call it 8" verdict appears
        → [Next →]
 ```
 
-**Divergent flow** (P90/P10 ≥ 3):
+**Divergent flow** (low pairwise overlap):
 ```
 Reveal → amber/red ring → cluster lassos → pattern prompt
        → NO verdict shown
-       → [Re-estimate ↺]  [Call it anyway…]
+       → Facilitator drags conclusion curve OR [Re-estimate ↺]
 ```
 
-- **"Re-estimate ↺"** is the primary (prominent) action when divergent — blobs re-hide per 5.1, team re-votes blind
-- **"Call it anyway…"** is the escape hatch (secondary/muted). Opens a small Fibonacci picker so the creator can consciously override: *"We'll agree to disagree — call it…"*
-- **"Next →"** only appears once a verdict exists (via convergence or manual override)
+- **Conclusion curve** — the facilitator can grab and drag the combined curve to a new position, turning it into a "conclusion" curve. A ghost marker shows where the original combined estimate was. The "call it N" scribble updates live as the curve moves, snapping to the nearest Fibonacci/day value. Re-grabbable during discussion. Vertical movement supported for alignment even though only the horizontal position (effort) drives the verdict number.
+- **"Re-estimate ↺"** — blobs re-hide per 5.1, team re-votes blind
+- **"Next →"** only appears once a verdict exists (via convergence or facilitator conclusion)
 - The combined blob shape is still drawn during divergence (shows the mathematical average) — only the snapped verdict label is withheld
 
-This makes the tool opinionated about estimation quality. It won't give you a number until you've earned it through agreement — or until the creator deliberately overrides. The re-estimate loop becomes the natural path, not a hidden button.
+#### Live Adjust Mode ✅
+
+Post-reveal, the facilitator can toggle 🔒/🔓 to switch between two modes:
+- **🔒 Locked (default)** — only the facilitator can drag the conclusion curve
+- **🔓 Unlocked** — everyone can drag their own curves for real-time collaborative adjustment
+
+This makes the tool opinionated about estimation quality. It won't give you a number until you've earned it through agreement — or until the creator deliberately places a conclusion.
 
 #### Implementation Summary
 
 | # | Task | Effort |
 |---|---|---|
-| 5.3a | **Convergence detection + agreement ring** — P90/P10 threshold, coloured ring on combined blob | S |
-| 5.3b | **Cluster detection + lassos** — 1D k-means, sketchy ellipse around each group with median label | M |
-| 5.3c | **Pattern prompts** — canvas-rendered text matched to detected pattern, click-to-expand names | S |
-| 5.3d | **Deferred verdict** — withhold "call it N" when divergent, show "Re-estimate ↺" as primary action, "Call it anyway…" as escape hatch with Fibonacci picker | M |
+| 5.3a | **Convergence detection + agreement ring** — pairwise overlap integral, coloured ring on combined blob | S ✅ |
+| 5.3b | **Cluster detection + lassos** — 1D k-means, sketchy ellipse around each group with median label | M ✅ |
+| 5.3c | **Pattern prompts** — canvas-rendered text matched to detected pattern | S ✅ |
+| 5.3d | **Deferred verdict + conclusion curve** — withhold "call it N" when divergent; facilitator drags conclusion curve to set verdict spatially | M ✅ |
+| 5.3e | **Live adjust mode** — 🔒/🔓 toggle: locked = facilitator drags conclusion; unlocked = everyone drags their own blobs | S ✅ |
 
-All canvas-rendered (ring, lassos, text) via `drawScene()`. The "Call it anyway" Fibonacci picker is a small DOM popover. No architectural changes needed.
+All canvas-rendered (ring, lassos, text, conclusion curve, grab handles) via `drawScene()`. No architectural changes needed.
 
 ### 5.4 Selective Reveal
 

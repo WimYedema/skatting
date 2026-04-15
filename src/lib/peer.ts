@@ -7,6 +7,7 @@ import type {
 	BacklogMessage,
 	EstimateMessage,
 	ImportedTicket,
+	LiveAdjustMessage,
 	NameMessage,
 	PeerEstimate,
 	ReadyMessage,
@@ -26,6 +27,7 @@ export interface PeerSession {
 	sendReady: (ready: ReadyMessage) => Promise<void>
 	sendUnit: (unit: UnitMessage) => Promise<void>
 	sendBacklog: (backlog: BacklogMessage) => Promise<void>
+	sendLiveAdjust: (msg: LiveAdjustMessage) => Promise<void>
 	leave: () => void
 }
 
@@ -39,6 +41,7 @@ export interface PeerCallbacks {
 	onReady: (peerId: string, ready: boolean, abstained?: boolean) => void
 	onUnit: (unit: string) => void
 	onBacklog?: (tickets: ImportedTicket[], prepMode?: boolean) => void
+	onLiveAdjust?: (liveAdjust: boolean) => void
 	onConnectionError?: (message: string) => void
 }
 
@@ -152,6 +155,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	const readySenders: Array<(data: ReadyMessage) => Promise<void>> = []
 	const unitSenders: Array<(data: UnitMessage) => Promise<void>> = []
 	const backlogSenders: Array<(data: BacklogMessage) => Promise<void>> = []
+	const liveAdjustSenders: Array<(data: LiveAdjustMessage) => Promise<void>> = []
 
 	// Deduplicated receivers for messages with side effects —
 	// both Nostr and MQTT fire these, so we need to ignore the duplicate.
@@ -163,6 +167,9 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	)
 	const dedupTopic = dedup((data: TopicMessage) =>
 		callbacks.onTopic(data.topic, data.url, data.ticketId),
+	)
+	const dedupLiveAdjust = dedup((data: LiveAdjustMessage) =>
+		callbacks.onLiveAdjust?.(data.liveAdjust),
 	)
 
 	for (let i = 0; i < rooms.length; i++) {
@@ -179,6 +186,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		const [sendReady, onReady] = room.makeAction<ReadyMessage>('ready')
 		const [sendUnit, onUnit] = room.makeAction<UnitMessage>('unit')
 		const [sendBacklog, onBacklog] = room.makeAction<BacklogMessage>('backlog')
+		const [sendLiveAdjust, onLiveAdjust] = room.makeAction<LiveAdjustMessage>('liveadjust')
 
 		estimateSenders.push(async (d) => {
 			await sendEstimate(d)
@@ -201,6 +209,9 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		backlogSenders.push(async (d) => {
 			await sendBacklog(d)
 		})
+		liveAdjustSenders.push(async (d) => {
+			await sendLiveAdjust(d)
+		})
 
 		// All receivers are idempotent — duplicates just overwrite with same value
 		onEstimate((data, peerId) => {
@@ -212,6 +223,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onReady((data, peerId) => callbacks.onReady(peerId, data.ready, data.abstained))
 		onUnit((data) => callbacks.onUnit(data.unit))
 		onBacklog((data) => dedupBacklog(data))
+		onLiveAdjust((data) => dedupLiveAdjust(data))
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value
@@ -233,6 +245,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		sendReady: broadcastAll(readySenders),
 		sendUnit: broadcastAll(unitSenders),
 		sendBacklog: broadcastAll(backlogSenders),
+		sendLiveAdjust: broadcastAll(liveAdjustSenders),
 		leave() {
 			if (healthTimer) clearInterval(healthTimer)
 			for (const room of rooms) room.leave()

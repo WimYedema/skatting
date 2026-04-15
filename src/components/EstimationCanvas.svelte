@@ -6,7 +6,7 @@
 		hitTestBlob,
 		mathToCanvasX,
 	} from '../lib/canvas'
-	import { combineEstimates, lognormalQuantile, muFromMode, snapVerdict } from '../lib/lognormal'
+	import { combineEstimates, lognormalQuantile, muFromMode } from '../lib/lognormal'
 	import type { HistoryEntry, ImportedTicket } from '../lib/types'
 
 	interface Props {
@@ -24,32 +24,70 @@
 		selfAbstained?: boolean
 		hasMoved?: boolean
 		hasEverDragged?: boolean
-		verdictOverride?: number | null
+		liveAdjust?: boolean
+		isCreator?: boolean
+		conclusionMode?: number | null
+		conclusionSigma?: number | null
+		onConclusionChange?: (mode: number, sigma: number) => void
 		showAbstainButton?: boolean
 		onAbstain?: () => void
 	}
 
-	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour, selfAbstained, hasMoved, hasEverDragged, verdictOverride, showAbstainButton, onAbstain }: Props = $props()
+	let { mu, sigma, peerEstimates, revealed, userName, history, persistentHistory, unit, currentTicket, onEstimateChange, dataTour, selfAbstained, hasMoved, hasEverDragged, liveAdjust, isCreator, conclusionMode, conclusionSigma, onConclusionChange, showAbstainButton, onAbstain }: Props = $props()
 
 	let canvas: HTMLCanvasElement | undefined = $state()
 	let container: HTMLDivElement | undefined = $state()
 	let width = $state(800)
 	let height = $state(500)
 	let dragging = $state(false)
+	let draggingConclusion = $state(false)
 
 	let tooltipText = $state('')
 	let tooltipX = $state(0)
 	let tooltipY = $state(0)
 	let showTooltip = $state(false)
+	let redrawTick = $state(0)
+
+	// Force canvas redraw when tab becomes visible — browsers discard canvas
+	// bitmaps for backgrounded tabs, so the $effect must re-run on focus.
+	$effect(() => {
+		const onVisible = () => {
+			if (document.visibilityState === 'visible') redrawTick++
+		}
+		document.addEventListener('visibilitychange', onVisible)
+		return () => document.removeEventListener('visibilitychange', onVisible)
+	})
 
 	function handlePointerDown(e: PointerEvent) {
-		if (revealed) return
-		dragging = true
-		;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-		updateEstimate(e)
+		if (!revealed) {
+			// Pre-reveal: drag own blob
+			dragging = true
+			;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+			updateEstimate(e)
+			return
+		}
+		// Post-reveal locked: facilitator drags conclusion curve
+		if (!liveAdjust && isCreator && onConclusionChange) {
+			draggingConclusion = true
+			;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+			updateConclusion(e)
+			return
+		}
+		// Post-reveal unlocked: everyone drags own blob
+		if (liveAdjust) {
+			dragging = true
+			;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+			updateEstimate(e)
+			return
+		}
 	}
 
 	function handlePointerMove(e: PointerEvent) {
+		if (draggingConclusion) {
+			updateConclusion(e)
+			showTooltip = false
+			return
+		}
 		if (dragging) {
 			updateEstimate(e)
 			showTooltip = false
@@ -60,6 +98,7 @@
 
 	function handlePointerUp() {
 		dragging = false
+		draggingConclusion = false
 	}
 
 	function updateTooltip(e: PointerEvent) {
@@ -134,6 +173,16 @@
 		onEstimateChange(newMu, newSigma)
 	}
 
+	function updateConclusion(e: PointerEvent) {
+		if (!canvas || !onConclusionChange) return
+		const rect = canvas.getBoundingClientRect()
+		const canvasX = (e.clientX - rect.left) / rect.width * width
+		const canvasY = (e.clientY - rect.top) / rect.height * height
+		const mode = Math.max(0.5, canvasToMathX(canvasX, width))
+		const sigma = canvasYToSigmaFromPeak(canvasY, height, mode)
+		onConclusionChange(mode, sigma)
+	}
+
 	// Observe the CONTAINER size, not the canvas — avoids feedback loops
 	$effect(() => {
 		if (!container) return
@@ -162,12 +211,17 @@
 		const abstained = selfAbstained ?? false
 		const moved = hasMoved ?? true
 		const everDragged = hasEverDragged ?? true
-		const vOverride = verdictOverride ?? null
+		const la = liveAdjust ?? false
+		void redrawTick // Force redraw when tab regains visibility
 
 		// Set buffer size and draw synchronously to avoid race conditions
 		// between ResizeObserver and requestAnimationFrame
 		if (canvas.width !== w) canvas.width = w
 		if (canvas.height !== h) canvas.height = h
+
+		const cMode = conclusionMode ?? null
+		const cSigma = conclusionSigma ?? null
+		const creator = isCreator ?? false
 
 		drawScene(ctx, w, h, {
 			myEstimate: { mu, sigma },
@@ -180,7 +234,10 @@
 			selfAbstained: abstained,
 			hasMoved: moved,
 			hasEverDragged: everDragged,
-			verdictOverride: vOverride,
+			liveAdjust: la,
+			conclusionMode: cMode,
+			conclusionSigma: cSigma,
+			isCreator: creator,
 		})
 	})
 </script>
@@ -192,7 +249,7 @@
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
 		onpointerleave={handlePointerLeave}
-		style="cursor: {revealed ? 'default' : dragging ? 'grabbing' : 'crosshair'}; touch-action: none;"
+		style="cursor: {!revealed ? (dragging ? 'grabbing' : 'crosshair') : liveAdjust ? (dragging ? 'grabbing' : 'crosshair') : isCreator ? (draggingConclusion ? 'grabbing' : 'grab') : 'default'}; touch-action: none;"
 	></canvas>
 	{#if showTooltip}
 		<div class="tooltip" style="left: {tooltipX}px; top: {tooltipY - 30}px;">

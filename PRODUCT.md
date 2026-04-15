@@ -222,7 +222,7 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 
 1. **X-axis scale**: Configurable units — the session creator chooses "points" or "days" at creation time. This is synced to all peers and displayed on the axis. Range is 0–20.
 
-2. **Facilitator role**: No designated facilitator. Any participant can force-reveal or advance to the next round. The P2P model treats all peers equally.
+2. **Facilitator role**: The session creator acts as facilitator — they control ticket navigation, can trigger re-estimates, toggle live-adjust mode, and drag the conclusion curve to set verdicts. Other participants estimate and discuss.
 
 3. **Blob interaction feel**: The blob follows the cursor exactly (no inertia). Horizontal position controls mode (peak), vertical position controls sigma (certainty). The peak always tracks the cursor position precisely via `muFromMode`.
 
@@ -230,7 +230,7 @@ The app is deployable as a **single HTML file** (~470 KB gzipped ~146 KB) — op
 
 5. **P2P mesh limits**: WebRTC full-mesh via Trystero. Practical limit ~10-15 peers — acceptable for typical scrum teams (5-9 people).
 
-6. **After reveal**: A combined estimate is computed automatically using precision-weighted Bayesian combination (more certain estimates get more weight). The combined estimate is shown as a dashed outline. Clicking "Next" saves the combined result to history and starts a new round.
+6. **After reveal**: A combined estimate is computed automatically using precision-weighted Bayesian combination (more certain estimates get more weight). The combined estimate is shown as a dashed outline. If the team converges (high pairwise overlap), a "call it N" verdict label appears automatically. If they diverge, the facilitator can drag the combined curve to create a **conclusion curve** — setting the verdict spatially. A ghost marker shows the original combined position. The facilitator can also toggle 🔒/🔓 to unlock everyone's blobs for live collaborative adjustment during discussion.
 
 7. **History scribbles — current session vs. persistent**: The app already draws current-session history (past rounds in this session) as × marks with labels. This extends to **cross-session persistent history**: verdicts from previous sessions are stored in `localStorage` and drawn as even fainter pencil scribbles on the canvas, giving the paper a "used notebook" feel.
 

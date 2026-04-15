@@ -339,6 +339,72 @@ describe('drawScene', () => {
 			}),
 		).not.toThrow()
 	})
+
+	it('does not throw with conclusionMode set (conclusion curve)', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [{ mu: 1.8, sigma: 0.4, color: '#b56b6b' }],
+				revealed: true,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+				conclusionMode: 5,
+				conclusionSigma: 0.4,
+				isCreator: true,
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with conclusionMode null (no conclusion)', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [{ mu: 1.8, sigma: 0.4, color: '#b56b6b' }],
+				revealed: true,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+				conclusionMode: null,
+				isCreator: true,
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with liveAdjust and grab handle', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [],
+				revealed: false,
+				history: [],
+				unit: 'points',
+				persistentHistory: [],
+				liveAdjust: true,
+				hasMoved: true,
+			}),
+		).not.toThrow()
+	})
+
+	it('does not throw with conclusionSigma different from combined', () => {
+		const ctx = createMockCtx()
+		expect(() =>
+			drawScene(ctx, 800, 600, {
+				myEstimate: { mu: 2.0, sigma: 0.5 },
+				peerEstimates: [{ mu: 1.8, sigma: 0.4, color: '#b56b6b' }],
+				revealed: true,
+				history: [],
+				unit: 'days',
+				persistentHistory: [],
+				conclusionMode: 3,
+				conclusionSigma: 0.2,
+				isCreator: false,
+			}),
+		).not.toThrow()
+	})
 })
 
 describe('lognormalOverlap', () => {
