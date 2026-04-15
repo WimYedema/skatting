@@ -31,6 +31,7 @@ import {
 	startMeeting,
 	returnToPrep,
 	reEstimate,
+	changeUnit,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -1685,5 +1686,35 @@ describe('revisit verdict overwrite', () => {
 
 		expect(s.backlog[0].median).toBeDefined()
 		expect(s.backlogIndex).toBe(1)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// changeUnit
+// ---------------------------------------------------------------------------
+
+describe('changeUnit', () => {
+	it('updates unit and broadcasts to peers', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = true
+		s.unit = 'points'
+
+		changeUnit(s, 'days')
+
+		expect(s.unit).toBe('days')
+		expect(s.session!.sendUnit).toHaveBeenCalledWith({ unit: 'days' })
+	})
+
+	it('does nothing for non-creator', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.isCreator = false
+		s.unit = 'points'
+
+		changeUnit(s, 'days')
+
+		expect(s.unit).toBe('points')
+		expect(s.session!.sendUnit).not.toHaveBeenCalled()
 	})
 })

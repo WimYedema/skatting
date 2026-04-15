@@ -33,6 +33,7 @@
 		startMeeting,
 		returnToPrep,
 		reEstimate,
+		changeUnit,
 		checkAutoReveal,
 		prepareJoin,
 		applyNostrState,
@@ -152,6 +153,14 @@
 				<span class="logo-text">Skatting</span>
 			</h1>
 				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
+				{#if s.isCreator}
+					<select class="unit-select" value={s.unit} onchange={(e) => changeUnit(s, (e.target as HTMLSelectElement).value)}>
+						<option value="points">points</option>
+						<option value="days">days</option>
+					</select>
+				{:else}
+					<span class="unit-badge">{s.unit}</span>
+				{/if}
 				{#if s.topicUrl}
 					<a
 						class="topic-link"
@@ -475,6 +484,23 @@
 
 	.room-badge:hover .copy-icon {
 		opacity: 0.8;
+	}
+
+	.unit-select {
+		font-family: 'Caveat', cursive;
+		font-size: 0.95rem;
+		background: rgba(210, 200, 180, 0.3);
+		border: 1px dashed #c0b89a;
+		border-radius: 3px;
+		padding: 1px 4px;
+		color: #6a6050;
+		cursor: pointer;
+	}
+
+	.unit-badge {
+		font-family: 'Caveat', cursive;
+		font-size: 0.95rem;
+		color: #8a8070;
 	}
 
 	.participants {

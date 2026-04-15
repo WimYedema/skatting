@@ -450,6 +450,13 @@ export function reEstimate(s: SessionState): void {
 	s.session?.sendReveal({ revealed: false, reEstimate: true })
 }
 
+export function changeUnit(s: SessionState, newUnit: string): void {
+	if (!s.isCreator) return
+	s.unit = newUnit
+	s.session?.sendUnit({ unit: newUnit })
+	if (s.storage) s.persistentHistory = s.storage.getVerdictHistory(newUnit)
+}
+
 export function leaveSession(s: SessionState): void {
 	s.session?.leave()
 	s.session = null
