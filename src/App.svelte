@@ -55,6 +55,7 @@
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
 	let connecting = $state(false)
+	let missedRounds = $state(0)
 
 	function dismissOnboarding() {
 		showOnboarding = false
@@ -90,6 +91,10 @@
 		// Show onboarding on first-ever session
 		if (!localStorage.getItem(ONBOARDING_KEY)) {
 			showOnboarding = true
+		}
+		// Late joiner catch-up: count tickets with verdicts
+		if (!s.isCreator && !s.prepMode) {
+			missedRounds = s.backlog.filter((t) => t.median != null).length
 		}
 	}
 
@@ -189,7 +194,7 @@
 </script>
 
 {#if !s.session}
-	<SessionLobby onJoin={handleJoin} />
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>
@@ -314,6 +319,13 @@
 			<div class="connection-error">
 				{s.connectionError}
 				<button onclick={() => (s.connectionError = '')}>×</button>
+			</div>
+		{/if}
+
+		{#if missedRounds > 0}
+			<div class="missed-rounds">
+				You missed {missedRounds} round{missedRounds > 1 ? 's' : ''} — see verdicts in the sidebar
+				<button onclick={() => (missedRounds = 0)}>×</button>
 			</div>
 		{/if}
 
@@ -554,6 +566,29 @@
 		background: none;
 		border: none;
 		color: #7a3030;
+		font-size: 1.2rem;
+		cursor: pointer;
+		padding: 0 4px;
+	}
+
+	.missed-rounds {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background: rgba(59, 125, 216, 0.12);
+		border: 1px dashed #8a9ab0;
+		border-radius: 3px;
+		color: #2a5090;
+		font-family: 'Caveat', cursive;
+		font-size: 1.05rem;
+		padding: 8px 16px;
+		margin: 0 16px;
+	}
+
+	.missed-rounds button {
+		background: none;
+		border: none;
+		color: #2a5090;
 		font-size: 1.2rem;
 		cursor: pointer;
 		padding: 0 4px;

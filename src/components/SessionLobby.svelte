@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { generateRoomId } from '../lib/config'
+	import type { RoomState, PrepDoneSignal } from '../lib/nostr-state'
 	import {
 		deleteSession,
 		getLastUserName,
@@ -9,19 +10,77 @@
 
 	interface Props {
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
+		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
+		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
 	}
 
-	let { onJoin }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone }: Props = $props()
 
 	let roomId = $state('')
 	let userName = $state(getLastUserName())
 	let unit = $state('points')
-	let mode = $state<'choose' | 'create' | 'join'>('choose')
+	let mode = $state<'choose' | 'create' | 'join' | 'rejoin'>('choose')
 	let recentSessions = $state(getSavedSessions())
+	let selectedSession = $state<SavedSession | null>(null)
 	// Deduplicate by roomId for display — show the most recent per room
 	let displaySessions = $derived(
 		recentSessions.filter((s, i) => recentSessions.findIndex((r) => r.roomId === s.roomId) === i)
 	)
+
+	// Join preview state
+	let roomPreview = $state<{ roomState: RoomState | null; prepDone: PrepDoneSignal[]; knownNames: KnownName[] } | null>(null)
+	let loadingPreview = $state(false)
+
+	interface KnownName {
+		name: string
+		isCreator: boolean
+		ticketCount?: number
+	}
+
+	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string): KnownName[] {
+		const nameMap = new Map<string, KnownName>()
+		// From saved sessions for this room
+		const saved = recentSessions.filter((s) => s.roomId === roomCode)
+		for (const s of saved) {
+			if (s.isCreator) {
+				nameMap.set(s.userName.toLowerCase(), { name: s.userName, isCreator: true })
+			}
+			for (const pn of s.peerNames ?? []) {
+				if (!nameMap.has(pn.toLowerCase())) {
+					nameMap.set(pn.toLowerCase(), { name: pn, isCreator: false })
+				}
+			}
+		}
+		// From prep-done signals (override with richer data)
+		for (const pd of prepDone) {
+			const existing = nameMap.get(pd.name.toLowerCase())
+			nameMap.set(pd.name.toLowerCase(), {
+				name: pd.name,
+				isCreator: existing?.isCreator ?? false,
+				ticketCount: pd.ticketCount,
+			})
+		}
+		return Array.from(nameMap.values())
+	}
+
+	async function handleLookup() {
+		if (!queryRoomState || !queryPrepDone) return
+		const code = roomId.trim().toLowerCase()
+		if (code.length < 4) return
+		loadingPreview = true
+		try {
+			const [roomState, prepDone] = await Promise.all([
+				queryRoomState(code),
+				queryPrepDone(code),
+			])
+			const knownNames = buildKnownNames(roomState, prepDone, code)
+			roomPreview = { roomState, prepDone, knownNames }
+		} catch {
+			// Query failed — fall back to direct join
+			roomPreview = { roomState: null, prepDone: [], knownNames: buildKnownNames(null, [], code) }
+		}
+		loadingPreview = false
+	}
 
 	function handleCreate() {
 		roomId = generateRoomId()
@@ -30,6 +89,7 @@
 
 	function handleJoinMode() {
 		roomId = ''
+		roomPreview = null
 		mode = 'join'
 	}
 
@@ -42,14 +102,41 @@
 	}
 
 	function handleRejoin(saved: SavedSession) {
-		const trimmedName = userName.trim() || saved.userName
-		// Find the session entry matching this user's name (preserves isCreator)
+		selectedSession = saved
+		roomId = saved.roomId
+		// Pre-fill with last used name if we have one
+		userName = getLastUserName() || saved.userName
+		// Build known names from saved session data immediately
+		const knownNames = buildKnownNames(null, [], saved.roomId)
+		roomPreview = { roomState: null, prepDone: [], knownNames }
+		mode = 'rejoin'
+		// Fire off Nostr lookup to enrich with live data
+		if (queryRoomState && queryPrepDone) {
+			loadingPreview = true
+			Promise.all([queryRoomState(saved.roomId), queryPrepDone(saved.roomId)])
+				.then(([roomState, prepDone]) => {
+					const enriched = buildKnownNames(roomState, prepDone, saved.roomId)
+					roomPreview = { roomState, prepDone, knownNames: enriched }
+				})
+				.catch(() => {
+					// Keep local data on failure
+				})
+				.finally(() => {
+					loadingPreview = false
+				})
+		}
+	}
+
+	function submitRejoin() {
+		if (!selectedSession) return
+		const trimmedName = userName.trim()
+		if (!trimmedName) return
+		// Check if this name matches a creator entry
 		const match = recentSessions.find(
-			(s) => s.roomId === saved.roomId && s.userName === trimmedName,
+			(s) => s.roomId === selectedSession!.roomId && s.userName === trimmedName,
 		)
-		// If no match for this name, join as non-creator (don't inherit someone else's role)
 		const selectedUnit = match?.isCreator ? match.unit : null
-		onJoin(saved.roomId, trimmedName, selectedUnit)
+		onJoin(selectedSession.roomId, trimmedName, selectedUnit)
 	}
 
 	function handleDelete(roomId: string) {
@@ -134,21 +221,6 @@
 	</h1>
 
 	{#if mode === 'choose'}
-		<div class="name-bar">
-			<label for="user-name">Your name</label>
-			<input
-				id="user-name"
-				type="text"
-				bind:value={userName}
-				placeholder="e.g. Alice"
-				maxlength="30"
-				autocomplete="off"
-				data-1p-ignore
-				data-bwignore
-				data-lpignore="true"
-			/>
-		</div>
-
 		{#if displaySessions.length > 0}
 			<div class="rooms">
 				{#each displaySessions as saved (saved.roomId)}
@@ -156,8 +228,7 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="room-card"
-						class:disabled={userName.trim().length === 0}
-						onclick={() => userName.trim().length > 0 && handleRejoin(saved)}
+						onclick={() => handleRejoin(saved)}
 					>
 						<button
 							class="room-delete"
@@ -187,10 +258,10 @@
 		{/if}
 
 		<div class="new-session">
-			<button class="primary" onclick={handleCreate} disabled={userName.trim().length === 0}>
+			<button class="primary" onclick={handleCreate}>
 				+ New Session
 			</button>
-			<button class="secondary" onclick={handleJoinMode} disabled={userName.trim().length === 0}>
+			<button class="secondary" onclick={handleJoinMode}>
 				Join by Code
 			</button>
 		</div>
@@ -198,6 +269,20 @@
 		<div class="room-info">
 			<p>Share this code with your team:</p>
 			<div class="room-code-large">{roomId}</div>
+			<div class="name-bar">
+				<label for="create-name">Your name</label>
+				<input
+					id="create-name"
+					type="text"
+					bind:value={userName}
+					placeholder="e.g. Alice"
+					maxlength="30"
+					autocomplete="off"
+					data-1p-ignore
+					data-bwignore
+					data-lpignore="true"
+				/>
+			</div>
 			<div class="unit-picker">
 				<label for="unit-select">Unit:</label>
 				<select id="unit-select" bind:value={unit}>
@@ -208,20 +293,142 @@
 			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>
 			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
 		</div>
-	{:else}
+	{:else if mode === 'rejoin'}
 		<div class="room-info">
-			<p>Enter room code:</p>
+			<div class="room-code-large">{roomId}</div>
+			{#if roomPreview?.roomState}
+				<div class="session-preview">
+					{#if roomPreview.roomState.topic}
+						<span class="preview-topic">{roomPreview.roomState.topic}</span>
+					{/if}
+					<span class="preview-meta">
+						{roomPreview.roomState.backlog.length} tickets · {roomPreview.roomState.unit}
+						{#if roomPreview.roomState.prepMode} · prep mode{:else} · meeting{/if}
+					</span>
+				</div>
+			{:else if selectedSession}
+				<div class="session-preview">
+					{#if selectedSession.topic}
+						<span class="preview-topic">{selectedSession.topic}</span>
+					{/if}
+					<span class="preview-meta">{selectedSession.unit}</span>
+				</div>
+			{/if}
+			{#if loadingPreview}
+				<span class="preview-loading">Loading session info…</span>
+			{/if}
+			{#if roomPreview && roomPreview.knownNames.length > 0}
+				<div class="name-picker">
+					<p>Who are you?</p>
+					<div class="name-pills">
+						{#each roomPreview.knownNames as kn}
+							<button
+								class="name-pill"
+								class:selected={userName.trim().toLowerCase() === kn.name.toLowerCase()}
+								onclick={() => { userName = kn.name }}
+							>
+								{kn.name}
+								{#if kn.isCreator}<span class="pill-creator">✎</span>{/if}
+								{#if kn.ticketCount != null}<span class="pill-count">{kn.ticketCount}</span>{/if}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
 			<input
 				type="text"
-				bind:value={roomId}
-				placeholder="e.g. abc23"
-				maxlength="10"
-				onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && canSubmit && handleSubmit()}
+				bind:value={userName}
+				placeholder="or type a new name"
+				maxlength="30"
 			/>
-			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
-				Join
+			<button class="primary" onclick={submitRejoin} disabled={userName.trim().length === 0}>
+				{#if userName.trim()}Join as {userName.trim()}{:else}Join{/if}
 			</button>
-			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
+			<button class="back" onclick={() => { mode = 'choose'; selectedSession = null; roomPreview = null }}>← Back</button>
+		</div>
+	{:else}
+		<div class="room-info">
+			{#if roomPreview}
+				<div class="room-code-large">{roomId}</div>
+				{#if roomPreview.roomState}
+					<div class="session-preview">
+						{#if roomPreview.roomState.topic}
+							<span class="preview-topic">{roomPreview.roomState.topic}</span>
+						{/if}
+						<span class="preview-meta">
+							{roomPreview.roomState.backlog.length} tickets · {roomPreview.roomState.unit}
+							{#if roomPreview.roomState.prepMode} · prep mode{:else} · meeting{/if}
+						</span>
+					</div>
+				{:else}
+					<p class="preview-empty">No session data found — join anyway?</p>
+				{/if}
+				{#if roomPreview.knownNames.length > 0}
+					<div class="name-picker">
+						<p>Who are you?</p>
+						<div class="name-pills">
+							{#each roomPreview.knownNames as kn}
+								<button
+									class="name-pill"
+									class:selected={userName.trim().toLowerCase() === kn.name.toLowerCase()}
+									onclick={() => { userName = kn.name }}
+								>
+									{kn.name}
+									{#if kn.isCreator}<span class="pill-creator">✎</span>{/if}
+									{#if kn.ticketCount != null}<span class="pill-count">{kn.ticketCount}</span>{/if}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
+				<input
+					type="text"
+					bind:value={userName}
+					placeholder="or type a new name"
+					maxlength="30"
+				/>
+				<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
+					{#if userName.trim() && roomPreview.knownNames.some((kn) => kn.name.toLowerCase() === userName.trim().toLowerCase())}Join as {userName.trim()}{:else}Join{/if}
+				</button>
+				<button class="back" onclick={() => { roomPreview = null }}>← Back</button>
+			{:else}
+				<p>Enter room code:</p>
+				<input
+					type="text"
+					bind:value={roomId}
+					placeholder="e.g. bakitume"
+					maxlength="10"
+					onkeydown={(e: KeyboardEvent) => {
+						if (e.key === 'Enter') {
+							if (queryRoomState && roomId.trim().length >= 4) { handleLookup() }
+							else if (canSubmit) { handleSubmit() }
+						}
+					}}
+				/>
+				{#if loadingPreview}
+					<span class="preview-loading">Looking up session…</span>
+				{:else if queryRoomState && roomId.trim().length >= 4}
+					<button class="secondary" onclick={handleLookup}>Look up session</button>
+				{/if}
+				<div class="name-bar">
+					<label for="join-name">Your name</label>
+					<input
+						id="join-name"
+						type="text"
+						bind:value={userName}
+						placeholder="e.g. Alice"
+						maxlength="30"
+						autocomplete="off"
+						data-1p-ignore
+						data-bwignore
+						data-lpignore="true"
+					/>
+				</div>
+				<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
+					Join directly
+				</button>
+				<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -484,5 +691,96 @@
 
 	.back:hover {
 		color: #3a3530;
+	}
+
+	/* --- Join preview --- */
+
+	.session-preview {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.preview-topic {
+		font-size: 1.3rem;
+		font-weight: 700;
+		color: #3a3530;
+	}
+
+	.preview-meta {
+		font-size: 1rem;
+		color: #8a8070;
+	}
+
+	.preview-empty {
+		color: #9a9080;
+		font-style: italic;
+	}
+
+	.preview-loading {
+		color: #8a8070;
+		font-style: italic;
+		font-size: 1rem;
+	}
+
+	.name-picker {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.name-picker p {
+		margin: 0;
+		color: #8a8070;
+		font-size: 1rem;
+	}
+
+	.name-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		justify-content: center;
+	}
+
+	.name-pill {
+		padding: 6px 16px;
+		border: 2px dashed #c0b89a;
+		border-radius: 20px;
+		background: rgba(245, 240, 230, 0.55);
+		font-family: 'Caveat', cursive;
+		font-size: 1.15rem;
+		font-weight: 600;
+		color: #3a3530;
+		cursor: pointer;
+		transition: background 0.15s, border-color 0.15s;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.name-pill:hover {
+		background: rgba(59, 125, 216, 0.12);
+		border-color: #8a9ab0;
+	}
+
+	.name-pill.selected {
+		background: rgba(59, 125, 216, 0.2);
+		border-color: #3b7dd8;
+		color: #2a5090;
+	}
+
+	.pill-creator {
+		font-size: 0.85em;
+		color: #8a7a60;
+	}
+
+	.pill-count {
+		font-size: 0.8em;
+		color: #7a9a6a;
+		background: rgba(90, 140, 80, 0.12);
+		padding: 1px 6px;
+		border-radius: 10px;
 	}
 </style>
