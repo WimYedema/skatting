@@ -21,6 +21,7 @@ export interface RoomState {
 	unit: string
 	prepMode: boolean
 	topic: string
+	creatorName?: string
 }
 
 export interface PrepDoneSignal {

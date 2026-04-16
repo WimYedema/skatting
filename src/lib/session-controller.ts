@@ -125,6 +125,7 @@ function publishState(s: SessionState, deps: SessionDeps): void {
 		unit: s.unit,
 		prepMode: s.prepMode,
 		topic: s.topic.trim(),
+		creatorName: s.userName,
 	}
 	deps.publishRoomState(s.roomCode, s.secretKeyHex, state).catch(() => {
 		// Relay publish failures are non-fatal

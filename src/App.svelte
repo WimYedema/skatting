@@ -369,7 +369,7 @@
 				{#if !s.prepMode && s.isCreator && s.backlog.length > 0}
 					<button class="mode-toggle" onclick={() => returnToPrep(s)}>Back to prep</button>
 				{/if}
-				<button class="leave" onclick={() => leaveSession(s)}>Leave</button>
+				<button class="leave" onclick={() => { leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) }}>Leave</button>
 				<button class="help-btn" title="How does this work?" onclick={() => (showOnboarding = true)}>?</button>
 			</div>
 		</header>

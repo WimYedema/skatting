@@ -63,6 +63,10 @@
 
 	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string): KnownName[] {
 		const nameMap = new Map<string, KnownName>()
+		// From Nostr room state (creator name published by room creator)
+		if (roomState?.creatorName) {
+			nameMap.set(roomState.creatorName.toLowerCase(), { name: roomState.creatorName, isCreator: true })
+		}
 		// From saved sessions for this room
 		const saved = recentSessions.filter((s) => s.roomId === roomCode)
 		for (const s of saved) {
