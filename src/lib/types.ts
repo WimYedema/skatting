@@ -92,6 +92,10 @@ export interface SceneState {
 	conclusionSigma?: number | null
 	/** Whether the current user is the facilitator/creator */
 	isCreator?: boolean
+	/** Whether the pointer is hovering over the grab handle */
+	hoverHandle?: boolean
+	/** Whether the user is currently dragging */
+	isDragging?: boolean
 }
 
 /** Muted colors assigned to peers — like colored pencils on paper */

@@ -180,3 +180,21 @@ export function hitTestBlob(
 	}
 	return false
 }
+
+/** Hit-test the grab handle area (circle + arrow arms) around the blob peak */
+export function hitTestGrabHandle(
+	mu: number,
+	sigma: number,
+	px: number,
+	py: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	config: CanvasConfig = DEFAULT_CONFIG,
+): boolean {
+	const mode = Math.exp(mu - sigma ** 2)
+	const cx = mathToCanvasX(mode, canvasWidth, config)
+	const cy = peakCanvasY(mu, sigma, canvasHeight, config)
+	// Match the handle's visual extent: radius 8 + arm length 14 + margin
+	const extent = 26
+	return Math.abs(px - cx) <= extent && Math.abs(py - cy) <= extent
+}

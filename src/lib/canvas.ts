@@ -6,6 +6,7 @@ import {
 	DEFAULT_CONFIG,
 	generateLogSpaceBlob,
 	hitTestBlob,
+	hitTestGrabHandle,
 	mathToCanvasX,
 	peakCanvasY,
 } from './canvas-coords'
@@ -43,6 +44,7 @@ export {
 	detectClusters,
 	detectPattern,
 	hitTestBlob,
+	hitTestGrabHandle,
 	jitter,
 	lognormalOverlap,
 	mathToCanvasX,
@@ -351,20 +353,22 @@ function drawGrabHandle(
 	canvasWidth: number,
 	canvasHeight: number,
 	config: CanvasConfig = DEFAULT_CONFIG,
+	hover = false,
+	isDragging = false,
 ): void {
 	const mode = Math.exp(mu - sigma ** 2)
 	const cx = mathToCanvasX(mode, canvasWidth, config)
 	const cy = peakCanvasY(mu, sigma, canvasHeight, config)
 
 	const r = 8
-	const armLen = 14
+	const armLen = hover ? 18 : 14
 	const seed = Math.round(mu * 2000) + Math.round(sigma * 5555)
 	const rng = seededRng(seed)
-	const tipLen = 5
+	const tipLen = hover ? 7 : 5
 
 	ctx.save()
-	ctx.globalAlpha = 0.5
-	ctx.strokeStyle = '#5b7b9a'
+	ctx.globalAlpha = 0.55
+	ctx.strokeStyle = '#7a6a5a'
 	ctx.lineWidth = 1.8
 	ctx.fillStyle = 'rgba(245, 240, 230, 0.7)'
 
@@ -373,8 +377,8 @@ function drawGrabHandle(
 	ctx.fill()
 	ctx.stroke()
 
-	// Horizontal arrows (effort ↔)
-	ctx.lineWidth = 1.4
+	// Arrows hidden while dragging — circle alone marks the position
+	if (!isDragging) {
 	// Left arm
 	ctx.beginPath()
 	ctx.moveTo(cx - r - 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
@@ -425,6 +429,7 @@ function drawGrabHandle(
 	ctx.moveTo(cx, cy + r + armLen)
 	ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
 	ctx.stroke()
+	} // end !isDragging
 
 	ctx.restore()
 }
@@ -1116,7 +1121,7 @@ export function drawScene(
 		// Grab handle: show when blob is draggable (pre-reveal, or live-adjust)
 		const canDrag = !revealed || (scene.liveAdjust ?? false)
 		if (canDrag) {
-			drawGrabHandle(ctx, myEstimate.mu, myEstimate.sigma, width, height)
+			drawGrabHandle(ctx, myEstimate.mu, myEstimate.sigma, width, height, DEFAULT_CONFIG, scene.hoverHandle ?? false, scene.isDragging ?? false)
 		}
 	} else if (!revealed) {
 		// Draw a big sketchy "?" when user has no idea — same hatched style as blobs
@@ -1205,7 +1210,7 @@ export function drawScene(
 			if (isCreator) {
 				const handleMu = conclusionMu ?? combined.mu
 				const handleSigma = conclusionSigma ?? combined.sigma
-				drawGrabHandle(ctx, handleMu, handleSigma, width, height)
+				drawGrabHandle(ctx, handleMu, handleSigma, width, height, DEFAULT_CONFIG, scene.hoverHandle ?? false, scene.isDragging ?? false)
 			}
 
 			// Verdict: show when converged OR when facilitator has placed a conclusion

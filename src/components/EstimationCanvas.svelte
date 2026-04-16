@@ -4,6 +4,7 @@
 		canvasYToSigmaFromPeak,
 		drawScene,
 		hitTestBlob,
+		hitTestGrabHandle,
 		mathToCanvasX,
 	} from '../lib/canvas'
 	import { combineEstimates, collectEstimates, lognormalQuantile, muFromMode } from '../lib/lognormal'
@@ -46,6 +47,7 @@
 	let tooltipX = $state(0)
 	let tooltipY = $state(0)
 	let showTooltip = $state(false)
+	let hoverHandle = $state(false)
 	let redrawTick = $state(0)
 
 	// Force canvas redraw when tab becomes visible — browsers discard canvas
@@ -93,6 +95,7 @@
 			showTooltip = false
 			return
 		}
+		updateHoverHandle(e)
 		updateTooltip(e)
 	}
 
@@ -155,6 +158,7 @@
 
 	function handlePointerLeave() {
 		showTooltip = false
+		hoverHandle = false
 	}
 
 	function updateEstimate(e: PointerEvent) {
@@ -177,6 +181,27 @@
 		const mode = Math.max(0.5, canvasToMathX(canvasX, width))
 		const sigma = canvasYToSigmaFromPeak(canvasY, height, mode)
 		onConclusionChange(mode, sigma)
+	}
+
+	function updateHoverHandle(e: PointerEvent) {
+		if (!canvas) return
+		const canDrag = !revealed || (liveAdjust ?? false)
+		if (!canDrag && !(revealed && isCreator)) {
+			hoverHandle = false
+			return
+		}
+		const rect = canvas.getBoundingClientRect()
+		const px = ((e.clientX - rect.left) / rect.width) * width
+		const py = ((e.clientY - rect.top) / rect.height) * height
+		if (canDrag && !(selfAbstained ?? false)) {
+			hoverHandle = hitTestGrabHandle(mu, sigma, px, py, width, height)
+		} else if (revealed && isCreator) {
+			const hMu = conclusionMode != null && conclusionSigma != null
+				? muFromMode(conclusionMode, conclusionSigma)
+				: mu
+			const hSigma = conclusionSigma ?? sigma
+			hoverHandle = hitTestGrabHandle(hMu, hSigma, px, py, width, height)
+		}
 	}
 
 	// Observe the CONTAINER size, not the canvas — avoids feedback loops
@@ -234,6 +259,8 @@
 			conclusionMode: cMode,
 			conclusionSigma: cSigma,
 			isCreator: creator,
+			hoverHandle,
+			isDragging: dragging || draggingConclusion,
 		})
 	})
 </script>
@@ -245,7 +272,7 @@
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
 		onpointerleave={handlePointerLeave}
-		style="cursor: {!revealed ? (dragging ? 'grabbing' : 'crosshair') : liveAdjust ? (dragging ? 'grabbing' : 'crosshair') : isCreator ? (draggingConclusion ? 'grabbing' : 'grab') : 'default'}; touch-action: none;"
+		style="cursor: {dragging || draggingConclusion ? 'grabbing' : hoverHandle ? 'grab' : !revealed ? 'crosshair' : liveAdjust ? 'crosshair' : isCreator ? 'grab' : 'default'}; touch-action: none;"
 	></canvas>
 	{#if showTooltip}
 		<div class="tooltip" style="left: {tooltipX}px; top: {tooltipY - 30}px;">
