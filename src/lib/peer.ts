@@ -3,6 +3,7 @@ import { selfId } from '@trystero-p2p/core'
 import { joinRoom as joinMqttRoom, getRelaySockets as getMqttSockets } from '@trystero-p2p/mqtt'
 import { joinRoom as joinNostrRoom, getRelaySockets as getNostrSockets } from '@trystero-p2p/nostr'
 import { APP_ID, NOSTR_RELAY_URLS } from './config'
+import { debugLog } from './debug'
 import type {
 	BacklogMessage,
 	EstimateMessage,
@@ -63,8 +64,9 @@ function dedup<T>(fn: (data: T) => void, windowMs = 200): (data: T) => void {
 }
 
 /** Send on all rooms, ignoring individual failures */
-function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>) {
+function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>, action?: string) {
 	return async (data: T) => {
+		if (action) debugLog('send', action, data)
 		await Promise.allSettled(senders.map((s) => s(data)))
 	}
 }
@@ -95,6 +97,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		}
 		const isNew = strategies.size === 0
 		strategies.add(strategy)
+		debugLog('peer', `join via ${strategy}${isNew ? ' (NEW)' : ' (dup)'}`, peerId)
 		if (isNew) callbacks.onPeerJoin(peerId)
 	}
 
@@ -102,6 +105,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		const strategies = peerStrategies.get(peerId)
 		if (!strategies) return
 		strategies.delete(strategy)
+		debugLog('peer', `leave via ${strategy} (remaining: ${strategies.size})`, peerId)
 		if (strategies.size === 0) {
 			peerStrategies.delete(peerId)
 			callbacks.onPeerLeave(peerId)
@@ -113,15 +117,17 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 
 	try {
 		rooms.push(joinNostrRoom({ appId: APP_ID, relayUrls: NOSTR_RELAY_URLS }, roomId))
-		console.log('[estimate] Nostr strategy initialized')
+		debugLog('peer', 'Nostr strategy initialized', { roomId, relays: NOSTR_RELAY_URLS })
 	} catch (e) {
+		debugLog('peer', 'Nostr strategy FAILED', e)
 		console.warn('[estimate] Nostr strategy failed to init:', e)
 	}
 
 	try {
 		rooms.push(joinMqttRoom({ appId: APP_ID }, roomId))
-		console.log('[estimate] MQTT strategy initialized')
+		debugLog('peer', 'MQTT strategy initialized', { roomId })
 	} catch (e) {
+		debugLog('peer', 'MQTT strategy FAILED', e)
 		console.warn('[estimate] MQTT strategy failed to init:', e)
 	}
 
@@ -136,12 +142,17 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 			const nostrSockets = getNostrSockets()
 			const mqttSockets = getMqttSockets()
 			const allSockets = { ...nostrSockets, ...mqttSockets }
-			const entries = Object.entries(allSockets)
-			if (entries.length === 0) return
+			const socketEntries = Object.entries(allSockets)
+			if (socketEntries.length === 0) return
 
-			const connected = entries.filter(
+			const states = socketEntries.map(([url, ws]) => ({
+				url,
+				state: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][(ws as WebSocket).readyState] ?? 'UNKNOWN',
+			}))
+			const connected = socketEntries.filter(
 				([, ws]) => (ws as WebSocket).readyState === WebSocket.OPEN,
 			)
+			debugLog('relay', `${connected.length}/${socketEntries.length} open`, states)
 			if (connected.length === 0) {
 				callbacks.onConnectionError?.(
 					'All relays disconnected — retrying…',
@@ -226,16 +237,17 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 
 		// All receivers are idempotent — duplicates just overwrite with same value
 		onEstimate((data, peerId) => {
+			debugLog('recv', `estimate from ${peerId}`, data)
 			callbacks.onEstimate({ peerId, mu: data.mu, sigma: data.sigma })
 		})
-		onReveal((data) => dedupReveal(data))
-		onName((data, peerId) => callbacks.onName(peerId, data.name, !!data.isCreator))
-		onTopic((data) => dedupTopic(data))
-		onReady((data, peerId) => callbacks.onReady(peerId, data.ready, data.abstained))
-		onUnit((data) => callbacks.onUnit(data.unit))
-		onBacklog((data) => dedupBacklog(data))
-		onLiveAdjust((data) => dedupLiveAdjust(data))
-		onMic((data) => dedupMic(data))
+		onReveal((data) => { debugLog('recv', 'reveal', data); dedupReveal(data) })
+		onName((data, peerId) => { debugLog('recv', `name from ${peerId}`, data); callbacks.onName(peerId, data.name, !!data.isCreator) })
+		onTopic((data) => { debugLog('recv', 'topic', data); dedupTopic(data) })
+		onReady((data, peerId) => { debugLog('recv', `ready from ${peerId}`, data); callbacks.onReady(peerId, data.ready, data.abstained) })
+		onUnit((data) => { debugLog('recv', 'unit', data); callbacks.onUnit(data.unit) })
+		onBacklog((data) => { debugLog('recv', 'backlog', { count: data.tickets.length, prepMode: data.prepMode }); dedupBacklog(data) })
+		onLiveAdjust((data) => { debugLog('recv', 'liveAdjust', data); dedupLiveAdjust(data) })
+		onMic((data) => { debugLog('recv', 'mic', data); dedupMic(data) })
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value
@@ -250,15 +262,15 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	return {
 		roomId,
 		selfId,
-		sendEstimate: broadcastAll(estimateSenders),
-		sendReveal: broadcastAll(revealSenders),
-		sendName: broadcastAll(nameSenders),
-		sendTopic: broadcastAll(topicSenders),
-		sendReady: broadcastAll(readySenders),
-		sendUnit: broadcastAll(unitSenders),
-		sendBacklog: broadcastAll(backlogSenders),
-		sendLiveAdjust: broadcastAll(liveAdjustSenders),
-		sendMic: broadcastAll(micSenders),
+		sendEstimate: broadcastAll(estimateSenders, 'estimate'),
+		sendReveal: broadcastAll(revealSenders, 'reveal'),
+		sendName: broadcastAll(nameSenders, 'name'),
+		sendTopic: broadcastAll(topicSenders, 'topic'),
+		sendReady: broadcastAll(readySenders, 'ready'),
+		sendUnit: broadcastAll(unitSenders, 'unit'),
+		sendBacklog: broadcastAll(backlogSenders, 'backlog'),
+		sendLiveAdjust: broadcastAll(liveAdjustSenders, 'liveAdjust'),
+		sendMic: broadcastAll(micSenders, 'mic'),
 		leave() {
 			if (healthTimer) clearInterval(healthTimer)
 			for (const room of rooms) room.leave()

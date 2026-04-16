@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BacklogPanel from './components/BacklogPanel.svelte'
+	import DebugPanel from './components/DebugPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
 	import ImportConfirmDialog from './components/ImportConfirmDialog.svelte'
 	import ImportMenu from './components/ImportMenu.svelte'
@@ -9,6 +10,7 @@
 	import SessionLobby from './components/SessionLobby.svelte'
 	import SessionSummaryDialog from './components/SessionSummaryDialog.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
+	import { DEBUG, debugLog } from './lib/debug'
 	import type { ImportedTicket } from './lib/types'
 	import { convergenceState } from './lib/facilitation'
 	import { combineEstimates, collectEstimates, snapVerdict } from './lib/lognormal'
@@ -59,6 +61,16 @@
 
 	let s = $state(createInitialState())
 
+	// Expose internals in debug mode for console diagnostics
+	if (DEBUG) {
+		;(window as Record<string, unknown>).__estimate = {
+			get state() { return s },
+			get session() { return s.session },
+			get peerIds() { return s.peerIds },
+			get peerNames() { return s.peerNames },
+		}
+	}
+
 	const ONBOARDING_KEY = 'estimate-onboarded'
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
@@ -85,18 +97,23 @@
 	}
 
 	async function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
+		debugLog('app', 'handleJoin', { roomId, name, selectedUnit })
 		connecting = true
 		prepareJoin(s, deps, roomId, name, selectedUnit)
 		try {
+			debugLog('app', 'querying Nostr state…')
 			const [roomState, prepDone] = await Promise.all([
 				queryRoomState(roomId),
 				queryPrepDone(roomId),
 			])
+			debugLog('app', 'Nostr state received', { hasRoomState: !!roomState, prepDoneCount: prepDone.length })
 			applyNostrState(s, roomState, prepDone)
 		} catch {
-			// Nostr query failure is non-fatal — proceed with P2P
+			debugLog('app', 'Nostr query failed (non-fatal)')
 		}
+		debugLog('app', 'connecting P2P…')
 		connectSession(s, deps, roomId)
+		debugLog('app', 'session created', { sessionExists: !!s.session })
 		connecting = false
 		// Show onboarding on first-ever session
 		if (!localStorage.getItem(ONBOARDING_KEY)) {
@@ -479,6 +496,14 @@
 			<div class="drop-message">📋 Drop CSV file to import</div>
 		</div>
 	{/if}
+{/if}
+
+{#if DEBUG}
+	<DebugPanel
+		roomId={s.session?.roomId ?? ''}
+		peerCount={s.peerIds.length}
+		sessionActive={!!s.session}
+	/>
 {/if}
 
 <style>
