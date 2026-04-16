@@ -66,16 +66,23 @@ Three independent channels, all broadcasting simultaneously:
 2. **`saveRoundToHistory` never computes locally** — returns early if `authoritativeVerdict` is null. The mic holder is the single source of truth.
 3. **Clone-and-reassign for Maps/Sets in P2P callbacks** — `peerEstimateMap = new Map(peerEstimateMap).set(k, v)`. Direct `.set()` only works inside Svelte's own reactive context, not in external callbacks.
 4. **Only the mic holder sends reveal** — `checkAutoReveal` and `handleForceReveal` run on every client but only the mic holder's `sendReveal` is authoritative. If mic holder is stale, auto-reveal is blocked.
-5. **`resetRound` clears `authoritativeVerdict`** — ensures stale verdicts don't leak into the next round.
+5. **`resetRound` clears `authoritativeVerdict` and conclusion state** — ensures stale verdicts and conclusion curves don't leak into the next round.
 6. **Canvas draws synchronously in `$effect`** — never in `requestAnimationFrame`. All reactive dependencies must be read before any early return.
-7. **`peerIds.length < MAX_PEERS` on join** — enforced in `onPeerJoin`; overflow peers are silently ignored.
+7. **`peerIds.length < MAX_PEERS` on join** — enforced in `onPeerJoin`; overflow peers and self-echoes are silently ignored.
 8. **Prep mode blocks auto-reveal** — `checkAutoReveal` is a no-op when `s.prepMode === true`.
+9. **`resetReadyState(s)` is the shared reset primitive** — used by `resetRound`, `reEstimate`, `selectTicket`, and `onReveal` reEstimate branch. Resets: `revealed`, `selfReady`, `selfAbstained`, `readyPeers`, `abstainedPeers`, `skippedPeers`, `peerEstimateMap`.
+10. **`selectTicket` uses `{skipSave, skipSend}` options** — `skipSave` prevents saving current estimate to history; `skipSend` prevents sending topic to peers. `handleNext` uses `{skipSave: true}` (already saved), `onTopic` uses `{skipSave: true, skipSend: true}` (incoming P2P).
+11. **`peerEstimateMap` must never contain `selfId`** — enforced by guards in `onEstimate`/`onReveal` + debug assertions in DEV mode.
 
 ### Module responsibilities (quick reference)
 
 | Module | Purpose | Key exports |
 |---|---|---|
-| `session-controller.ts` | State machine: all mutations, P2P callback factory, join/leave flow | `SessionState`, `createPeerCallbacks`, `handleNext`, `buildRevealPayload`, `checkAutoReveal`, 40 functions |
+| `session-controller.ts` | Facade & P2P callback factory, session lifecycle (join/leave) | `createPeerCallbacks`, `joinSession`, `leaveSession`, `prepareJoin`, re-exports from sub-modules |
+| `session-state.ts` | `SessionState`, `SessionDeps`, `createInitialState`, pure queries, persistence helpers | `SessionState`, `createInitialState`, `getCurrentTicket`, `getEstimatedCount`, `persistSession`, `publishState` |
+| `session-round.ts` | Round lifecycle: reset, reveal, verdict, estimation actions | `resetReadyState`, `resetRound`, `handleDone`, `handleAbstain`, `checkAutoReveal`, `buildRevealPayload`, `saveRoundToHistory` |
+| `session-backlog.ts` | Backlog management: ticket navigation, import/merge, reorder/remove, meeting mode | `selectTicket`, `handleNext`, `processBacklogImport`, `startMeeting`, `returnToPrep` |
+| `session-participants.ts` | Participant queries, mic/facilitator handoff, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `claimMic`, `changeUnit` |
 | `peer.ts` | Transport layer: 3-strategy P2P, message senders, heartbeat, dedup | `createSession`, `selfId`, `PeerSession`, `PeerCallbacks` |
 | `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078) | `createNostrRelay`, `isRelayEnvelope` |
 | `types.ts` | Message shapes, `VerdictSnapshot`, `PeerEstimate`, `SceneState` | All message types |
@@ -119,6 +126,13 @@ Three independent channels, all broadcasting simultaneously:
   - `canvas-coords.ts` — coordinate transforms, config, hit-testing, blob geometry
   - `canvas-sketchy.ts` — sketchy visual primitives (`sketchyEllipse`, `createHatchPattern`, `drawSketchyArrow`)
   - Components import only from `canvas.ts` — never from sub-modules directly
+- Session logic is split into focused modules behind a **facade**:
+  - `session-controller.ts` — facade & P2P callback factory + session lifecycle; re-exports all public API from sub-modules
+  - `session-state.ts` — `SessionState`, `SessionDeps`, `createInitialState`, pure queries (`getCurrentTicket`, `getEstimatedCount`), persistence helpers
+  - `session-round.ts` — round lifecycle: reset, reveal, verdict, estimation actions (`handleDone`, `handleAbstain`, `checkAutoReveal`, etc.)
+  - `session-backlog.ts` — backlog management: ticket navigation, import/merge, reorder/remove, meeting mode transitions
+  - `session-participants.ts` — participant queries, mic/facilitator handoff, unit management
+  - Components import only from `session-controller.ts` — never from sub-modules directly
 - Keep log-normal math in `src/lib/lognormal.ts` — pure functions, easily testable
 - P2P wrapper in `src/lib/peer.ts` — triple-transport (WebRTC/Nostr + WebRTC/MQTT + Nostr relay), isolates transport from the rest of the app
 - All session state lives as `$state` in `App.svelte` — no external state library
@@ -178,7 +192,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (407+ tests)
+npm run test         # vitest run (415+ tests)
 ```
 
 ## Deployment

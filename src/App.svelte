@@ -96,6 +96,7 @@
 	let showPasteModal = $state(false)
 	let showOverflow = $state(false)
 	let dragOver = $state(false)
+	let backlogCollapsed = $state(window.innerWidth < 768)
 
 	// Tick counter for stale-peer detection (updates every 5s to re-evaluate)
 	const STALE_THRESHOLD = 15_000
@@ -123,6 +124,12 @@
 		publishPrepDone,
 		queryRoomState,
 		queryPrepDone,
+		onConclusion(mode, sigma, ts) {
+			if (ts <= lastConclusionTs) return
+			lastConclusionTs = ts
+			s.conclusionMode = mode
+			s.conclusionSigma = sigma
+		},
 	}
 
 	async function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
@@ -266,9 +273,25 @@
 		}] : []),
 	])
 
-	// Convergence state for post-reveal facilitation
-	let conclusionMode: number | null = $state(null)
-	let conclusionSigma: number | null = $state(null)
+	// Throttled conclusion send: at most one send per 50ms, always sending the latest value
+	let conclusionSendTimer: ReturnType<typeof setTimeout> | null = null
+	let pendingConclusion: { mode: number | null; sigma: number | null } | null = null
+	function sendConclusionThrottled(mode: number | null, sigma: number | null) {
+		pendingConclusion = { mode, sigma }
+		if (conclusionSendTimer) return
+		const send = () => {
+			if (pendingConclusion) {
+				s.session?.sendConclusion({ ...pendingConclusion, ts: Date.now() })
+				pendingConclusion = null
+			}
+			conclusionSendTimer = null
+		}
+		send()
+		conclusionSendTimer = setTimeout(send, 50)
+	}
+
+	// Timestamp-based ordering: discard stale conclusion messages from peers
+	let lastConclusionTs = 0
 	let combinedEstimate = $derived.by(() => {
 		if (!s.revealed) return null
 		return combineEstimates(collectEstimates({ mu: s.mu, sigma: s.sigma }, peerEstimates, s.selfAbstained))
@@ -278,22 +301,22 @@
 		const all = collectEstimates({ mu: s.mu, sigma: s.sigma }, peerEstimates, s.selfAbstained)
 		return convergenceState(combinedEstimate.mu, combinedEstimate.sigma, all).converged
 	})
-	let hasVerdict = $derived(isConverged || conclusionMode != null)
+	let hasVerdict = $derived(isConverged || s.conclusionMode != null)
 
 	// Compute the snapped verdict value from the conclusion curve position
 	let verdictValue = $derived.by(() => {
-		if (conclusionMode == null) return null
-		const snapped = snapVerdict(conclusionMode, s.unit)
+		if (s.conclusionMode == null) return null
+		const snapped = snapVerdict(s.conclusionMode, s.unit)
 		// Parse numeric value from snap string for handleNext
 		const match = snapped.match(/([\d.]+)/)
 		return match ? Number.parseFloat(match[1]) : null
 	})
 
-	// Reset conclusion when moving to a new ticket or re-estimating
+	// Reset lastConclusionTs when moving to a new round (resetRound clears conclusionMode/Sigma)
 	$effect(() => {
 		void s.backlogIndex
 		void s.revealed
-		if (!s.revealed) { conclusionMode = null; conclusionSigma = null }
+		if (!s.revealed) { lastConclusionTs = 0 }
 	})
 
 	// Auto-reveal when everyone has placed their estimate (meeting mode only)
@@ -374,7 +397,8 @@
 		</div>
 	{/if}
 	<main
-		style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}"
+		class:has-backlog={s.backlog.length > 0}
+		class:backlog-expanded={s.backlog.length > 0 && !backlogCollapsed}
 		ondragover={(e) => { if (s.isCreator) { e.preventDefault(); dragOver = true } }}
 		ondragleave={() => (dragOver = false)}
 		ondrop={handleFileDrop}
@@ -450,11 +474,11 @@
 							class="live-adjust-toggle"
 							class:live-adjust-on={s.liveAdjust}
 							title={s.liveAdjust ? 'Lock estimates' : 'Unlock for live adjustment'}
-							onclick={() => toggleLiveAdjust(s)}
+							onclick={() => { toggleLiveAdjust(s); if (s.liveAdjust) { s.conclusionMode = null; s.conclusionSigma = null; sendConclusionThrottled(null, null) } }}
 						>{s.liveAdjust ? '🔓' : '🔒'}</button>
 					{/if}
 					{#if hasVerdict && holdsMic}
-						<button class="next" onclick={() => { const vo = verdictValue; conclusionMode = null; conclusionSigma = null; handleNext(s, deps, vo) }}>
+						<button class="next" onclick={() => { handleNext(s, deps, verdictValue) }}>
 							{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 						</button>
 					{/if}
@@ -560,9 +584,9 @@
 			hasEverDragged={s.hasEverDragged}
 			liveAdjust={s.liveAdjust}
 			isCreator={holdsMic}
-			{conclusionMode}
-			{conclusionSigma}
-			onConclusionChange={(mode, sig) => { conclusionMode = mode; conclusionSigma = sig }}
+			conclusionMode={s.conclusionMode}
+			conclusionSigma={s.conclusionSigma}
+			onConclusionChange={(mode, sig) => { s.conclusionMode = mode; s.conclusionSigma = sig; sendConclusionThrottled(mode, sig) }}
 			showAbstainButton={!s.selfReady && !s.revealed}
 			onAbstain={() => handleAbstain(s)}
 		/>
@@ -576,6 +600,7 @@
 				myEstimates={s.myEstimates}
 				{estimatedCount}
 				unit={s.unit}
+				bind:collapsed={backlogCollapsed}
 				onSelect={(index) => {
 					if (holdsMic || s.prepMode) selectTicket(s, index)
 				}}
@@ -645,7 +670,27 @@
 		padding: var(--sp-lg);
 		box-sizing: border-box;
 		gap: var(--sp-md);
-		transition: padding-right var(--tr-normal);
+		transition: padding-right var(--tr-normal), padding-bottom var(--tr-normal);
+	}
+
+	main.has-backlog {
+		padding-right: 56px;
+	}
+
+	main.backlog-expanded {
+		padding-right: 276px;
+	}
+
+	@media (max-width: 768px) {
+		main.has-backlog {
+			padding-right: var(--sp-lg);
+			padding-bottom: 56px;
+		}
+
+		main.backlog-expanded {
+			padding-right: var(--sp-lg);
+			padding-bottom: 50vh;
+		}
 	}
 
 	header {

@@ -64,6 +64,12 @@ export type MicMessage = {
 	holder: string | null
 }
 
+export type ConclusionMessage = {
+	mode: number | null
+	sigma: number | null
+	ts: number
+}
+
 export type PingMessage = {
 	ts: number
 }

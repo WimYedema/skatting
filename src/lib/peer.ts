@@ -7,6 +7,7 @@ import { debugLog } from './debug'
 import { createNostrRelay, type NostrRelay } from './nostr-relay'
 import type {
 	BacklogMessage,
+	ConclusionMessage,
 	EstimateMessage,
 	ImportedTicket,
 	LiveAdjustMessage,
@@ -33,6 +34,7 @@ export interface PeerSession {
 	sendBacklog: (backlog: BacklogMessage) => Promise<void>
 	sendLiveAdjust: (msg: LiveAdjustMessage) => Promise<void>
 	sendMic: (msg: MicMessage) => Promise<void>
+	sendConclusion: (msg: ConclusionMessage) => Promise<void>
 	sendPing: (msg: PingMessage) => Promise<void>
 	leave: () => void
 }
@@ -49,6 +51,7 @@ export interface PeerCallbacks {
 	onBacklog?: (tickets: ImportedTicket[], prepMode?: boolean) => void
 	onLiveAdjust?: (liveAdjust: boolean) => void
 	onMic?: (holder: string | null) => void
+	onConclusion?: (mode: number | null, sigma: number | null, ts: number) => void
 	onPing?: (peerId: string, ts: number) => void
 	onConnectionError?: (message: string) => void
 }
@@ -179,6 +182,7 @@ export function createSession(
 	const backlogSenders: Array<(data: BacklogMessage) => Promise<void>> = []
 	const liveAdjustSenders: Array<(data: LiveAdjustMessage) => Promise<void>> = []
 	const micSenders: Array<(data: MicMessage) => Promise<void>> = []
+	const conclusionSenders: Array<(data: ConclusionMessage) => Promise<void>> = []
 	const pingSenders: Array<(data: PingMessage) => Promise<void>> = []
 
 	// Deduplicated receivers for messages with side effects —
@@ -197,6 +201,9 @@ export function createSession(
 	)
 	const dedupMic = dedup((data: MicMessage) =>
 		callbacks.onMic?.(data.holder),
+	)
+	const dedupConclusion = dedup((data: ConclusionMessage) =>
+		callbacks.onConclusion?.(data.mode, data.sigma, data.ts),
 	)
 
 	// Route incoming Nostr relay messages to the same callbacks as WebRTC.
@@ -225,6 +232,7 @@ export function createSession(
 			case 'backlog': dedupBacklog(data as BacklogMessage); break
 			case 'liveadjust': dedupLiveAdjust(data as LiveAdjustMessage); break
 			case 'mic': dedupMic(data as MicMessage); break
+			case 'conclusion': dedupConclusion(data as ConclusionMessage); break
 			case 'ping': callbacks.onPing?.(fromId, (data as PingMessage).ts); break
 		}
 	}
@@ -245,6 +253,7 @@ export function createSession(
 		const [sendBacklog, onBacklog] = room.makeAction<BacklogMessage>('backlog')
 		const [sendLiveAdjust, onLiveAdjust] = room.makeAction<LiveAdjustMessage>('liveadjust')
 		const [sendMic, onMic] = room.makeAction<MicMessage>('mic')
+		const [sendConclusion, onConclusion] = room.makeAction<ConclusionMessage>('conclusion')
 		const [sendPing, onPing] = room.makeAction<PingMessage>('ping')
 
 		estimateSenders.push(async (d) => {
@@ -274,6 +283,9 @@ export function createSession(
 		micSenders.push(async (d) => {
 			await sendMic(d)
 		})
+		conclusionSenders.push(async (d) => {
+			await sendConclusion(d)
+		})
 		pingSenders.push(async (d) => {
 			await sendPing(d)
 		})
@@ -291,6 +303,7 @@ export function createSession(
 		onBacklog((data) => { debugLog('recv', 'backlog', { count: data.tickets.length, prepMode: data.prepMode }); dedupBacklog(data) })
 		onLiveAdjust((data) => { debugLog('recv', 'liveAdjust', data); dedupLiveAdjust(data) })
 		onMic((data) => { debugLog('recv', 'mic', data); dedupMic(data) })
+		onConclusion((data) => { debugLog('recv', 'conclusion', data); dedupConclusion(data) })
 		onPing((data, peerId) => { callbacks.onPing?.(peerId, data.ts) })
 	}
 
@@ -309,6 +322,7 @@ export function createSession(
 		backlogSenders.push(async (d) => { await nostrRelay?.send('backlog', d) })
 		liveAdjustSenders.push(async (d) => { await nostrRelay?.send('liveadjust', d) })
 		micSenders.push(async (d) => { await nostrRelay?.send('mic', d) })
+		conclusionSenders.push(async (d) => { await nostrRelay?.send('conclusion', d) })
 		// Ping IS relayed so relay-only peers get liveness tracking and peer
 		// discovery, but at a slower cadence (15s) to stay within rate limits.
 		// The relay ping sender is kept separate from pingSenders so the
@@ -363,6 +377,7 @@ export function createSession(
 		sendBacklog: broadcastAll(backlogSenders, 'backlog'),
 		sendLiveAdjust: broadcastAll(liveAdjustSenders, 'liveAdjust'),
 		sendMic: broadcastAll(micSenders, 'mic'),
+		sendConclusion: broadcastAll(conclusionSenders, 'conclusion'),
 		sendPing: broadcastPing,
 		leave() {
 			if (healthTimer) clearInterval(healthTimer)

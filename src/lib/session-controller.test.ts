@@ -26,6 +26,7 @@ import {
 	prepareJoin,
 	processBacklogImport,
 	resetRound,
+	resetReadyState,
 	saveRoundToHistory,
 	selectTicket,
 	startMeeting,
@@ -288,6 +289,59 @@ describe('resetRound', () => {
 		expect(s.sigma).toBe(0.6)
 		expect(s.hasMoved).toBe(false)
 	})
+
+	it('clears conclusionMode and conclusionSigma', () => {
+		const s = createInitialState()
+		s.conclusionMode = 3.5
+		s.conclusionSigma = 0.2
+
+		resetRound(s)
+
+		expect(s.conclusionMode).toBeNull()
+		expect(s.conclusionSigma).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// resetReadyState
+// ---------------------------------------------------------------------------
+
+describe('resetReadyState', () => {
+	it('resets ready, abstained, skipped, and peerEstimateMap', () => {
+		const s = createInitialState()
+		s.revealed = true
+		s.selfReady = true
+		s.selfAbstained = true
+		s.readyPeers = new Set(['p1'])
+		s.abstainedPeers = new Set(['p2'])
+		s.skippedPeers = new Set(['p3'])
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 3, sigma: 0.5 }]])
+
+		resetReadyState(s)
+
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.readyPeers.size).toBe(0)
+		expect(s.abstainedPeers.size).toBe(0)
+		expect(s.skippedPeers.size).toBe(0)
+		expect(s.peerEstimateMap.size).toBe(0)
+	})
+
+	it('preserves non-ready state (mu, sigma, hasMoved, liveAdjust)', () => {
+		const s = createInitialState()
+		s.mu = 5.0
+		s.sigma = 1.0
+		s.hasMoved = true
+		s.liveAdjust = true
+
+		resetReadyState(s)
+
+		expect(s.mu).toBe(5.0)
+		expect(s.sigma).toBe(1.0)
+		expect(s.hasMoved).toBe(true)
+		expect(s.liveAdjust).toBe(true)
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -406,6 +460,23 @@ describe('handleNext', () => {
 
 		expect(s.session!.sendReveal).toHaveBeenCalledWith(expect.objectContaining({ revealed: false }))
 	})
+
+	it('sends topic to peers when advancing in meeting mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.revealed = true
+		s.prepMode = false
+
+		handleNext(s, deps)
+
+		expect(s.session!.sendTopic).toHaveBeenCalledWith({
+			topic: '',
+			url: undefined,
+			ticketId: 'T2',
+		})
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -506,7 +577,7 @@ describe('selectTicket', () => {
 		withBacklog(s)
 		s.hasMoved = true
 
-		selectTicket(s, 1, true)
+		selectTicket(s, 1, { skipSave: true })
 
 		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
 	})
@@ -525,6 +596,32 @@ describe('selectTicket', () => {
 			url: undefined,
 			ticketId: 'T2',
 		})
+	})
+
+	it('sends topic with skipSave but not skipSend', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+
+		selectTicket(s, 1, { skipSave: true })
+
+		expect(s.session!.sendTopic).toHaveBeenCalledWith({
+			topic: '',
+			url: undefined,
+			ticketId: 'T2',
+		})
+	})
+
+	it('does not send topic when skipSend is true', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+
+		selectTicket(s, 1, { skipSend: true })
+
+		expect(s.session!.sendTopic).not.toHaveBeenCalled()
 	})
 })
 
@@ -1075,6 +1172,12 @@ describe('createPeerCallbacks', () => {
 		expect(s.peerIds).toContain('p1')
 		expect(s.session!.sendEstimate).toHaveBeenCalled()
 		expect(s.session!.sendName).toHaveBeenCalled()
+	})
+
+	it('onPeerJoin ignores self peerId', () => {
+		callbacks.onPeerJoin(deps.selfId)
+		expect(s.peerIds).not.toContain(deps.selfId)
+		expect(s.session!.sendEstimate).not.toHaveBeenCalled()
 	})
 
 	it('onPeerJoin rejects peer when room is full', () => {
@@ -1688,6 +1791,19 @@ describe('reEstimate', () => {
 			reEstimate: true,
 		})
 	})
+
+	it('also clears skippedPeers and peerEstimateMap via resetReadyState', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.revealed = true
+		s.skippedPeers = new Set(['p1'])
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 3, sigma: 0.5 }]])
+
+		reEstimate(s)
+
+		expect(s.skippedPeers.size).toBe(0)
+		expect(s.peerEstimateMap.size).toBe(0)
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -1764,8 +1880,8 @@ describe('revisit verdict overwrite', () => {
 		expect(s.history).toHaveLength(1)
 
 		// Navigate to T2, then back to T1 for re-estimation
-		selectTicket(s, 1, true)
-		selectTicket(s, 0, true)
+		selectTicket(s, 1, { skipSave: true })
+		selectTicket(s, 0, { skipSave: true })
 
 		// Re-estimate T1 with different values
 		s.mu = 4.0
@@ -2266,7 +2382,7 @@ describe('authoritative verdict', () => {
 		expect(s.authoritativeVerdict!.p90).toBeGreaterThan(0)
 	})
 
-	it('handleForceReveal sends estimates snapshot with __self__ peerId', () => {
+	it('handleForceReveal sends estimates snapshot with self peerId', () => {
 		const s = createInitialState()
 		withSession(s)
 		s.mu = 3.0
@@ -2277,7 +2393,7 @@ describe('authoritative verdict', () => {
 
 		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
 		const peerIds = call.estimates.map((e) => e.peerId)
-		expect(peerIds).toContain('__self__')
+		expect(peerIds).toContain('self-id')
 		expect(peerIds).toContain('p1')
 	})
 
@@ -2291,7 +2407,7 @@ describe('authoritative verdict', () => {
 
 		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
 		const peerIds = call.estimates.map((e) => e.peerId)
-		expect(peerIds).not.toContain('__self__')
+		expect(peerIds).not.toContain('self-id')
 		expect(peerIds).toContain('p1')
 	})
 
@@ -2429,7 +2545,7 @@ describe('authoritative verdict', () => {
 		callbacks.onReveal({
 			revealed: true,
 			estimates: [
-				{ peerId: '__self__', mu: 3, sigma: 0.5 },
+				{ peerId: 'mic-holder', mu: 3, sigma: 0.5 },
 				{ peerId: 'p1', mu: 2, sigma: 0.4 },
 			],
 			verdict: { mu: 2.5, sigma: 0.45, median: 12, p10: 7, p90: 21 },
@@ -2437,8 +2553,8 @@ describe('authoritative verdict', () => {
 
 		// Old peer should be replaced by snapshot
 		expect(s.peerEstimateMap.has('old-peer')).toBe(false)
-		// __self__ should be filtered out (it's the mic holder's own estimate)
-		expect(s.peerEstimateMap.has('__self__')).toBe(false)
+		// Mic holder's estimate should be kept as a peer
+		expect(s.peerEstimateMap.get('mic-holder')).toEqual({ peerId: 'mic-holder', mu: 3, sigma: 0.5 })
 		// p1 should be in the map
 		expect(s.peerEstimateMap.get('p1')).toEqual({ peerId: 'p1', mu: 2, sigma: 0.4 })
 		// Verdict stashed for later saveRoundToHistory

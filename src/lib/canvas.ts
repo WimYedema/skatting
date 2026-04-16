@@ -1219,8 +1219,8 @@ export function drawScene(
 				drawPatternPrompt(ctx, prompt, width, height, conv.color)
 			}
 
-			// Grab handle on combined/conclusion curve for facilitator
-			if (isCreator) {
+			// Grab handle on combined/conclusion curve for facilitator (locked mode only)
+			if (isCreator && !(scene.liveAdjust ?? false)) {
 				const handleMu = conclusionMu ?? combined.mu
 				const handleSigma = conclusionSigma ?? combined.sigma
 				drawGrabHandle(ctx, handleMu, handleSigma, width, height, DEFAULT_CONFIG, scene.hoverHandle ?? false, scene.isDragging ?? false)

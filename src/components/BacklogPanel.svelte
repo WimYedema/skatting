@@ -18,11 +18,10 @@
 		onExportExcel: () => void
 		onImportCsv?: (file: File) => void
 		onPasteList?: () => void
+		collapsed?: boolean
 	}
 
-	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, unit, onSelect, onReorder, onRemove, onExportCsv, onExportExcel, onImportCsv, onPasteList }: Props = $props()
-
-	let collapsed = $state(window.innerWidth < 768)
+	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, unit, onSelect, onReorder, onRemove, onExportCsv, onExportExcel, onImportCsv, onPasteList, collapsed = $bindable(window.innerWidth < 768) }: Props = $props()
 	let dragIndex = $state(-1)
 	let dropIndex = $state(-1)
 
@@ -164,6 +163,26 @@
 
 	.backlog-panel.collapsed {
 		width: 40px;
+	}
+
+	/* Mobile: bottom drawer instead of side panel */
+	@media (max-width: 768px) {
+		.backlog-panel {
+			top: auto;
+			bottom: 0;
+			left: 0;
+			right: 0;
+			width: 100%;
+			max-height: 50vh;
+			border-left: none;
+			border-top: 1px dashed var(--c-border-soft);
+			transition: max-height var(--tr-normal);
+		}
+
+		.backlog-panel.collapsed {
+			width: 100%;
+			max-height: 40px;
+		}
 	}
 
 	.toggle {
