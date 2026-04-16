@@ -4,7 +4,88 @@
 
 Real-time, peer-to-peer 2D estimation tool for agile teams. Users position a log-normal "blob" on a continuous plane (X = effort, Y = certainty). Fully serverless — P2P via WebRTC, deployed as a single static HTML file.
 
-See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../ARCHITECTURE.md) for architecture decisions.
+See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../ARCHITECTURE.md) for architecture decisions, [FMEA.md](../../FMEA.md) for risk analysis.
+
+## Implementation Design
+
+### Data flow (one estimation round)
+
+```
+User drags blob → handleEstimateChange(s, mu, sigma)
+                    ├── updates s.mu, s.sigma, s.hasMoved
+                    └── session.sendEstimate({mu, sigma})  ──P2P──►  onEstimate → peerEstimateMap
+
+User clicks Ready → handleDone(s)
+                    ├── s.selfReady = true
+                    └── session.sendReady({ready:true})    ──P2P──►  onReady → readyPeers.add()
+                                                                       └── $effect: checkAutoReveal()
+
+All ready (mic holder's client):
+  checkAutoReveal() → buildRevealPayload(s)
+    ├── snapshots peerEstimateMap + self (excludes abstained)
+    ├── computes verdict via computeVerdict()
+    ├── sets s.authoritativeVerdict
+    └── sendReveal({revealed:true, estimates[], verdict})  ──P2P──►  onReveal()
+                                                                       ├── replaces peerEstimateMap wholesale
+                                                                       └── stashes authoritativeVerdict
+
+Next ticket (mic holder):
+  handleNext(s, deps) → buildRevealPayload(s, {revealed:false})
+    ├── saveRoundToHistory(s)  ← reads s.authoritativeVerdict, clears it
+    ├── resetRound(s)
+    └── sendReveal({revealed:false, verdict})              ──P2P──►  onReveal()
+                                                                       ├── stashes verdict
+                                                                       ├── saveRoundToHistory(s)
+                                                                       └── resetRound(s)
+```
+
+### Transport layer
+
+Three independent channels, all broadcasting simultaneously:
+1. **WebRTC/Nostr** — Trystero signaling via Nostr relays → direct peer connections
+2. **WebRTC/MQTT** — Trystero signaling via HiveMQ → direct peer connections
+3. **Nostr relay** — AES-256-GCM encrypted ephemeral events (kind 25078), no WebRTC needed
+
+`peer.ts` deduplicates: join fires on first strategy to see a peer, leave fires when all strategies drop them. Relay messages auto-discover unknown peers.
+
+### State ownership
+
+| Data | Owner | Synced via |
+|---|---|---|
+| `SessionState` (single mutable object) | `App.svelte` (created by `createInitialState()`) | — |
+| All state mutations | `session-controller.ts` functions (take `s: SessionState`) | — |
+| P2P callbacks | `createPeerCallbacks(s, deps)` — closures over `s` | Incoming P2P messages |
+| Derived UI values (`allReady`, `holdsMic`, etc.) | `$derived` in `App.svelte` | Svelte reactivity |
+| Canvas drawing | `$effect` in `EstimationCanvas.svelte` → `drawScene()` | Synchronous redraw |
+| Persistence | `session-store.ts` `ScopedStorage` (localStorage, keyed by room+user) | — |
+| Nostr room state | `nostr-state.ts` (kind 30078/30079 events) | Published on state changes |
+
+### Key invariants (not enforced by types)
+
+1. **`buildRevealPayload(s)` must be called before `saveRoundToHistory(s)`** — it sets `s.authoritativeVerdict` which `saveRoundToHistory` consumes and clears. Every code path that saves (handleNext, selectTicket with prior estimate, onReveal revealed:false) must follow this sequence.
+2. **`saveRoundToHistory` never computes locally** — returns early if `authoritativeVerdict` is null. The mic holder is the single source of truth.
+3. **Clone-and-reassign for Maps/Sets in P2P callbacks** — `peerEstimateMap = new Map(peerEstimateMap).set(k, v)`. Direct `.set()` only works inside Svelte's own reactive context, not in external callbacks.
+4. **Only the mic holder sends reveal** — `checkAutoReveal` and `handleForceReveal` run on every client but only the mic holder's `sendReveal` is authoritative. If mic holder is stale, auto-reveal is blocked.
+5. **`resetRound` clears `authoritativeVerdict`** — ensures stale verdicts don't leak into the next round.
+6. **Canvas draws synchronously in `$effect`** — never in `requestAnimationFrame`. All reactive dependencies must be read before any early return.
+7. **`peerIds.length < MAX_PEERS` on join** — enforced in `onPeerJoin`; overflow peers are silently ignored.
+8. **Prep mode blocks auto-reveal** — `checkAutoReveal` is a no-op when `s.prepMode === true`.
+
+### Module responsibilities (quick reference)
+
+| Module | Purpose | Key exports |
+|---|---|---|
+| `session-controller.ts` | State machine: all mutations, P2P callback factory, join/leave flow | `SessionState`, `createPeerCallbacks`, `handleNext`, `buildRevealPayload`, `checkAutoReveal`, 40 functions |
+| `peer.ts` | Transport layer: 3-strategy P2P, message senders, heartbeat, dedup | `createSession`, `selfId`, `PeerSession`, `PeerCallbacks` |
+| `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078) | `createNostrRelay`, `isRelayEnvelope` |
+| `types.ts` | Message shapes, `VerdictSnapshot`, `PeerEstimate`, `SceneState` | All message types |
+| `lognormal.ts` | PDF/CDF math, quantiles, combine estimates, snap verdicts | `lognormalPdf`, `combineEstimates`, `snapVerdict` |
+| `canvas.ts` | Drawing facade: `drawScene()` entry point, coordinate transforms | `drawScene`, `mathToCanvasX`, `canvasYToSigmaFromPeak` |
+| `verdict.ts` | Pure verdict computation, history upsert | `computeVerdict`, `applyVerdict`, `upsertHistory` |
+| `session-store.ts` | localStorage: sessions, scoped pre-estimates/verdicts/backlog | `ScopedStorage`, `saveSession`, `setStorageQuotaHandler` |
+| `nostr-state.ts` | Nostr event persistence (replaceable events kind 30078/30079) | `publishRoomState`, `queryRoomState` |
+| `crypto.ts` | AES-256-GCM encrypt/decrypt, HKDF key derivation, d-tag hash | `deriveRoomKey`, `encrypt`, `decrypt`, `computeDTag` |
+| `config.ts` | Constants: relay URLs, app ID, `MAX_PEERS`, room ID generator | `NOSTR_RELAY_URLS`, `MAX_PEERS`, `generateRoomId` |
 
 ## Tech Stack
 
@@ -13,7 +94,7 @@ See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../.
 | Language | TypeScript (strict mode) |
 | UI framework | Svelte 5 (runes: `$state`, `$derived`, `$effect`) |
 | Canvas | Canvas 2D API (native, no wrapper library) |
-| P2P | Trystero (WebRTC, dual-strategy: Nostr + MQTT) |
+| P2P | Trystero (WebRTC: Nostr + MQTT) + Nostr relay fallback |
 | Build | Vite |
 | Lint + Format | Biome |
 | Unit tests | Vitest |
@@ -39,7 +120,7 @@ See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../.
   - `canvas-sketchy.ts` — sketchy visual primitives (`sketchyEllipse`, `createHatchPattern`, `drawSketchyArrow`)
   - Components import only from `canvas.ts` — never from sub-modules directly
 - Keep log-normal math in `src/lib/lognormal.ts` — pure functions, easily testable
-- P2P wrapper in `src/lib/peer.ts` — dual-strategy (Nostr + MQTT simultaneously), isolates Trystero API from the rest of the app
+- P2P wrapper in `src/lib/peer.ts` — triple-transport (WebRTC/Nostr + WebRTC/MQTT + Nostr relay), isolates transport from the rest of the app
 - All session state lives as `$state` in `App.svelte` — no external state library
 
 ## Conventions
@@ -58,6 +139,10 @@ See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../.
 ## Design Hygiene
 
 Every commit should leave the codebase in a better state. Follow these rules to avoid accumulating debt that requires big refactoring passes.
+
+### Keep instructions current
+- When a commit changes architecture, modules, conventions, test count, or key invariants, update this file in the same commit.
+- Module table, test count, data flow diagram, and key invariants must reflect the actual code.
 
 ### Module size
 - **Source files > ~300 lines** are a smell. Split into focused sub-modules behind a re-export facade (see canvas.ts pattern).
@@ -93,7 +178,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (399+ tests)
+npm run test         # vitest run (407+ tests)
 ```
 
 ## Deployment
