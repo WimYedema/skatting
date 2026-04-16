@@ -4,9 +4,10 @@
 		onImportCsv: (file: File) => void
 		onPasteList: () => void
 		showHint?: boolean
+		dropUp?: boolean
 	}
 
-	let { label, onImportCsv, onPasteList, showHint = true }: Props = $props()
+	let { label, onImportCsv, onPasteList, showHint = true, dropUp = true }: Props = $props()
 	let open = $state(false)
 </script>
 
@@ -18,7 +19,7 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="import-menu-backdrop" onclick={() => (open = false)}></div>
-		<div class="import-menu-dropdown">
+		<div class="import-menu-dropdown" class:drop-down={!dropUp}>
 			<label class="import-menu-item">
 				<input
 					type="file"
@@ -71,19 +72,20 @@
 	.import-menu-backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 9;
+		z-index: 19;
 	}
 
 	.import-menu-dropdown {
 		position: absolute;
 		bottom: calc(100% + 4px);
 		left: 0;
-		right: 0;
+		min-width: 100%;
+		width: max-content;
 		background: var(--c-surface-alt);
 		border: 1px dashed var(--c-border-soft);
 		border-radius: 4px;
 		box-shadow: var(--shadow-md);
-		z-index: 10;
+		z-index: 20;
 		padding: var(--sp-xs) 0;
 	}
 
@@ -112,6 +114,11 @@
 		font-size: var(--fs-sm);
 		color: var(--c-text-faint);
 		border-top: 1px solid rgba(176, 168, 144, 0.25);
+	}
+
+	.import-menu-dropdown.drop-down {
+		bottom: auto;
+		top: calc(100% + 4px);
 	}
 
 	.file-input {

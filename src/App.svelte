@@ -313,6 +313,7 @@
 						label="+ Add tickets ▾"
 						onImportCsv={handleBacklogImport}
 						onPasteList={() => (showPasteModal = true)}
+						dropUp={false}
 					/>
 				{/if}
 				<button
