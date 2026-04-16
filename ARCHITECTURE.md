@@ -7,7 +7,7 @@
 | **Language** | TypeScript (strict mode) | ~6.0 |
 | **UI framework** | Svelte 5 (runes) | ^5.55 |
 | **Canvas** | Canvas 2D API (native) | — |
-| **P2P communication** | Trystero (Nostr + MQTT dual-strategy) | ^0.23 |
+| **P2P communication** | Trystero (Nostr + MQTT dual-strategy) + Nostr relay fallback | ^0.23 |
 | **Build** | Vite | ^8.0 |
 | **Lint + Format** | Biome | ^2.4 |
 | **Unit tests** | Vitest | ^4.1 |
@@ -43,14 +43,17 @@ estimate/
 │       ├── session-store.ts        ← localStorage: session persistence, verdict history
 │       ├── session-store.test.ts   ← 40 tests
 │       ├── session-controller.ts   ← state machine: all session logic, P2P callbacks, mic handoff
-│       ├── session-controller.test.ts ← 141 tests
+│       ├── session-controller.test.ts ← 156 tests
 │       ├── verdict.ts              ← verdict computation, history upsert (pure functions)
 │       ├── verdict.test.ts         ← 11 tests
 │       ├── nostr-state.ts          ← Nostr event persistence (kind 30078/30079), encryption
 │       ├── nostr-state.test.ts     ← 4 tests
 │       ├── crypto.ts               ← AES-256-GCM encryption, HKDF key derivation
 │       ├── crypto.test.ts          ← 11 tests
+│       ├── nostr-relay.ts           ← encrypted Nostr relay transport (WebRTC fallback)
+│       ├── nostr-relay.test.ts     ← 8 tests
 │       ├── config.ts               ← Nostr relay URLs, app ID
+│       ├── debug.ts                ← conditional debug logging
 │       └── types.ts                ← message types, SceneState, HistoryEntry, peer colors
 ├── index.html                      ← HTML shell with Google Fonts (Caveat)
 ├── vite.config.ts
@@ -67,22 +70,31 @@ Tests are colocated with source files (`*.test.ts` next to `*.ts`), not in a sep
 
 ## Key Architecture Decisions
 
-### Dual-Strategy P2P (Nostr + MQTT)
+### Triple-Transport P2P (WebRTC/Nostr + WebRTC/MQTT + Nostr Relay)
 
-Corporate firewalls frequently block WebSocket connections to Nostr relays. To ensure reliability:
+Corporate firewalls can block WebRTC peer connections even when signaling succeeds. The app uses **three independent transport channels** for maximum resilience:
 
-- `peer.ts` joins **both** a Nostr room and an MQTT room simultaneously
-- Peer join/leave events are deduplicated — a peer is "joined" when seen on *any* strategy, "left" only when gone from *all*
+1. **WebRTC via Nostr** — Trystero uses Nostr relays for WebRTC signaling
+2. **WebRTC via MQTT** — Trystero uses HiveMQ broker for WebRTC signaling
+3. **Nostr Relay** — Direct encrypted pub/sub via Nostr ephemeral events (no WebRTC needed)
+
+```
+┌──────────────┐     WebRTC (Nostr signaling)     ┌──────────────┐
+│   Peer A     │◄────────────────────────────────►│   Peer B     │
+│              │     WebRTC (MQTT signaling)       │              │
+│              │◄────────────────────────────────►│              │
+│              │     Nostr relay (encrypted)       │              │
+│              │◄────────────────────────────────►│              │
+└──────────────┘                                  └──────────────┘
+```
+
+- Peer join/leave events are deduplicated — a peer is "joined" when seen on *any* transport, "left" only when gone from *all*
 - All messages are broadcast on all connected channels via `Promise.allSettled`
-- Receiving the same message from both channels is idempotent (last-write-wins)
-
-```
-┌──────────────┐     Nostr relays      ┌──────────────┐
-│   Peer A     │◄─────────────────────►│   Peer B     │
-│              │     MQTT broker        │              │
-│              │◄─────────────────────►│              │
-└──────────────┘                       └──────────────┘
-```
+- Receiving the same message from multiple channels is idempotent (last-write-wins)
+- The relay transport uses AES-256-GCM encryption with HKDF-SHA256 key derivation from the room code
+- Relay messages use Nostr kind 25078 (ephemeral) with a room-specific `r` tag for filtering
+- WebRTC heartbeat: 5s ping interval, 15s stale threshold. Relay heartbeat: 15s interval.
+- Auto-reconnect triggers when all peers are stale for 30s
 
 Pinned Nostr relays: `relay.damus.io`, `nos.lol`, `purplerelay.com`, `relay.nostr.band`, `relay.snort.social`.  
 MQTT uses Trystero's default HiveMQ broker.
@@ -142,7 +154,7 @@ Defined in `src/lib/types.ts`:
 | Message | Payload | When Sent |
 |---|---|---|
 | `EstimateMessage` | `{ mu, sigma }` | On pointer drag, on peer join |
-| `RevealMessage` | `{ revealed }` | On auto-reveal, force-reveal, or "Next" (`false`) |
+| `RevealMessage` | `{ revealed, reEstimate?, estimates?, verdict? }` | On auto-reveal, force-reveal, or "Next" (`false`). Carries authoritative estimate snapshot + verdict from mic holder. |
 | `NameMessage` | `{ name, isCreator? }` | On peer join |
 | `TopicMessage` | `{ topic, url?, ticketId? }` | On topic change, on ticket select |
 | `ReadyMessage` | `{ ready, abstained? }` | On "Ready" or "No idea" click |
@@ -159,8 +171,21 @@ The creator can import a CSV backlog (`src/lib/csv.ts` with flexible column matc
 2. **Personal estimates** are saved per ticket in a `myEstimates` Map and restored on re-selection.
 3. **P2P sync** → backlog is broadcast to peers via `BacklogMessage`. Peers enter prep mode too.
 4. **Meeting mode** → Creator clicks "Start meeting". Ready/Reveal flow resumes for consensus.
-5. **Verdict recording** → `verdict.ts` computes combined estimate, applies to `EstimatedTicket`, records in session and persistent history.
+5. **Verdict recording** → The mic holder computes the authoritative verdict (see [Authoritative Verdicts](#authoritative-verdicts-from-mic-holder)) and broadcasts it to all peers.
 6. **Export** → CSV or Excel (XML Spreadsheet 2003 format, no binary dependency) download.
+
+### Authoritative Verdicts from Mic Holder
+
+To avoid divergent state across peers (different estimate arrival order, timing races), the **mic holder is the single source of truth** for verdicts:
+
+1. On reveal or advance, the mic holder calls `buildRevealPayload()` which:
+   - Snapshots all current estimates (self + peers, excluding abstained)
+   - Computes the combined verdict (precision-weighted Bayesian combination)
+   - Stores the result in `s.authoritativeVerdict`
+2. The `RevealMessage` carries `estimates[]` (the snapshot) and `verdict` (VerdictSnapshot with mu, sigma, median, p10, p90)
+3. Receivers apply the estimate snapshot wholesale (replacing their local peerEstimateMap) and stash the verdict
+4. `saveRoundToHistory()` **only** uses `s.authoritativeVerdict` — it returns early if null, never computes locally
+5. On ticket advance (`revealed: false`), the verdict travels in the same message for atomic save-and-reset
 
 ### Persistent History
 
@@ -200,7 +225,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (375 tests)
+npm run test         # vitest run (399 tests)
 ```
 
 ---

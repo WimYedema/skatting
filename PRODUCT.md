@@ -114,16 +114,18 @@ The user interacts by **dragging a single control point**:
 
 ## Technical Architecture
 
-### Serverless P2P via WebRTC
+### Serverless P2P via WebRTC + Nostr Relay
 
 The goal is **zero server infrastructure** for the core experience.
 
 ```
 ┌─────────┐     WebRTC DataChannel     ┌─────────┐
 │ Peer A  │◄──────────────────────────►│ Peer B  │
-│ (browser)│                            │ (browser)│
+│ (browser)│    Nostr relay (encrypted) │ (browser)│
+│         │◄──────────────────────────►│         │
 └────┬────┘                            └────┬────┘
      │          WebRTC DataChannel           │
+     │          Nostr relay (encrypted)      │
      └──────────────────┬───────────────────┘
                         │
                    ┌────▼────┐
@@ -132,12 +134,19 @@ The goal is **zero server infrastructure** for the core experience.
                    └─────────┘
 ```
 
-**Signaling**: WebRTC requires an initial signaling step to exchange connection offers. The app uses a **dual-strategy** approach for reliability:
+**Signaling**: WebRTC requires an initial signaling step to exchange connection offers. The app uses a **triple-transport** approach for maximum reliability:
 
-1. **Trystero via Nostr relays** — WebSocket connections to public Nostr relays (relay.damus.io, nos.lol, etc.)
-2. **Trystero via MQTT** — WebSocket connections to public MQTT brokers (HiveMQ)
+1. **Trystero via Nostr relays** — WebSocket connections to public Nostr relays (relay.damus.io, nos.lol, etc.) for WebRTC signaling
+2. **Trystero via MQTT** — WebSocket connections to public MQTT brokers (HiveMQ) for WebRTC signaling
+3. **Nostr relay (direct)** — Encrypted ephemeral events (kind 25078) published directly to Nostr relays as a **WebRTC-free fallback**
 
-Both strategies run simultaneously. Peers connect via whichever succeeds first. Messages are broadcast on all connected channels with deduplication, so the app works even if one transport is blocked by corporate firewalls.
+All three transports run simultaneously. Peers connect via whichever succeeds first. Messages are broadcast on all connected channels with deduplication. The Nostr relay fallback ensures the app works even when WebRTC peer connections are blocked by corporate firewalls or symmetric NATs.
+
+**Encryption**: Relay messages are encrypted with AES-256-GCM using a key derived (HKDF-SHA256) from the room code. Only participants who know the room code can decrypt messages.
+
+**Liveness**: WebRTC heartbeat at 5s intervals (15s stale threshold), relay heartbeat at 15s intervals. Auto-reconnect triggers when all peers go stale for 30s.
+
+**Consistency**: The mic holder (facilitator) is the single source of truth for verdicts. On reveal, the mic holder snapshots all estimates and computes the authoritative verdict, broadcasting both to all peers. This eliminates timing races from different message arrival orders.
 
 **Data exchanged**: Only small JSON messages (~100 bytes per update):
 ```json
