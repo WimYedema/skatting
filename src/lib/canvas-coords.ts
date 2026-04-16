@@ -133,7 +133,7 @@ export function generateLogSpaceBlob(
 
 	for (let i = 0; i < numPoints; i++) {
 		const u = uMin + i * step
-		const y = Math.exp(-((u - mu) ** 2) / (2 * sigma ** 2)) / (sigma * Math.sqrt(2 * Math.PI))
+		const y = Math.exp(-u - ((u - mu) ** 2) / (2 * sigma ** 2)) / (sigma * Math.sqrt(2 * Math.PI))
 		rawPoints.push({ x: Math.exp(u), y })
 		if (i > 0) {
 			rawArea += ((rawPoints[i - 1].y + y) / 2) * step
