@@ -4,6 +4,7 @@ import { joinRoom as joinMqttRoom, getRelaySockets as getMqttSockets } from '@tr
 import { joinRoom as joinNostrRoom, getRelaySockets as getNostrSockets } from '@trystero-p2p/nostr'
 import { APP_ID, NOSTR_RELAY_URLS } from './config'
 import { debugLog } from './debug'
+import { createNostrRelay, type NostrRelay } from './nostr-relay'
 import type {
 	BacklogMessage,
 	EstimateMessage,
@@ -12,6 +13,7 @@ import type {
 	MicMessage,
 	NameMessage,
 	PeerEstimate,
+	PingMessage,
 	ReadyMessage,
 	RevealMessage,
 	TopicMessage,
@@ -31,6 +33,7 @@ export interface PeerSession {
 	sendBacklog: (backlog: BacklogMessage) => Promise<void>
 	sendLiveAdjust: (msg: LiveAdjustMessage) => Promise<void>
 	sendMic: (msg: MicMessage) => Promise<void>
+	sendPing: (msg: PingMessage) => Promise<void>
 	leave: () => void
 }
 
@@ -38,7 +41,7 @@ export interface PeerCallbacks {
 	onPeerJoin: (peerId: string) => void
 	onPeerLeave: (peerId: string) => void
 	onEstimate: (estimate: PeerEstimate) => void
-	onReveal: (revealed: boolean, reEstimate?: boolean) => void
+	onReveal: (msg: RevealMessage) => void
 	onName: (peerId: string, name: string, isCreator: boolean) => void
 	onTopic: (topic: string, url?: string, ticketId?: string) => void
 	onReady: (peerId: string, ready: boolean, abstained?: boolean) => void
@@ -46,6 +49,7 @@ export interface PeerCallbacks {
 	onBacklog?: (tickets: ImportedTicket[], prepMode?: boolean) => void
 	onLiveAdjust?: (liveAdjust: boolean) => void
 	onMic?: (holder: string | null) => void
+	onPing?: (peerId: string, ts: number) => void
 	onConnectionError?: (message: string) => void
 }
 
@@ -71,7 +75,11 @@ function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>, action?: st
 	}
 }
 
-export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSession {
+export function createSession(
+	roomId: string,
+	callbacks: PeerCallbacks,
+	nostrConfig?: { roomCode: string; secretKeyHex: string },
+): PeerSession {
 	// Track which strategies each peer is connected through
 	const peerStrategies = new Map<string, Set<string>>()
 
@@ -171,11 +179,12 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	const backlogSenders: Array<(data: BacklogMessage) => Promise<void>> = []
 	const liveAdjustSenders: Array<(data: LiveAdjustMessage) => Promise<void>> = []
 	const micSenders: Array<(data: MicMessage) => Promise<void>> = []
+	const pingSenders: Array<(data: PingMessage) => Promise<void>> = []
 
 	// Deduplicated receivers for messages with side effects —
 	// both Nostr and MQTT fire these, so we need to ignore the duplicate.
 	const dedupReveal = dedup((data: RevealMessage) =>
-		callbacks.onReveal(data.revealed, data.reEstimate),
+		callbacks.onReveal(data),
 	)
 	const dedupBacklog = dedup((data: BacklogMessage) =>
 		callbacks.onBacklog?.(data.tickets, data.prepMode),
@@ -189,6 +198,36 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 	const dedupMic = dedup((data: MicMessage) =>
 		callbacks.onMic?.(data.holder),
 	)
+
+	// Route incoming Nostr relay messages to the same callbacks as WebRTC.
+	// If the sender is unknown, register them as a peer via the relay strategy.
+	function routeRelayMessage(action: string, fromId: string, data: unknown) {
+		handlePeerJoin('nostr-relay', fromId)
+		switch (action) {
+			case 'estimate': {
+				const d = data as EstimateMessage
+				callbacks.onEstimate({ peerId: fromId, mu: d.mu, sigma: d.sigma })
+				break
+			}
+			case 'reveal': dedupReveal(data as RevealMessage); break
+			case 'name': {
+				const d = data as NameMessage
+				callbacks.onName(fromId, d.name, !!d.isCreator)
+				break
+			}
+			case 'topic': dedupTopic(data as TopicMessage); break
+			case 'ready': {
+				const d = data as ReadyMessage
+				callbacks.onReady(fromId, d.ready, d.abstained)
+				break
+			}
+			case 'unit': callbacks.onUnit((data as UnitMessage).unit); break
+			case 'backlog': dedupBacklog(data as BacklogMessage); break
+			case 'liveadjust': dedupLiveAdjust(data as LiveAdjustMessage); break
+			case 'mic': dedupMic(data as MicMessage); break
+			case 'ping': callbacks.onPing?.(fromId, (data as PingMessage).ts); break
+		}
+	}
 
 	for (let i = 0; i < rooms.length; i++) {
 		const room = rooms[i]
@@ -206,6 +245,7 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		const [sendBacklog, onBacklog] = room.makeAction<BacklogMessage>('backlog')
 		const [sendLiveAdjust, onLiveAdjust] = room.makeAction<LiveAdjustMessage>('liveadjust')
 		const [sendMic, onMic] = room.makeAction<MicMessage>('mic')
+		const [sendPing, onPing] = room.makeAction<PingMessage>('ping')
 
 		estimateSenders.push(async (d) => {
 			await sendEstimate(d)
@@ -234,6 +274,9 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		micSenders.push(async (d) => {
 			await sendMic(d)
 		})
+		pingSenders.push(async (d) => {
+			await sendPing(d)
+		})
 
 		// All receivers are idempotent — duplicates just overwrite with same value
 		onEstimate((data, peerId) => {
@@ -248,6 +291,40 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		onBacklog((data) => { debugLog('recv', 'backlog', { count: data.tickets.length, prepMode: data.prepMode }); dedupBacklog(data) })
 		onLiveAdjust((data) => { debugLog('recv', 'liveAdjust', data); dedupLiveAdjust(data) })
 		onMic((data) => { debugLog('recv', 'mic', data); dedupMic(data) })
+		onPing((data, peerId) => { callbacks.onPing?.(peerId, data.ts) })
+	}
+
+	// Nostr relay transport — secondary channel for firewall resilience.
+	// Sends all actions (except ping) through Nostr events in parallel with WebRTC.
+	// Initialized async; senders no-op until the relay is ready.
+	let nostrRelay: NostrRelay | undefined
+	if (nostrConfig) {
+		// Push senders that route through relay once ready (closures see updated variable)
+		estimateSenders.push(async (d) => { await nostrRelay?.send('estimate', d) })
+		revealSenders.push(async (d) => { await nostrRelay?.send('reveal', d) })
+		nameSenders.push(async (d) => { await nostrRelay?.send('name', d) })
+		topicSenders.push(async (d) => { await nostrRelay?.send('topic', d) })
+		readySenders.push(async (d) => { await nostrRelay?.send('ready', d) })
+		unitSenders.push(async (d) => { await nostrRelay?.send('unit', d) })
+		backlogSenders.push(async (d) => { await nostrRelay?.send('backlog', d) })
+		liveAdjustSenders.push(async (d) => { await nostrRelay?.send('liveadjust', d) })
+		micSenders.push(async (d) => { await nostrRelay?.send('mic', d) })
+		// Ping IS relayed so relay-only peers get liveness tracking and peer
+		// discovery, but at a slower cadence (15s) to stay within rate limits.
+		// The relay ping sender is kept separate from pingSenders so the
+		// 5s WebRTC heartbeat doesn't flood the relay.
+
+		createNostrRelay(
+			nostrConfig.roomCode,
+			nostrConfig.secretKeyHex,
+			selfId,
+			routeRelayMessage,
+		).then((r) => {
+			nostrRelay = r
+			debugLog('nostr-relay', 'transport ready')
+		}).catch((e) => {
+			debugLog('nostr-relay', 'transport init failed', e)
+		})
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value
@@ -258,6 +335,21 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		}
 		pendingJoins.length = 0
 	})
+
+	const broadcastPing = broadcastAll(pingSenders)
+
+	// Heartbeat: send ping every 5s via WebRTC data channels
+	const heartbeatTimer = setInterval(() => {
+		broadcastPing({ ts: Date.now() })
+	}, 5000)
+
+	// Slower relay heartbeat (15s) — keeps relay-only peers discovered and alive
+	let relayHeartbeatTimer: ReturnType<typeof setInterval> | undefined
+	if (nostrConfig) {
+		relayHeartbeatTimer = setInterval(() => {
+			nostrRelay?.send('ping', { ts: Date.now() } satisfies PingMessage).catch(() => {})
+		}, 15_000)
+	}
 
 	return {
 		roomId,
@@ -271,9 +363,13 @@ export function createSession(roomId: string, callbacks: PeerCallbacks): PeerSes
 		sendBacklog: broadcastAll(backlogSenders, 'backlog'),
 		sendLiveAdjust: broadcastAll(liveAdjustSenders, 'liveAdjust'),
 		sendMic: broadcastAll(micSenders, 'mic'),
+		sendPing: broadcastPing,
 		leave() {
 			if (healthTimer) clearInterval(healthTimer)
+			clearInterval(heartbeatTimer)
+			if (relayHeartbeatTimer) clearInterval(relayHeartbeatTimer)
 			for (const room of rooms) room.leave()
+			nostrRelay?.close()
 		},
 	}
 }

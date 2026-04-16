@@ -1,6 +1,29 @@
-/** Lightweight debug mode — activated by ?debug in the URL. */
+/** Lightweight debug mode — activated by ?debug in the URL or Ctrl+Shift+D. */
 
-export const DEBUG = new URLSearchParams(window.location.search).has('debug')
+export let DEBUG = new URLSearchParams(window.location.search).has('debug')
+
+let onToggle: ((active: boolean) => void) | null = null
+
+/** Register a callback for when debug mode is toggled at runtime */
+export function onDebugToggle(fn: ((active: boolean) => void) | null): void {
+	onToggle = fn
+}
+
+/** Toggle debug mode on/off */
+export function toggleDebug(): void {
+	DEBUG = !DEBUG
+	onToggle?.(DEBUG)
+}
+
+// Secret hotkey: Ctrl+Shift+D toggles debug mid-session
+if (typeof window !== 'undefined') {
+	window.addEventListener('keydown', (e) => {
+		if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+			e.preventDefault()
+			toggleDebug()
+		}
+	})
+}
 
 interface DebugEntry {
 	time: number
@@ -14,11 +37,12 @@ const entries: DebugEntry[] = []
 let onChange: (() => void) | null = null
 
 export function debugLog(tag: string, msg: string, data?: unknown): void {
-	if (!DEBUG) return
 	const entry: DebugEntry = { time: Date.now(), tag, msg, data }
 	entries.push(entry)
 	if (entries.length > MAX_LOG) entries.shift()
-	console.log(`[estimate:${tag}]`, msg, data ?? '')
+	if (DEBUG) {
+		console.log(`[estimate:${tag}]`, msg, data ?? '')
+	}
 	onChange?.()
 }
 
