@@ -23,6 +23,8 @@ describe('SessionLobby', () => {
 
 	afterEach(() => {
 		cleanup()
+		// Clear any URL params set by handleCreate (prevents test pollution)
+		window.history.replaceState({}, '', window.location.pathname)
 	})
 
 	it('shows create and join buttons in choose mode', () => {

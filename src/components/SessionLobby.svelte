@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { generateRoomId } from '../lib/config'
+	import { generateRoomId, NOSTR_RELAY_URLS } from '../lib/config'
+	import { runConnectivityCheck, type ConnectivityResult } from '../lib/connectivity'
+	import { DEBUG } from '../lib/debug'
 	import type { RoomState, PrepDoneSignal } from '../lib/nostr-state'
 	import {
 		deleteSession,
@@ -16,12 +18,34 @@
 
 	let { onJoin, queryRoomState, queryPrepDone }: Props = $props()
 
-	let roomId = $state('')
+	// Check URL for a shared room link (?room=XYZ)
+	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
+
+	let roomId = $state(urlRoom || '')
 	let userName = $state(getLastUserName())
 	let unit = $state('points')
-	let mode = $state<'choose' | 'create' | 'join' | 'rejoin'>('choose')
+	let mode = $state<'choose' | 'create' | 'join' | 'rejoin'>(urlRoom ? 'join' : 'choose')
 	let recentSessions = $state(getSavedSessions())
 	let selectedSession = $state<SavedSession | null>(null)
+
+	// Connectivity check — runs once on mount
+	let connectivity = $state<ConnectivityResult | null>(null)
+	let showConnDetails = $state(false)
+
+	$effect(() => {
+		// Run on first render only — skip in test environments
+		if (typeof RTCPeerConnection === 'undefined') return
+		const mqttRelays = ['wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt']
+		runConnectivityCheck([...NOSTR_RELAY_URLS, ...mqttRelays], (r) => {
+			connectivity = r
+		})
+	})
+
+	// Auto-lookup when arriving via shared link (?room=XYZ)
+	$effect(() => {
+		if (urlRoom && mode === 'join') handleLookup()
+	})
+
 	// Deduplicate by roomId for display — show the most recent per room
 	let displaySessions = $derived(
 		recentSessions.filter((s, i) => recentSessions.findIndex((r) => r.roomId === s.roomId) === i)
@@ -85,6 +109,10 @@
 	function handleCreate() {
 		roomId = generateRoomId()
 		mode = 'create'
+		// Put room in URL so the link can be shared
+		const url = new URL(window.location.href)
+		url.searchParams.set('room', roomId)
+		window.history.replaceState({}, '', url.toString())
 	}
 
 	function handleJoinMode() {
@@ -407,6 +435,33 @@
 				<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
 			{/if}
 		</div>
+	{/if}
+
+	{#if connectivity && !(connectivity.webSocket === 'ok' && connectivity.stun === 'ok' && connectivity.webRtcLocal === 'ok')}
+		<button
+			class="conn-status"
+			class:conn-warn={connectivity.webSocket === 'ok' && (connectivity.stun === 'fail' || connectivity.webRtcLocal === 'fail')}
+			class:conn-fail={connectivity.webSocket === 'fail'}
+			class:conn-pending={connectivity.webSocket === 'pending'}
+			onclick={() => (showConnDetails = !showConnDetails)}
+		>
+			{#if connectivity.webSocket === 'pending'}
+				⏳ Checking connectivity…
+			{:else if connectivity.webSocket === 'fail'}
+				🔴 Relays unreachable
+			{:else if connectivity.stun === 'fail'}
+				🟡 STUN blocked — P2P may not work
+			{:else if connectivity.webRtcLocal === 'fail'}
+				🟡 WebRTC restricted
+			{/if}
+		</button>
+		{#if showConnDetails || DEBUG}
+			<div class="conn-details">
+				{#each connectivity.details as line}
+					<div>{line}</div>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -754,5 +809,48 @@
 		background: rgba(90, 140, 80, 0.12);
 		padding: 1px 6px;
 		border-radius: 10px;
+	}
+
+	/* --- Connectivity check --- */
+
+	.conn-status {
+		font-family: var(--font);
+		font-size: var(--fs-sm);
+		padding: var(--sp-xs) var(--sp-md);
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
+		background: rgba(210, 200, 180, 0.2);
+		color: var(--c-text-muted);
+		cursor: pointer;
+		transition: background var(--tr-fast);
+	}
+
+	.conn-status:hover {
+		background: rgba(210, 200, 180, 0.4);
+	}
+
+	.conn-status.conn-warn {
+		color: var(--c-warm);
+	}
+
+	.conn-status.conn-fail {
+		color: var(--c-red-border);
+	}
+
+	.conn-details {
+		font-family: 'Fira Code', 'Consolas', monospace;
+		font-size: 11px;
+		color: var(--c-text-muted);
+		background: rgba(210, 200, 180, 0.15);
+		border: 1px dashed var(--c-border-soft);
+		border-radius: var(--radius-sm);
+		padding: var(--sp-sm) var(--sp-md);
+		max-width: 660px;
+		width: 100%;
+		box-sizing: border-box;
+	}
+
+	.conn-details div {
+		padding: 1px 0;
 	}
 </style>
