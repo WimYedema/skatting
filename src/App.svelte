@@ -277,20 +277,15 @@
 		<header>
 			<div class="header-left">
 				<h1 class="logo">
-				<svg class="logo-bg" viewBox="0 0 180 48" aria-hidden="true">
-					<rect width="180" height="48" fill="#f5f0e6" rx="2"/>
-					<!-- Ruled lines -->
-					<line x1="0" y1="12" x2="180" y2="12" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
-					<line x1="0" y1="24" x2="180" y2="24" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
-					<line x1="0" y1="36" x2="180" y2="36" stroke="rgba(140,180,210,0.3)" stroke-width="0.5"/>
-					<!-- Red margin line -->
-					<line x1="10" y1="0" x2="10" y2="48" stroke="rgba(200,120,120,0.3)" stroke-width="0.8"/>
-					<!-- Axes -->
-					<line x1="24" y1="42" x2="170" y2="42" stroke="#5a5040" stroke-width="0.8"/>
-					<line x1="24" y1="8" x2="24" y2="42" stroke="#5a5040" stroke-width="0.8"/>
-					<!-- Lognormal curve -->
-					<path d="M28,41 C38,41 48,39 58,32 C65,27 70,20 78,16 C90,11 108,18 128,30 C142,38 156,41 170,42"
-						fill="none" stroke="rgba(91,123,154,0.3)" stroke-width="1.2" stroke-linecap="round"/>
+				<svg class="logo-icon" viewBox="0 0 28 24" aria-hidden="true">
+					<!-- Wobbly axis lines -->
+					<path d="M2.2,22.3 L8,21.8 L15,22.2 L22,21.9 L26.1,22.1" fill="none" stroke="#5a5040" stroke-width="0.8"/>
+					<path d="M2.3,22.3 L1.8,14 L2.2,8 L1.9,2.2" fill="none" stroke="#5a5040" stroke-width="0.8"/>
+					<!-- Lognormal curve — wobbly, with subtle fill underneath -->
+					<path d="M3.2,21.5 C5.1,21.2 7.2,18.8 9.1,13.8 C11.2,7.9 12.1,4.2 14.2,3.1 C16.1,4.3 18.3,10.2 20.8,15.8 C23.1,19.4 25.2,21.1 26.8,21.3 L26.1,22.1 L2.2,22.3 Z"
+						fill="rgba(91,123,154,0.1)" stroke="none"/>
+					<path d="M3.2,21.5 C5.1,21.2 7.2,18.8 9.1,13.8 C11.2,7.9 12.1,4.2 14.2,3.1 C16.1,4.3 18.3,10.2 20.8,15.8 C23.1,19.4 25.2,21.1 26.8,21.3"
+						fill="none" stroke="#5b7b9a" stroke-width="1.8" stroke-linecap="round"/>
 				</svg>
 				<span class="logo-text">Skatting</span>
 			</h1>
@@ -557,26 +552,24 @@
 
 	h1, .logo {
 		margin: 0;
-		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--sp-xs);
 		white-space: nowrap;
 		line-height: 1;
 	}
 
-	.logo-bg {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
+	.logo-icon {
+		width: 28px;
+		height: 24px;
+		flex-shrink: 0;
 	}
 
 	.logo-text {
-		position: relative;
 		font-family: var(--font);
 		font-size: var(--fs-3xl);
 		font-weight: 700;
 		color: var(--c-text);
-		padding: var(--sp-xs) var(--sp-md) var(--sp-xs) var(--sp-xl);
 	}
 
 	.topic-input {
