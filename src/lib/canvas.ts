@@ -52,6 +52,19 @@ export {
 	seededRng,
 }
 
+/** Tick values for the X-axis, chosen to match the unit's natural scale */
+function getTickValues(unit: string): number[] {
+	switch (unit) {
+		case 'points':
+			return [1, 2, 3, 5, 8, 13, 21, 34]
+		case 'days':
+			return [1, 2, 3, 5, 7, 10, 14, 21, 30]
+		default:
+			// Powers of 2 — generic for arbitrary units
+			return [1, 2, 4, 8, 16, 32]
+	}
+}
+
 /** Draw axes with labels — hand-drawn style */
 export function drawAxes(
 	ctx: CanvasRenderingContext2D,
@@ -79,11 +92,11 @@ export function drawAxes(
 	}
 	ctx.stroke()
 
-	// X-axis tick marks — log-spaced at natural estimation values
+	// X-axis tick marks — scale depends on unit type
 	ctx.font = '14px Caveat, cursive'
 	ctx.textAlign = 'center'
 	const tickRng = seededRng(88)
-	const tickValues = [1, 2, 3, 5, 8, 13, 21, 34]
+	const tickValues = getTickValues(unit)
 	for (const v of tickValues) {
 		const tx = mathToCanvasX(v, width)
 		const baseY = height - pad

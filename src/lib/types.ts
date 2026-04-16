@@ -13,9 +13,27 @@ export type EstimateMessage = {
 	sigma: number
 }
 
+export interface VerdictSnapshot {
+	mu: number
+	sigma: number
+	median: number
+	p10: number
+	p90: number
+}
+
+/**
+ * Reveal/advance message from the mic holder.
+ * - `revealed=true` + `estimates` + `verdict`: authoritative reveal with snapshot
+ * - `revealed=false` + `verdict`: save verdict and advance to next ticket
+ * - `revealed=false` + `reEstimate=true`: reset round for re-estimation
+ */
 export type RevealMessage = {
 	revealed: boolean
 	reEstimate?: boolean
+	/** Estimate snapshot from the mic holder at reveal/advance time */
+	estimates?: Array<{ peerId: string; mu: number; sigma: number }>
+	/** Authoritative verdict computed by the mic holder */
+	verdict?: VerdictSnapshot
 }
 
 export type NameMessage = {
@@ -44,6 +62,10 @@ export type LiveAdjustMessage = {
 
 export type MicMessage = {
 	holder: string | null
+}
+
+export type PingMessage = {
+	ts: number
 }
 
 export type ImportedTicket = {

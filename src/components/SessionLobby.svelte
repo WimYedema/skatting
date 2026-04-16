@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { generateRoomId, NOSTR_RELAY_URLS } from '../lib/config'
+	import { generateRoomId, MAX_PEERS, NOSTR_RELAY_URLS } from '../lib/config'
 	import { runConnectivityCheck, type ConnectivityResult } from '../lib/connectivity'
 	import { DEBUG } from '../lib/debug'
 	import type { RoomState, PrepDoneSignal } from '../lib/nostr-state'
@@ -24,6 +24,8 @@
 	let roomId = $state(urlRoom || '')
 	let userName = $state(getLastUserName())
 	let unit = $state('points')
+	let customUnit = $state('')
+	let effectiveUnit = $derived(unit === 'custom' ? (customUnit.trim() || 'units') : unit)
 	let mode = $state<'choose' | 'create' | 'join' | 'rejoin'>(urlRoom ? 'join' : 'choose')
 	let recentSessions = $state(getSavedSessions())
 	let selectedSession = $state<SavedSession | null>(null)
@@ -129,7 +131,13 @@
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
 		if (trimmedRoom.length > 0 && trimmedName.length > 0) {
-			onJoin(trimmedRoom, trimmedName, mode === 'create' ? unit : null)
+			// Ensure room is in URL for all join modes
+			const url = new URL(window.location.href)
+			if (url.searchParams.get('room') !== trimmedRoom) {
+				url.searchParams.set('room', trimmedRoom)
+				window.history.replaceState({}, '', url.toString())
+			}
+			onJoin(trimmedRoom, trimmedName, mode === 'create' ? effectiveUnit : null)
 		}
 	}
 
@@ -163,11 +171,17 @@
 		if (!selectedSession) return
 		const trimmedName = userName.trim()
 		if (!trimmedName) return
-		// Check if this name matches a creator entry
+		// Check if this name matches a creator entry (case-insensitive)
 		const match = recentSessions.find(
-			(s) => s.roomId === selectedSession!.roomId && s.userName === trimmedName,
+			(s) => s.roomId === selectedSession!.roomId && s.userName.toLowerCase() === trimmedName.toLowerCase(),
 		)
 		const selectedUnit = match?.isCreator ? match.unit : null
+		// Ensure room is in URL
+		const url = new URL(window.location.href)
+		if (url.searchParams.get('room') !== selectedSession.roomId) {
+			url.searchParams.set('room', selectedSession.roomId)
+			window.history.replaceState({}, '', url.toString())
+		}
 		onJoin(selectedSession.roomId, trimmedName, selectedUnit)
 	}
 
@@ -340,6 +354,7 @@
 		<div class="room-info">
 			<p>Share this code with your team:</p>
 			<div class="room-code-large">{roomId}</div>
+			<p class="peer-limit-note">Up to {MAX_PEERS} participants per room</p>
 			<div class="name-bar">
 				<label for="create-name">Your name</label>
 				<input
@@ -359,7 +374,11 @@
 				<select id="unit-select" bind:value={unit}>
 					<option value="points">points</option>
 					<option value="days">days</option>
+					<option value="custom">custom…</option>
 				</select>
+				{#if unit === 'custom'}
+					<input class="custom-unit" type="text" bind:value={customUnit} placeholder="e.g. hectares" maxlength="20" />
+				{/if}
 			</div>
 			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>
 			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
@@ -636,6 +655,12 @@
 		color: var(--c-text);
 	}
 
+	.peer-limit-note {
+		font-size: var(--fs-sm);
+		color: var(--c-text-muted);
+		margin: 0;
+	}
+
 	.unit-picker {
 		display: flex;
 		align-items: center;
@@ -652,6 +677,14 @@
 		background: rgba(245, 240, 230, 0.5);
 		color: var(--c-text);
 		cursor: pointer;
+	}
+
+	.custom-unit {
+		font-size: 1.2rem !important;
+		text-align: left !important;
+		letter-spacing: normal !important;
+		padding: var(--sp-xs) var(--sp-sm) !important;
+		max-width: 140px;
 	}
 
 	input {

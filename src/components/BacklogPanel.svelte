@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { EstimatedTicket } from '../lib/types'
+	import { lognormalMode } from '../lib/lognormal'
 	import ImportMenu from './ImportMenu.svelte'
 
 	interface Props {
@@ -9,6 +10,7 @@
 		prepMode: boolean
 		myEstimates: Map<string, { mu: number; sigma: number }>
 		estimatedCount: number
+		unit: string
 		onSelect: (index: number) => void
 		onReorder: (fromIndex: number, toIndex: number) => void
 		onRemove: (index: number) => void
@@ -18,18 +20,25 @@
 		onPasteList?: () => void
 	}
 
-	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, onSelect, onReorder, onRemove, onExportCsv, onExportExcel, onImportCsv, onPasteList }: Props = $props()
+	let { tickets, currentIndex, isCreator, prepMode, myEstimates, estimatedCount, unit, onSelect, onReorder, onRemove, onExportCsv, onExportExcel, onImportCsv, onPasteList }: Props = $props()
 
 	let collapsed = $state(window.innerWidth < 768)
 	let dragIndex = $state(-1)
 	let dropIndex = $state(-1)
 
 	function isEstimated(ticket: EstimatedTicket): boolean {
-		return ticket.median != null || myEstimates.has(ticket.id)
+		return ticket.median != null
 	}
 
 	function isPrepared(ticket: EstimatedTicket): boolean {
 		return myEstimates.has(ticket.id) && ticket.median == null
+	}
+
+	function myScore(ticket: EstimatedTicket): string | null {
+		const est = myEstimates.get(ticket.id)
+		if (!est) return null
+		const mode = lognormalMode(est.mu, est.sigma)
+		return mode < 10 ? mode.toFixed(1) : Math.round(mode).toString()
 	}
 
 	let preparedCount = $derived(tickets.filter((t) => myEstimates.has(t.id)).length)
@@ -103,6 +112,9 @@
 						</span>
 						<span class="ticket-id">{ticket.id}</span>
 						<span class="ticket-title">{ticket.title}</span>
+						{#if myScore(ticket)}
+							<span class="ticket-my-score">{myScore(ticket)}</span>
+						{/if}
 						{#if ticket.median != null}
 							<span class="ticket-verdict">{ticket.median.toFixed(1)}</span>
 						{/if}
@@ -257,6 +269,15 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.ticket-my-score {
+		font-size: var(--fs-xs);
+		color: var(--c-accent);
+		background: rgba(59, 125, 216, 0.12);
+		padding: 1px 5px;
+		border-radius: 2px;
+		flex-shrink: 0;
 	}
 
 	.ticket-verdict {

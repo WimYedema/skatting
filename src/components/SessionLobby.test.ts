@@ -12,6 +12,8 @@ vi.mock('../lib/session-store', () => ({
 // Mock config module
 vi.mock('../lib/config', () => ({
 	generateRoomId: () => 'testroom',
+	MAX_PEERS: 15,
+	NOSTR_RELAY_URLS: [],
 }))
 
 describe('SessionLobby', () => {

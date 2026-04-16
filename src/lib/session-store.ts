@@ -77,6 +77,17 @@ interface StoredEstimate {
 
 const MAX_HISTORY = 50
 
+function isQuotaError(e: unknown): boolean {
+	return e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)
+}
+
+/** Optional callback set by the app to surface storage quota warnings. */
+let storageQuotaCallback: (() => void) | null = null
+
+export function setStorageQuotaHandler(cb: (() => void) | null): void {
+	storageQuotaCallback = cb
+}
+
 /**
  * User-scoped localStorage abstraction.
  * All data is keyed by roomId + userName so different users
@@ -103,8 +114,8 @@ export function createScopedStorage(roomId: string, userName: string): ScopedSto
 				const all: Record<string, StoredEstimate> = raw ? JSON.parse(raw) : {}
 				all[ticketId] = { mu, sigma }
 				localStorage.setItem(preEstKey, JSON.stringify(all))
-			} catch {
-				// Ignore storage errors
+			} catch (e) {
+				if (isQuotaError(e)) storageQuotaCallback?.()
 			}
 		},
 
@@ -132,19 +143,23 @@ export function createScopedStorage(roomId: string, userName: string): ScopedSto
 		},
 
 		saveVerdict(entry: HistoryVerdict): void {
-			const all = this.getVerdictHistory()
-			const idx = all.findIndex(
-				(v) =>
-					v.unit === entry.unit &&
-					(entry.ticketId ? v.ticketId === entry.ticketId : v.label === entry.label),
-			)
-			if (idx >= 0) {
-				all[idx] = entry
-			} else {
-				all.push(entry)
+			try {
+				const all = this.getVerdictHistory()
+				const idx = all.findIndex(
+					(v) =>
+						v.unit === entry.unit &&
+						(entry.ticketId ? v.ticketId === entry.ticketId : v.label === entry.label),
+				)
+				if (idx >= 0) {
+					all[idx] = entry
+				} else {
+					all.push(entry)
+				}
+				const trimmed = all.slice(-MAX_HISTORY)
+				localStorage.setItem(historyKey, JSON.stringify(trimmed))
+			} catch (e) {
+				if (isQuotaError(e)) storageQuotaCallback?.()
 			}
-			const trimmed = all.slice(-MAX_HISTORY)
-			localStorage.setItem(historyKey, JSON.stringify(trimmed))
 		},
 
 		getVerdictHistory(unit?: string): HistoryVerdict[] {
@@ -180,8 +195,8 @@ export function createScopedStorage(roomId: string, userName: string): ScopedSto
 					return t
 				})
 				localStorage.setItem(backlogKey, JSON.stringify(clean))
-			} catch {
-				// Ignore storage errors
+			} catch (e) {
+				if (isQuotaError(e)) storageQuotaCallback?.()
 			}
 		},
 

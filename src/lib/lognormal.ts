@@ -175,17 +175,37 @@ export function snapVerdict(median: number, unit: string): string {
 		return `${best}`
 	}
 
-	// Days: snap to a natural time granularity
-	if (median < 0.75) return '½ day'
-	if (median < 1.25) return '1 day'
-	if (median < 1.75) return '1½ days'
-	if (median < 2.5) return '2 days'
-	if (median < 3.5) return '3 days'
-	if (median < 4.5) return '4 days'
-	if (median < 6) return '1 week'
-	if (median < 8.5) return '1½ weeks'
-	if (median < 12) return '2 weeks'
-	if (median < 17) return '3 weeks'
-	if (median < 23) return '1 month'
-	return `${Math.round(median)} days`
+	if (unit === 'days') {
+		// Days: snap to a natural time granularity
+		if (median < 0.75) return '½ day'
+		if (median < 1.25) return '1 day'
+		if (median < 1.75) return '1½ days'
+		if (median < 2.5) return '2 days'
+		if (median < 3.5) return '3 days'
+		if (median < 4.5) return '4 days'
+		if (median < 6) return '1 week'
+		if (median < 8.5) return '1½ weeks'
+		if (median < 12) return '2 weeks'
+		if (median < 17) return '3 weeks'
+		if (median < 23) return '1 month'
+		return `${Math.round(median)} days`
+	}
+
+	// Custom units: snap to nearest power of 2
+	return snapPow2(median)
+}
+
+/** Snap to nearest power of 2 — used for custom/generic units */
+export function snapPow2(median: number): string {
+	const pow2 = [1, 2, 4, 8, 16, 32]
+	let best = pow2[0]
+	let bestDist = Math.abs(median - best)
+	for (const p of pow2) {
+		const d = Math.abs(median - p)
+		if (d < bestDist) {
+			best = p
+			bestDist = d
+		}
+	}
+	return `${best}`
 }

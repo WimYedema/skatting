@@ -7,6 +7,7 @@ import {
 	type HistoryVerdict,
 	type SavedSession,
 	saveSession,
+	setStorageQuotaHandler,
 } from './session-store'
 
 function makeSession(overrides: Partial<SavedSession> = {}): SavedSession {
@@ -432,5 +433,50 @@ describe('scoped storage — backlog', () => {
 		const result = s.getBacklog()
 		expect(result).toHaveLength(1)
 		expect(result[0].id).toBe('T-1')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Storage quota error detection
+// ---------------------------------------------------------------------------
+
+describe('storage quota error detection', () => {
+	let store: Record<string, string>
+	let quotaCb: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		store = {}
+		quotaCb = vi.fn()
+		setStorageQuotaHandler(quotaCb)
+		vi.stubGlobal('localStorage', {
+			getItem: (key: string) => store[key] ?? null,
+			setItem: (_key: string, _value: string) => {
+				const err = new DOMException('quota exceeded', 'QuotaExceededError')
+				throw err
+			},
+			removeItem: (key: string) => { delete store[key] },
+		})
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('fires callback on savePreEstimate quota error', () => {
+		const s = createScopedStorage('room', 'Alice')
+		s.savePreEstimate('T-1', 2.0, 0.5)
+		expect(quotaCb).toHaveBeenCalledOnce()
+	})
+
+	it('fires callback on saveVerdict quota error', () => {
+		const s = createScopedStorage('room', 'Alice')
+		s.saveVerdict({ label: 'T', mu: 2, sigma: 0.5, unit: 'points', timestamp: 1 })
+		expect(quotaCb).toHaveBeenCalledOnce()
+	})
+
+	it('fires callback on saveBacklog quota error', () => {
+		const s = createScopedStorage('room', 'Alice')
+		s.saveBacklog([{ id: 'T1', title: 'Test' }])
+		expect(quotaCb).toHaveBeenCalledOnce()
 	})
 })

@@ -44,10 +44,19 @@ import {
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
+import { computeVerdict } from './verdict'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Set authoritativeVerdict from current state so saveRoundToHistory can use it */
+function setVerdict(s: SessionState): void {
+	const result = computeVerdict('test', { mu: s.mu, sigma: s.sigma }, [])
+	if (result) {
+		s.authoritativeVerdict = { mu: result.mu, sigma: result.sigma, median: result.median, p10: result.p10, p90: result.p90 }
+	}
+}
 
 function mockSession(): PeerSession {
 	return {
@@ -250,7 +259,7 @@ describe('handleForceReveal', () => {
 		withSession(s)
 		handleForceReveal(s)
 		expect(s.revealed).toBe(true)
-		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+		expect(s.session!.sendReveal).toHaveBeenCalledWith(expect.objectContaining({ revealed: true }))
 	})
 })
 
@@ -395,7 +404,7 @@ describe('handleNext', () => {
 
 		handleNext(s, deps)
 
-		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: false })
+		expect(s.session!.sendReveal).toHaveBeenCalledWith(expect.objectContaining({ revealed: false }))
 	})
 })
 
@@ -687,7 +696,7 @@ describe('checkAutoReveal', () => {
 		checkAutoReveal(s, true)
 
 		expect(s.revealed).toBe(true)
-		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+		expect(s.session!.sendReveal).toHaveBeenCalledWith(expect.objectContaining({ revealed: true }))
 	})
 
 	it('does not reveal in prep mode', () => {
@@ -709,6 +718,45 @@ describe('checkAutoReveal', () => {
 
 		// sendReveal not called because already revealed
 		expect(s.session!.sendReveal).not.toHaveBeenCalled()
+	})
+
+	it('blocks auto-reveal when mic holder is stale', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.revealed = false
+		s.micHolder = 'peer-a'
+		s.peerLastSeen = new Map([['peer-a', Date.now() - 20_000]])
+
+		checkAutoReveal(s, true)
+
+		expect(s.revealed).toBe(false)
+		expect(s.session!.sendReveal).not.toHaveBeenCalled()
+	})
+
+	it('allows auto-reveal when mic holder is NOT stale', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.revealed = false
+		s.micHolder = 'peer-a'
+		s.peerLastSeen = new Map([['peer-a', Date.now() - 1_000]])
+
+		checkAutoReveal(s, true)
+
+		expect(s.revealed).toBe(true)
+	})
+
+	it('allows auto-reveal when no remote mic holder (creator holds mic)', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.revealed = false
+		s.micHolder = null
+
+		checkAutoReveal(s, true)
+
+		expect(s.revealed).toBe(true)
 	})
 })
 
@@ -752,7 +800,7 @@ describe('joinSession', () => {
 		expect(s.isCreator).toBe(true)
 		expect(s.unit).toBe('points')
 		expect(s.session).toBeTruthy()
-		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object))
+		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object), expect.objectContaining({ roomCode: 'te-st-ro' }))
 		expect(deps.saveSession).toHaveBeenCalled()
 	})
 
@@ -867,7 +915,7 @@ describe('prepareJoin + connectSession', () => {
 		connectSession(s, deps, 'te-st-ro')
 
 		expect(s.session).toBeTruthy()
-		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object))
+		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object), expect.objectContaining({ roomCode: 'te-st-ro' }))
 	})
 
 	it('mimics joinSession when called sequentially', () => {
@@ -1029,6 +1077,16 @@ describe('createPeerCallbacks', () => {
 		expect(s.session!.sendName).toHaveBeenCalled()
 	})
 
+	it('onPeerJoin rejects peer when room is full', () => {
+		// Fill up to MAX_PEERS
+		for (let i = 0; i < 15; i++) {
+			s.peerIds.push(`peer-${i}`)
+		}
+		callbacks.onPeerJoin('overflow-peer')
+		expect(s.peerIds).not.toContain('overflow-peer')
+		expect(s.session!.sendEstimate).not.toHaveBeenCalled()
+	})
+
 	it('onPeerJoin sends unit and backlog when creator', () => {
 		s.isCreator = true
 		s.backlog = [ticket('T1')]
@@ -1037,7 +1095,7 @@ describe('createPeerCallbacks', () => {
 		expect(s.session!.sendBacklog).toHaveBeenCalled()
 	})
 
-	it('onPeerLeave removes peer from all maps', () => {
+	it('onPeerLeave removes peer from peerIds but keeps peerNames for reconnect tracking', () => {
 		s.peerIds = ['p1', 'p2']
 		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.5 }]])
 		s.peerNames = new Map([
@@ -1045,12 +1103,15 @@ describe('createPeerCallbacks', () => {
 			['p2', 'Peer2'],
 		])
 		s.readyPeers = new Set(['p1'])
+		s.peerLastSeen = new Map([['p1', 1000]])
 
 		callbacks.onPeerLeave('p1')
 
 		expect(s.peerIds).toEqual(['p2'])
 		expect(s.peerEstimateMap.has('p1')).toBe(false)
-		expect(s.peerNames.has('p1')).toBe(false)
+		// peerNames and peerLastSeen are kept so disconnected peers remain visible
+		expect(s.peerNames.has('p1')).toBe(true)
+		expect(s.peerLastSeen.has('p1')).toBe(true)
 		expect(s.readyPeers.has('p1')).toBe(false)
 	})
 
@@ -1060,14 +1121,14 @@ describe('createPeerCallbacks', () => {
 	})
 
 	it('onReveal sets revealed state', () => {
-		callbacks.onReveal(true)
+		callbacks.onReveal({ revealed: true })
 		expect(s.revealed).toBe(true)
 	})
 
 	it('onReveal false triggers saveRoundToHistory + resetRound', () => {
 		s.revealed = true
 		s.selfReady = true
-		callbacks.onReveal(false)
+		callbacks.onReveal({ revealed: false })
 		expect(s.revealed).toBe(false)
 		expect(s.selfReady).toBe(false)
 	})
@@ -1236,7 +1297,7 @@ describe('state machine sequences', () => {
 		checkAutoReveal(s, allReady)
 
 		expect(s.revealed).toBe(true)
-		expect(s.session!.sendReveal).toHaveBeenCalledWith({ revealed: true })
+		expect(s.session!.sendReveal).toHaveBeenCalledWith(expect.objectContaining({ revealed: true }))
 	})
 
 	it('full meeting cycle: join → estimate → ready → reveal → next', () => {
@@ -1652,7 +1713,7 @@ describe('onReveal with reEstimate flag', () => {
 	})
 
 	it('reEstimate=true resets ready but keeps blob positions', () => {
-		callbacks.onReveal(false, true)
+		callbacks.onReveal({ revealed: false, reEstimate: true })
 
 		expect(s.revealed).toBe(false)
 		expect(s.selfReady).toBe(false)
@@ -1666,7 +1727,7 @@ describe('onReveal with reEstimate flag', () => {
 
 	it('reEstimate=false (next round) saves history and resets', () => {
 		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
-		callbacks.onReveal(false, false)
+		callbacks.onReveal({ revealed: false })
 
 		expect(s.revealed).toBe(false)
 		expect(s.selfReady).toBe(false)
@@ -1674,7 +1735,7 @@ describe('onReveal with reEstimate flag', () => {
 
 	it('reEstimate=undefined (next round) saves history and resets', () => {
 		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
-		callbacks.onReveal(false)
+		callbacks.onReveal({ revealed: false })
 
 		expect(s.revealed).toBe(false)
 		expect(s.selfReady).toBe(false)
@@ -1696,6 +1757,7 @@ describe('revisit verdict overwrite', () => {
 		s.sigma = 0.4
 
 		// First estimation round — save verdict for T1
+		setVerdict(s)
 		saveRoundToHistory(s)
 		expect(s.backlog[0].median).toBeDefined()
 		const oldMedian = s.backlog[0].median!
@@ -1709,6 +1771,7 @@ describe('revisit verdict overwrite', () => {
 		s.mu = 4.0
 		s.sigma = 0.3
 		s.hasMoved = true
+		setVerdict(s)
 		saveRoundToHistory(s)
 
 		// Verdict should be overwritten, not duplicated
@@ -1822,6 +1885,29 @@ describe('mergeBacklogImport', () => {
 		mergeBacklogImport(s, d, [{ id: 'T4', title: 'New' }])
 
 		expect(s.backlogIndex).toBe(1)
+	})
+
+	it('pre-populates myEstimates from storage for new tickets', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		withStorage(s, {
+			getPreEstimates: vi.fn().mockReturnValue(
+				new Map([
+					['T4', { mu: 4.0, sigma: 0.3 }],
+					['T5', { mu: 5.0, sigma: 0.2 }],
+				]),
+			),
+		})
+		const d = mockDeps()
+
+		mergeBacklogImport(s, d, [
+			{ id: 'T4', title: 'Four' },
+			{ id: 'T5', title: 'Five' },
+		])
+
+		expect(s.myEstimates.get('T4')).toEqual({ mu: 4.0, sigma: 0.3 })
+		expect(s.myEstimates.get('T5')).toEqual({ mu: 5.0, sigma: 0.2 })
 	})
 })
 
@@ -2155,5 +2241,267 @@ describe('onMic callback', () => {
 		callbacks.onMic!(null)
 
 		expect(s.micHolder).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Authoritative verdict flow
+// ---------------------------------------------------------------------------
+
+describe('authoritative verdict', () => {
+	it('handleForceReveal sets authoritativeVerdict on state', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		handleForceReveal(s)
+
+		expect(s.authoritativeVerdict).not.toBeNull()
+		expect(s.authoritativeVerdict!.mu).toBeCloseTo(3.0, 1)
+		expect(s.authoritativeVerdict!.sigma).toBeCloseTo(0.5, 1)
+		expect(s.authoritativeVerdict!.median).toBeGreaterThan(0)
+		expect(s.authoritativeVerdict!.p10).toBeGreaterThan(0)
+		expect(s.authoritativeVerdict!.p90).toBeGreaterThan(0)
+	})
+
+	it('handleForceReveal sends estimates snapshot with __self__ peerId', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
+
+		handleForceReveal(s)
+
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const peerIds = call.estimates.map((e) => e.peerId)
+		expect(peerIds).toContain('__self__')
+		expect(peerIds).toContain('p1')
+	})
+
+	it('handleForceReveal excludes abstained self from estimates', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.selfAbstained = true
+		s.peerEstimateMap = new Map([['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }]])
+
+		handleForceReveal(s)
+
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const peerIds = call.estimates.map((e) => e.peerId)
+		expect(peerIds).not.toContain('__self__')
+		expect(peerIds).toContain('p1')
+	})
+
+	it('handleForceReveal excludes abstained peers from estimates', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.peerEstimateMap = new Map([
+			['p1', { peerId: 'p1', mu: 2, sigma: 0.4 }],
+			['p2', { peerId: 'p2', mu: 4, sigma: 0.3 }],
+		])
+		s.abstainedPeers = new Set(['p2'])
+
+		handleForceReveal(s)
+
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const peerIds = call.estimates.map((e) => e.peerId)
+		expect(peerIds).toContain('p1')
+		expect(peerIds).not.toContain('p2')
+	})
+
+	it('saveRoundToHistory returns early when no authoritativeVerdict', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		s.authoritativeVerdict = null
+		s.topic = 'Some topic'
+
+		saveRoundToHistory(s)
+
+		expect(s.history).toHaveLength(0)
+		expect(s.storage!.saveVerdict).not.toHaveBeenCalled()
+	})
+
+	it('saveRoundToHistory uses authoritativeVerdict', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		s.topic = 'Test topic'
+		s.authoritativeVerdict = { mu: 3, sigma: 0.5, median: 20, p10: 10, p90: 40 }
+
+		saveRoundToHistory(s)
+
+		expect(s.history).toHaveLength(1)
+		expect(s.history[0].mu).toBe(3)
+		expect(s.history[0].sigma).toBe(0.5)
+		expect(s.authoritativeVerdict).toBeNull()
+	})
+
+	it('saveRoundToHistory applies verdictOverride to median', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.authoritativeVerdict = { mu: 3, sigma: 0.5, median: 20, p10: 10, p90: 40 }
+
+		saveRoundToHistory(s, 13)
+
+		expect(s.backlog[0].median).toBe(13)
+	})
+
+	it('saveRoundToHistory clears authoritativeVerdict after use', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		s.topic = 'X'
+		s.authoritativeVerdict = { mu: 3, sigma: 0.5, median: 20, p10: 10, p90: 40 }
+
+		saveRoundToHistory(s)
+
+		expect(s.authoritativeVerdict).toBeNull()
+	})
+
+	it('handleNext builds verdict payload before saveRoundToHistory', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.revealed = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		handleNext(s, deps)
+
+		// History should have been saved (verdict was built before saveRoundToHistory)
+		expect(s.history).toHaveLength(1)
+		expect(s.history[0].mu).toBeCloseTo(3.0, 1)
+	})
+
+	it('handleNext sends verdict in reveal payload for meeting mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		s.revealed = true
+		s.prepMode = false
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		handleNext(s, deps)
+
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0]
+		expect(call).toMatchObject({
+			revealed: false,
+			verdict: expect.objectContaining({ mu: expect.any(Number), median: expect.any(Number) }),
+		})
+	})
+
+	it('checkAutoReveal sets authoritativeVerdict', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.prepMode = false
+		s.revealed = false
+		s.mu = 3.0
+		s.sigma = 0.5
+
+		checkAutoReveal(s, true)
+
+		expect(s.authoritativeVerdict).not.toBeNull()
+		expect(s.authoritativeVerdict!.mu).toBeCloseTo(3.0, 1)
+	})
+
+	it('onReveal (revealed=true) applies authoritative estimate snapshot', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		const callbacks = createPeerCallbacks(s, deps)
+
+		// Receiver already has stale peer estimates
+		s.peerEstimateMap = new Map([['old-peer', { peerId: 'old-peer', mu: 1, sigma: 0.1 }]])
+
+		callbacks.onReveal({
+			revealed: true,
+			estimates: [
+				{ peerId: '__self__', mu: 3, sigma: 0.5 },
+				{ peerId: 'p1', mu: 2, sigma: 0.4 },
+			],
+			verdict: { mu: 2.5, sigma: 0.45, median: 12, p10: 7, p90: 21 },
+		})
+
+		// Old peer should be replaced by snapshot
+		expect(s.peerEstimateMap.has('old-peer')).toBe(false)
+		// __self__ should be filtered out (it's the mic holder's own estimate)
+		expect(s.peerEstimateMap.has('__self__')).toBe(false)
+		// p1 should be in the map
+		expect(s.peerEstimateMap.get('p1')).toEqual({ peerId: 'p1', mu: 2, sigma: 0.4 })
+		// Verdict stashed for later saveRoundToHistory
+		expect(s.authoritativeVerdict).toEqual({ mu: 2.5, sigma: 0.45, median: 12, p10: 7, p90: 21 })
+	})
+
+	it('onReveal (revealed=false) saves verdict from mic holder and advances', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withStorage(s)
+		s.topic = 'Current topic'
+		s.revealed = true
+
+		const callbacks = createPeerCallbacks(s, deps)
+		callbacks.onReveal({
+			revealed: false,
+			verdict: { mu: 3, sigma: 0.5, median: 20, p10: 10, p90: 40 },
+		})
+
+		// Should have saved history using mic holder's verdict
+		expect(s.history).toHaveLength(1)
+		expect(s.history[0].mu).toBe(3)
+		// Round should be reset
+		expect(s.revealed).toBe(false)
+		expect(s.selfReady).toBe(false)
+	})
+
+	it('onReveal (reEstimate) does NOT set authoritativeVerdict', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		s.revealed = true
+
+		const callbacks = createPeerCallbacks(s, deps)
+		callbacks.onReveal({ revealed: false, reEstimate: true })
+
+		expect(s.authoritativeVerdict).toBeFalsy()
+		expect(s.selfReady).toBe(false)
+	})
+
+	it('resetRound clears authoritativeVerdict', () => {
+		const s = createInitialState()
+		s.authoritativeVerdict = { mu: 3, sigma: 0.5, median: 20, p10: 10, p90: 40 }
+
+		resetRound(s)
+
+		expect(s.authoritativeVerdict).toBeNull()
+	})
+
+	it('selectTicket saves verdict before switching', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		selectTicket(s, 1)
+
+		// Switching should have saved the first ticket's verdict
+		expect(s.history).toHaveLength(1)
+		expect(s.backlogIndex).toBe(1)
 	})
 })

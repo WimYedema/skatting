@@ -9,6 +9,8 @@
 		hasMic: boolean
 		isLeader: boolean
 		isSelf: boolean
+		isOffline?: boolean
+		isStale?: boolean
 	}
 
 	interface Props {
@@ -31,9 +33,9 @@
 
 <div class="participants">
 	{#each participants as p}
-		<div class="participant" class:is-ready={p.isReady} class:is-skipped={p.isSkipped}>
-			<span class="ready-dot" class:ready={p.isReady} style={p.color ? `--peer-color: ${p.color}` : ''}></span>
-			<span class="name">{p.name}{#if p.isSelf} (you){/if}{#if p.isAbstained} <span class="abstain-tag">🤷</span>{/if}{#if p.isSkipped} <span class="skipped-tag">skipped</span>{/if}{#if p.hasMic}<span class="mic-tag"> 🎤</span>{/if}{#if p.isLeader}<span class="leader-tag"> ✎</span>{/if}</span>
+		<div class="participant" class:is-ready={p.isReady} class:is-skipped={p.isSkipped} class:is-offline={p.isOffline} class:is-stale={p.isStale}>
+			<span class="ready-dot" class:ready={p.isReady} class:stale={p.isStale} style={p.color ? `--peer-color: ${p.color}` : ''}></span>
+			<span class="name">{p.name}{#if p.isSelf} (you){/if}{#if p.isOffline} <span class="offline-tag">offline</span>{/if}{#if p.isStale} <span class="stale-tag">⚠</span>{/if}{#if p.isAbstained} <span class="abstain-tag">🤷</span>{/if}{#if p.isSkipped} <span class="skipped-tag">skipped</span>{/if}{#if p.hasMic}<span class="mic-tag"> 🎤</span>{/if}{#if p.isLeader}<span class="leader-tag"> ✎</span>{/if}</span>
 			{#if p.isSelf && isCreator && micHolder !== null}
 				<button class="mic-action" title="Take mic back" onclick={onTakeMicBack}>← Take 🎤</button>
 			{/if}
@@ -45,7 +47,9 @@
 			{/if}
 		</div>
 	{/each}
-	<span class="ready-count">{readyCount}/{activeCount} ready</span>
+	{#if !prepMode}
+		<span class="ready-count">{readyCount}/{activeCount} ready</span>
+	{/if}
 	{#if prepMode && prepDone.length > 0}
 		<span class="prep-done-divider">│</span>
 		{#each prepDone as signal}
@@ -84,6 +88,20 @@
 
 	.participant.is-skipped {
 		opacity: 0.45;
+	}
+
+	.participant.is-offline {
+		opacity: 0.4;
+	}
+
+	.participant.is-offline .name {
+		text-decoration: line-through;
+	}
+
+	.offline-tag {
+		font-size: 0.75em;
+		color: var(--c-text-muted);
+		font-style: italic;
 	}
 
 	.ready-dot {
@@ -195,5 +213,25 @@
 	.prep-done-count {
 		color: #8a9a80;
 		font-size: var(--fs-xs);
+	}
+
+	.participant.is-stale {
+		opacity: 0.6;
+	}
+
+	.ready-dot.stale {
+		background: var(--c-red) !important;
+		animation: pulse-stale 2s ease-in-out infinite;
+	}
+
+	.stale-tag {
+		font-size: 0.85em;
+		color: var(--c-red);
+		cursor: help;
+	}
+
+	@keyframes pulse-stale {
+		0%, 100% { opacity: 0.5; }
+		50% { opacity: 1; }
 	}
 </style>

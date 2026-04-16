@@ -10,7 +10,7 @@
 	import SessionLobby from './components/SessionLobby.svelte'
 	import SessionSummaryDialog from './components/SessionSummaryDialog.svelte'
 	import { parseCsv, exportToCsv, exportToXls, downloadFile } from './lib/csv'
-	import { DEBUG, debugLog } from './lib/debug'
+	import { DEBUG, debugLog, onDebugToggle } from './lib/debug'
 	import type { ImportedTicket } from './lib/types'
 	import { convergenceState } from './lib/facilitation'
 	import { combineEstimates, collectEstimates, snapVerdict } from './lib/lognormal'
@@ -22,7 +22,7 @@
 		queryPrepDone,
 	} from './lib/nostr-state'
 	import { createSession, getPeerColor, selfId } from './lib/peer'
-	import { saveSession, createScopedStorage } from './lib/session-store'
+	import { saveSession, createScopedStorage, setStorageQuotaHandler } from './lib/session-store'
 	import {
 		createInitialState,
 		getCurrentTicket,
@@ -56,10 +56,25 @@
 		handOffMic,
 		takeMicBack,
 		claimMic,
+		MIC_HOLDER_STALE_MS,
 		type SessionDeps,
 	} from './lib/session-controller'
 
 	let s = $state(createInitialState())
+
+	// Debug mode — reactive so UI updates when toggled via Ctrl+Shift+D
+	let debugActive = $state(DEBUG)
+	onDebugToggle((active) => {
+		debugActive = active
+		if (active) {
+			;(window as Record<string, unknown>).__estimate = {
+				get state() { return s },
+				get session() { return s.session },
+				get peerIds() { return s.peerIds },
+				get peerNames() { return s.peerNames },
+			}
+		}
+	})
 
 	// Expose internals in debug mode for console diagnostics
 	if (DEBUG) {
@@ -75,14 +90,28 @@
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
 	let connecting = $state(false)
+	let reconnecting = $state(false)
+	let storageWarning = $state(false)
 	let missedRounds = $state(0)
 	let showPasteModal = $state(false)
+	let showOverflow = $state(false)
 	let dragOver = $state(false)
+
+	// Tick counter for stale-peer detection (updates every 5s to re-evaluate)
+	const STALE_THRESHOLD = 15_000
+	let staleTick = $state(0)
+	$effect(() => {
+		const t = setInterval(() => { staleTick++ }, 5000)
+		return () => clearInterval(t)
+	})
 
 	function dismissOnboarding() {
 		showOnboarding = false
 		localStorage.setItem(ONBOARDING_KEY, '1')
 	}
+
+	// Wire up storage quota warning
+	setStorageQuotaHandler(() => { storageWarning = true })
 
 	const deps: SessionDeps = {
 		selfId,
@@ -125,10 +154,43 @@
 		}
 	}
 
+	/** Reconnect to the same room — tears down P2P and re-establishes, preserving all local state */
+	function reconnectSession() {
+		if (!s.session) return
+		const roomId = s.session.roomId
+		debugLog('app', 'reconnecting…', { roomId })
+		reconnecting = true
+		s.session.leave()
+		s.session = null
+		s.peerIds = []
+		s.peerLastSeen = new Map()
+		connectSession(s, deps, roomId)
+		reconnecting = false
+		debugLog('app', 'reconnected', { sessionExists: !!s.session })
+	}
+
 	// Derived values
 	let currentTicket = $derived(getCurrentTicket(s))
 	let estimatedCount = $derived(getEstimatedCount(s))
 	let holdsMic = $derived(hasMic(s, selfId))
+
+	// Auto-reconnect when all peers go stale
+	let lastAutoReconnect = 0
+	$effect(() => {
+		void staleTick // trigger on tick
+		if (s.peerIds.length === 0 || !s.session) return
+		const now = Date.now()
+		const allStale = s.peerIds.every((id) => {
+			const lastSeen = s.peerLastSeen.get(id)
+			return lastSeen != null && now - lastSeen > STALE_THRESHOLD
+		})
+		if (allStale && now - lastAutoReconnect > 30_000) {
+			lastAutoReconnect = now
+			debugLog('app', 'all peers stale — auto-reconnecting')
+			reconnectSession()
+		}
+	})
+
 	let peerEstimates = $derived(
 		Array.from(s.peerEstimateMap.values())
 			.filter((pe) => !s.abstainedPeers.has(pe.peerId))
@@ -142,6 +204,21 @@
 	let activeCount = $derived(getActiveParticipants(s, selfId).length)
 	let readyCount = $derived(getReadyCount(s, selfId))
 	let allReady = $derived(getAllReady(s, selfId))
+
+	// Stale mic holder warning: mic holder is remote + stale + everyone ready → auto-reveal blocked
+	let micHolderStale = $derived.by(() => {
+		void staleTick
+		if (!s.micHolder || s.revealed || s.prepMode || !allReady) return false
+		const lastSeen = s.peerLastSeen.get(s.micHolder)
+		return lastSeen != null && Date.now() - lastSeen > MIC_HOLDER_STALE_MS
+	})
+
+	// Show creator as offline ghost when they're known but not connected
+	// Exclude self (name match) to avoid ghost when creator rejoins without isCreator flag
+	let creatorOffline = $derived(
+		!s.isCreator && s.creatorName && !s.creatorPeerId && s.creatorName !== s.userName
+	)
+
 	let participantsData = $derived([
 		{
 			id: selfId,
@@ -153,18 +230,40 @@
 			hasMic: holdsMic,
 			isLeader: s.isCreator,
 			isSelf: true,
+			isOffline: false,
+			isStale: false,
 		},
-		...s.peerIds.map((peerId) => ({
-			id: peerId,
-			name: s.peerNames.get(peerId) ?? 'Connecting…',
-			color: getPeerColor(peerId, s.peerIds),
-			isReady: s.readyPeers.has(peerId),
-			isSkipped: s.skippedPeers.has(peerId),
-			isAbstained: s.abstainedPeers.has(peerId),
-			hasMic: s.micHolder === peerId,
-			isLeader: peerId === s.creatorPeerId,
+		...s.peerIds.map((peerId) => {
+			// staleTick forces re-evaluation every 5s
+			void staleTick
+			const lastSeen = s.peerLastSeen.get(peerId)
+			const isStale = lastSeen != null && Date.now() - lastSeen > STALE_THRESHOLD
+			return {
+				id: peerId,
+				name: s.peerNames.get(peerId) ?? 'Connecting…',
+				color: getPeerColor(peerId, s.peerIds),
+				isReady: s.readyPeers.has(peerId),
+				isSkipped: s.skippedPeers.has(peerId),
+				isAbstained: s.abstainedPeers.has(peerId),
+				hasMic: s.micHolder === peerId,
+				isLeader: peerId === s.creatorPeerId,
+				isSelf: false,
+				isOffline: false,
+				isStale,
+			}
+		}),
+		...(creatorOffline ? [{
+			id: '__creator__',
+			name: s.creatorName,
+			color: '',
+			isReady: false,
+			isSkipped: false,
+			isAbstained: false,
+			hasMic: false,
+			isLeader: true,
 			isSelf: false,
-		})),
+			isOffline: true,
+		}] : []),
 	])
 
 	// Convergence state for post-reveal facilitation
@@ -268,6 +367,12 @@
 		</div>
 	{/if}
 {:else}
+	{#if reconnecting}
+		<div class="connecting-overlay">
+			<div class="connecting-spinner"></div>
+			<span class="connecting-text">Reconnecting…</span>
+		</div>
+	{/if}
 	<main
 		style:padding-right="{s.backlog.length > 0 ? '276px' : '16px'}"
 		ondragover={(e) => { if (s.isCreator) { e.preventDefault(); dragOver = true } }}
@@ -291,10 +396,14 @@
 			</h1>
 				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
 				{#if s.isCreator && estimatedCount === 0 && s.history.length === 0}
-					<select class="unit-select" value={s.unit} onchange={(e) => changeUnit(s, (e.target as HTMLSelectElement).value)}>
-						<option value="points">points</option>
-						<option value="days">days</option>
-					</select>
+					{#if s.unit === 'points' || s.unit === 'days'}
+						<select class="unit-select" value={s.unit} onchange={(e) => changeUnit(s, (e.target as HTMLSelectElement).value)}>
+							<option value="points">points</option>
+							<option value="days">days</option>
+						</select>
+					{:else}
+						<span class="unit-badge">{s.unit}</span>
+					{/if}
 				{:else}
 					<span class="unit-badge">{s.unit}</span>
 				{/if}
@@ -319,7 +428,7 @@
 					/>
 				{/if}
 			</div>
-			<div class="header-center">
+			<div class="header-right">
 				{#if s.isCreator && s.backlog.length === 0}
 					<ImportMenu
 						label="+ Add tickets ▾"
@@ -328,15 +437,6 @@
 						dropUp={false}
 					/>
 				{/if}
-				<button
-					class="past-toggle"
-					class:past-active={s.showPersistentHistory}
-					onclick={() => (s.showPersistentHistory = !s.showPersistentHistory)}
-				>
-					{s.showPersistentHistory ? '↩ Hide past' : '↪ Show past'}
-				</button>
-			</div>
-			<div class="header-right">
 				{#if s.prepMode}
 					<button class="next" onclick={() => handleNext(s, deps)}>
 						{s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
@@ -366,11 +466,25 @@
 				{:else if !allReady}
 					<button class="force-reveal" onclick={() => handleForceReveal(s)}>Reveal anyway</button>
 				{/if}
-				{#if !s.prepMode && s.isCreator && s.backlog.length > 0}
-					<button class="mode-toggle" onclick={() => returnToPrep(s)}>Back to prep</button>
-				{/if}
-				<button class="leave" onclick={() => { leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) }}>Leave</button>
-				<button class="help-btn" title="How does this work?" onclick={() => (showOnboarding = true)}>?</button>
+				<div class="overflow-menu">
+					<button class="overflow-btn" onclick={() => (showOverflow = !showOverflow)} title="More options">⋮</button>
+					{#if showOverflow}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<div class="overflow-backdrop" onclick={() => (showOverflow = false)}></div>
+						<div class="overflow-dropdown">
+							<button onclick={() => { s.showPersistentHistory = !s.showPersistentHistory; showOverflow = false }}>
+								{s.showPersistentHistory ? '↩ Hide past' : '↪ Show past'}
+							</button>
+							{#if !s.prepMode && s.isCreator && s.backlog.length > 0}
+								<button onclick={() => { returnToPrep(s); showOverflow = false }}>Back to prep</button>
+							{/if}
+							<button onclick={() => { showOnboarding = true; showOverflow = false }}>Help ?</button>
+							<button onclick={() => { reconnectSession(); showOverflow = false }}>Reconnect ↻</button>
+							<button class="overflow-leave" onclick={() => { showOverflow = false; leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) }}>Leave</button>
+						</div>
+					{/if}
+				</div>
 			</div>
 		</header>
 
@@ -397,6 +511,20 @@
 					<button onclick={() => claimMic(s, selfId)}>Grab 🎤</button>
 				{/if}
 				<button class="dismiss" onclick={() => (s.micDropMessage = '')}>×</button>
+			</div>
+		{/if}
+
+		{#if micHolderStale}
+			<div class="connection-error">
+				Facilitator unresponsive — auto-reveal paused
+				<button onclick={() => { claimMic(s, selfId); handleForceReveal(s) }}>Grab 🎤 &amp; Reveal</button>
+			</div>
+		{/if}
+
+		{#if storageWarning}
+			<div class="missed-rounds">
+				Storage full — history may not be saved. Clear old sessions in the lobby.
+				<button onclick={() => (storageWarning = false)}>×</button>
 			</div>
 		{/if}
 
@@ -447,6 +575,7 @@
 				prepMode={s.prepMode}
 				myEstimates={s.myEstimates}
 				{estimatedCount}
+				unit={s.unit}
 				onSelect={(index) => {
 					if (holdsMic || s.prepMode) selectTicket(s, index)
 				}}
@@ -493,7 +622,7 @@
 	{/if}
 {/if}
 
-{#if DEBUG}
+{#if debugActive}
 	<DebugPanel
 		roomId={s.session?.roomId ?? ''}
 		peerCount={s.peerIds.length}
@@ -538,16 +667,77 @@
 		outline-offset: 2px;
 	}
 
-	.header-center {
+	.header-right {
 		display: flex;
 		align-items: center;
 		gap: var(--sp-sm);
 	}
 
-	.header-right {
+	.overflow-menu {
+		position: relative;
+	}
+
+	.overflow-btn {
+		background: none;
+		border: 1px solid var(--c-border);
+		border-radius: var(--radius-md);
+		color: var(--c-text);
+		font-size: var(--fs-xl);
+		cursor: pointer;
+		padding: 2px 8px;
+		line-height: 1;
+	}
+
+	.overflow-btn:hover {
+		background: var(--c-neutral-bg-hover);
+	}
+
+	.overflow-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 99;
+	}
+
+	.overflow-dropdown {
+		position: absolute;
+		top: 100%;
+		right: 0;
+		margin-top: var(--sp-xs);
+		background: var(--c-surface);
+		border: 1px solid var(--c-border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md);
+		z-index: 100;
+		min-width: 160px;
 		display: flex;
-		align-items: center;
-		gap: var(--sp-sm);
+		flex-direction: column;
+		padding: var(--sp-xs) 0;
+	}
+
+	.overflow-dropdown button {
+		background: none;
+		border: none;
+		color: var(--c-text);
+		font-family: var(--font);
+		font-size: var(--fs-md);
+		padding: var(--sp-sm) var(--sp-md);
+		text-align: left;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.overflow-dropdown button:hover {
+		background: var(--c-neutral-bg-hover);
+	}
+
+	.overflow-leave {
+		color: var(--c-danger) !important;
+	}
+
+	@media (max-width: 640px) {
+		.logo-text {
+			display: none;
+		}
 	}
 
 	h1, .logo {
@@ -584,6 +774,8 @@
 		flex: 1;
 		min-width: 80px;
 		outline: none;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.topic-input::placeholder {
@@ -706,61 +898,6 @@
 
 	button:hover {
 		background: var(--c-accent-bg-hover);
-	}
-
-	.leave {
-		background: rgba(160, 150, 130, 0.25);
-		border-color: var(--c-border-soft);
-		color: var(--c-text-soft);
-	}
-
-	.leave:hover {
-		background: rgba(160, 150, 130, 0.4);
-	}
-
-	.help-btn {
-		width: 30px;
-		height: 30px;
-		padding: 0;
-		border: 1px dashed var(--c-border-soft);
-		border-radius: var(--radius-full);
-		background: var(--c-neutral-bg-light);
-		color: var(--c-text-ghost);
-		font-family: var(--font);
-		font-size: var(--fs-lg);
-		font-weight: 700;
-		cursor: pointer;
-		line-height: 1;
-		transition: background var(--tr-fast), color var(--tr-fast);
-	}
-
-	.help-btn:hover {
-		background: var(--c-neutral-bg-hover);
-		color: #5a5040;
-	}
-
-	.past-toggle {
-		padding: var(--sp-xs) var(--sp-md);
-		border: 1px dashed var(--c-border-soft);
-		border-radius: var(--radius-sm);
-		background: rgba(210, 200, 180, 0.15);
-		color: var(--c-text-ghost);
-		font-family: var(--font);
-		font-size: 0.95rem;
-		cursor: pointer;
-		transition: background var(--tr-fast), color var(--tr-fast);
-		white-space: nowrap;
-	}
-
-	.past-toggle:hover {
-		background: var(--c-neutral-bg);
-		color: var(--c-text-soft);
-	}
-
-	.past-toggle.past-active {
-		background: rgba(210, 200, 180, 0.4);
-		color: #5a5040;
-		border-style: solid;
 	}
 
 	.mic-drop-toast {
