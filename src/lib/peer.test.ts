@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { getPeerColor } from './peer'
 import { generateRoomId } from './config'
+import { getPeerColor } from './peer'
 import { PEER_COLORS } from './types'
 
 describe('getPeerColor', () => {

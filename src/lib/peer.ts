@@ -1,7 +1,7 @@
 import type { Room } from '@trystero-p2p/core'
 import { selfId } from '@trystero-p2p/core'
-import { joinRoom as joinMqttRoom, getRelaySockets as getMqttSockets } from '@trystero-p2p/mqtt'
-import { joinRoom as joinNostrRoom, getRelaySockets as getNostrSockets } from '@trystero-p2p/nostr'
+import { getRelaySockets as getMqttSockets, joinRoom as joinMqttRoom } from '@trystero-p2p/mqtt'
+import { getRelaySockets as getNostrSockets, joinRoom as joinNostrRoom } from '@trystero-p2p/nostr'
 import { APP_ID, NOSTR_RELAY_URLS } from './config'
 import { debugLog } from './debug'
 import { createNostrRelay, type NostrRelay } from './nostr-relay'
@@ -81,7 +81,11 @@ function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>, action?: st
 export function createSession(
 	roomId: string,
 	callbacks: PeerCallbacks,
-	nostrConfig?: { roomCode: string; secretKeyHex: string; getIdentity: () => { name: string; isCreator: boolean } },
+	nostrConfig?: {
+		roomCode: string
+		secretKeyHex: string
+		getIdentity: () => { name: string; isCreator: boolean }
+	},
 ): PeerSession {
 	// Track which strategies each peer is connected through
 	const peerStrategies = new Map<string, Set<string>>()
@@ -164,16 +168,15 @@ export function createSession(
 
 			const states = socketEntries.map(([url, ws]) => ({
 				url,
-				state: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][(ws as WebSocket).readyState] ?? 'UNKNOWN',
+				state:
+					['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][(ws as WebSocket).readyState] ?? 'UNKNOWN',
 			}))
 			const connected = socketEntries.filter(
 				([, ws]) => (ws as WebSocket).readyState === WebSocket.OPEN,
 			)
 			debugLog('relay', `${connected.length}/${socketEntries.length} open`, states)
 			if (connected.length === 0) {
-				callbacks.onConnectionError?.(
-					'All relays disconnected — retrying…',
-				)
+				callbacks.onConnectionError?.('All relays disconnected — retrying…')
 			}
 		}, 8000)
 	}
@@ -193,9 +196,7 @@ export function createSession(
 
 	// Deduplicated receivers for messages with side effects —
 	// both Nostr and MQTT fire these, so we need to ignore the duplicate.
-	const dedupReveal = dedup((data: RevealMessage) =>
-		callbacks.onReveal(data),
-	)
+	const dedupReveal = dedup((data: RevealMessage) => callbacks.onReveal(data))
 	const dedupBacklog = dedup((data: BacklogMessage) =>
 		callbacks.onBacklog?.(data.tickets, data.prepMode),
 	)
@@ -205,9 +206,7 @@ export function createSession(
 	const dedupLiveAdjust = dedup((data: LiveAdjustMessage) =>
 		callbacks.onLiveAdjust?.(data.liveAdjust),
 	)
-	const dedupMic = dedup((data: MicMessage) =>
-		callbacks.onMic?.(data.holder),
-	)
+	const dedupMic = dedup((data: MicMessage) => callbacks.onMic?.(data.holder))
 	const dedupConclusion = dedup((data: ConclusionMessage) =>
 		callbacks.onConclusion?.(data.mode, data.sigma, data.ts),
 	)
@@ -216,7 +215,13 @@ export function createSession(
 	// If the sender is unknown, register them as a peer via the relay strategy.
 	// Every relay message is self-describing (carries sender's name in the
 	// envelope), so even pings register peers — no more ghost "Connecting…".
-	function routeRelayMessage(action: string, fromId: string, data: unknown, name?: string, isCreator?: boolean) {
+	function routeRelayMessage(
+		action: string,
+		fromId: string,
+		data: unknown,
+		name?: string,
+		isCreator?: boolean,
+	) {
 		handlePeerJoin('nostr-relay', fromId)
 		if (name) callbacks.onName(fromId, name, !!isCreator)
 		switch (action) {
@@ -225,24 +230,40 @@ export function createSession(
 				callbacks.onEstimate({ peerId: fromId, mu: d.mu, sigma: d.sigma })
 				break
 			}
-			case 'reveal': dedupReveal(data as RevealMessage); break
+			case 'reveal':
+				dedupReveal(data as RevealMessage)
+				break
 			case 'name': {
 				const d = data as NameMessage
 				callbacks.onName(fromId, d.name, !!d.isCreator)
 				break
 			}
-			case 'topic': dedupTopic(data as TopicMessage); break
+			case 'topic':
+				dedupTopic(data as TopicMessage)
+				break
 			case 'ready': {
 				const d = data as ReadyMessage
 				callbacks.onReady(fromId, d.ready, d.abstained)
 				break
 			}
-			case 'unit': callbacks.onUnit((data as UnitMessage).unit); break
-			case 'backlog': dedupBacklog(data as BacklogMessage); break
-			case 'liveadjust': dedupLiveAdjust(data as LiveAdjustMessage); break
-			case 'mic': dedupMic(data as MicMessage); break
-			case 'conclusion': dedupConclusion(data as ConclusionMessage); break
-			case 'ping': callbacks.onPing?.(fromId, (data as PingMessage).ts); break
+			case 'unit':
+				callbacks.onUnit((data as UnitMessage).unit)
+				break
+			case 'backlog':
+				dedupBacklog(data as BacklogMessage)
+				break
+			case 'liveadjust':
+				dedupLiveAdjust(data as LiveAdjustMessage)
+				break
+			case 'mic':
+				dedupMic(data as MicMessage)
+				break
+			case 'conclusion':
+				dedupConclusion(data as ConclusionMessage)
+				break
+			case 'ping':
+				callbacks.onPing?.(fromId, (data as PingMessage).ts)
+				break
 		}
 	}
 
@@ -304,16 +325,45 @@ export function createSession(
 			debugLog('recv', `estimate from ${peerId}`, data)
 			callbacks.onEstimate({ peerId, mu: data.mu, sigma: data.sigma })
 		})
-		onReveal((data) => { debugLog('recv', 'reveal', data); dedupReveal(data) })
-		onName((data, peerId) => { debugLog('recv', `name from ${peerId}`, data); callbacks.onName(peerId, data.name, !!data.isCreator) })
-		onTopic((data) => { debugLog('recv', 'topic', data); dedupTopic(data) })
-		onReady((data, peerId) => { debugLog('recv', `ready from ${peerId}`, data); callbacks.onReady(peerId, data.ready, data.abstained) })
-		onUnit((data) => { debugLog('recv', 'unit', data); callbacks.onUnit(data.unit) })
-		onBacklog((data) => { debugLog('recv', 'backlog', { count: data.tickets.length, prepMode: data.prepMode }); dedupBacklog(data) })
-		onLiveAdjust((data) => { debugLog('recv', 'liveAdjust', data); dedupLiveAdjust(data) })
-		onMic((data) => { debugLog('recv', 'mic', data); dedupMic(data) })
-		onConclusion((data) => { debugLog('recv', 'conclusion', data); dedupConclusion(data) })
-		onPing((data, peerId) => { callbacks.onPing?.(peerId, data.ts) })
+		onReveal((data) => {
+			debugLog('recv', 'reveal', data)
+			dedupReveal(data)
+		})
+		onName((data, peerId) => {
+			debugLog('recv', `name from ${peerId}`, data)
+			callbacks.onName(peerId, data.name, !!data.isCreator)
+		})
+		onTopic((data) => {
+			debugLog('recv', 'topic', data)
+			dedupTopic(data)
+		})
+		onReady((data, peerId) => {
+			debugLog('recv', `ready from ${peerId}`, data)
+			callbacks.onReady(peerId, data.ready, data.abstained)
+		})
+		onUnit((data) => {
+			debugLog('recv', 'unit', data)
+			callbacks.onUnit(data.unit)
+		})
+		onBacklog((data) => {
+			debugLog('recv', 'backlog', { count: data.tickets.length, prepMode: data.prepMode })
+			dedupBacklog(data)
+		})
+		onLiveAdjust((data) => {
+			debugLog('recv', 'liveAdjust', data)
+			dedupLiveAdjust(data)
+		})
+		onMic((data) => {
+			debugLog('recv', 'mic', data)
+			dedupMic(data)
+		})
+		onConclusion((data) => {
+			debugLog('recv', 'conclusion', data)
+			dedupConclusion(data)
+		})
+		onPing((data, peerId) => {
+			callbacks.onPing?.(peerId, data.ts)
+		})
 	}
 
 	// Nostr relay transport — secondary channel for firewall resilience.
@@ -322,16 +372,36 @@ export function createSession(
 	let nostrRelay: NostrRelay | undefined
 	if (nostrConfig) {
 		// Push senders that route through relay once ready (closures see updated variable)
-		estimateSenders.push(async (d) => { await nostrRelay?.send('estimate', d) })
-		revealSenders.push(async (d) => { await nostrRelay?.send('reveal', d) })
-		nameSenders.push(async (d) => { await nostrRelay?.send('name', d) })
-		topicSenders.push(async (d) => { await nostrRelay?.send('topic', d) })
-		readySenders.push(async (d) => { await nostrRelay?.send('ready', d) })
-		unitSenders.push(async (d) => { await nostrRelay?.send('unit', d) })
-		backlogSenders.push(async (d) => { await nostrRelay?.send('backlog', d) })
-		liveAdjustSenders.push(async (d) => { await nostrRelay?.send('liveadjust', d) })
-		micSenders.push(async (d) => { await nostrRelay?.send('mic', d) })
-		conclusionSenders.push(async (d) => { await nostrRelay?.send('conclusion', d) })
+		estimateSenders.push(async (d) => {
+			await nostrRelay?.send('estimate', d)
+		})
+		revealSenders.push(async (d) => {
+			await nostrRelay?.send('reveal', d)
+		})
+		nameSenders.push(async (d) => {
+			await nostrRelay?.send('name', d)
+		})
+		topicSenders.push(async (d) => {
+			await nostrRelay?.send('topic', d)
+		})
+		readySenders.push(async (d) => {
+			await nostrRelay?.send('ready', d)
+		})
+		unitSenders.push(async (d) => {
+			await nostrRelay?.send('unit', d)
+		})
+		backlogSenders.push(async (d) => {
+			await nostrRelay?.send('backlog', d)
+		})
+		liveAdjustSenders.push(async (d) => {
+			await nostrRelay?.send('liveadjust', d)
+		})
+		micSenders.push(async (d) => {
+			await nostrRelay?.send('mic', d)
+		})
+		conclusionSenders.push(async (d) => {
+			await nostrRelay?.send('conclusion', d)
+		})
 		// Ping IS relayed so relay-only peers get liveness tracking and peer
 		// discovery, but at a slower cadence (15s) to stay within rate limits.
 		// The relay ping sender is kept separate from pingSenders so the
@@ -343,12 +413,14 @@ export function createSession(
 			selfId,
 			routeRelayMessage,
 			nostrConfig.getIdentity,
-		).then((r) => {
-			nostrRelay = r
-			debugLog('nostr-relay', 'transport ready')
-		}).catch((e) => {
-			debugLog('nostr-relay', 'transport init failed', e)
-		})
+		)
+			.then((r) => {
+				nostrRelay = r
+				debugLog('nostr-relay', 'transport ready')
+			})
+			.catch((e) => {
+				debugLog('nostr-relay', 'transport init failed', e)
+			})
 	}
 
 	// Flush buffered peer joins after caller has assigned the return value

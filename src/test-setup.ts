@@ -2,8 +2,8 @@ import '@testing-library/jest-dom/vitest'
 
 // jsdom doesn't provide pointer capture methods
 if (!Element.prototype.setPointerCapture) {
-	Element.prototype.setPointerCapture = function () {}
-	Element.prototype.releasePointerCapture = function () {}
+	Element.prototype.setPointerCapture = () => {}
+	Element.prototype.releasePointerCapture = () => {}
 }
 
 // jsdom doesn't provide ResizeObserver — stub it for component tests
@@ -45,8 +45,7 @@ if (typeof globalThis.OffscreenCanvas === 'undefined') {
 				{
 					get(_, prop) {
 						if (prop === 'measureText') return () => ({ width: 0 })
-						if (prop === 'createLinearGradient')
-							return () => ({ addColorStop: noop })
+						if (prop === 'createLinearGradient') return () => ({ addColorStop: noop })
 						return noop
 					},
 					set() {

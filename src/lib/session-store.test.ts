@@ -454,7 +454,9 @@ describe('storage quota error detection', () => {
 				const err = new DOMException('quota exceeded', 'QuotaExceededError')
 				throw err
 			},
-			removeItem: (key: string) => { delete store[key] },
+			removeItem: (key: string) => {
+				delete store[key]
+			},
 		})
 	})
 

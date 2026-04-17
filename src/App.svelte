@@ -1,4 +1,6 @@
 <script lang="ts">
+	declare const __BUILD_HASH__: string;
+
 	import BacklogPanel from './components/BacklogPanel.svelte'
 	import DebugPanel from './components/DebugPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
@@ -590,6 +592,8 @@
 	/>
 {/if}
 
+<a class="version-badge" href="https://github.com/WimYedema/skatting/commit/{__BUILD_HASH__}" target="_blank" rel="noopener" title="Build {__BUILD_HASH__}">{__BUILD_HASH__}</a>
+
 <style>
 	:global(body) {
 		margin: 0;
@@ -1040,5 +1044,22 @@
 		padding: var(--sp-lg) 32px;
 		border-radius: var(--radius-md);
 		border: 1px dashed #8aaacc;
+	}
+
+	.version-badge {
+		position: fixed;
+		bottom: var(--sp-sm);
+		right: var(--sp-sm);
+		font-family: var(--font-mono, monospace);
+		font-size: var(--fs-xs);
+		color: var(--c-text-muted);
+		text-decoration: none;
+		opacity: 0.4;
+		z-index: 1;
+		transition: opacity var(--tr-fast);
+	}
+
+	.version-badge:hover {
+		opacity: 1;
 	}
 </style>

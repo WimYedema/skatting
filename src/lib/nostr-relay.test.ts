@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('nostr-tools', () => {
 	const publish = vi.fn().mockReturnValue([Promise.resolve()])
@@ -35,12 +35,19 @@ vi.mock('./config', () => ({
 	NOSTR_RELAY_URLS: ['wss://test-relay.example'],
 }))
 
-import { createNostrRelay } from './nostr-relay'
-import { decrypt } from './crypto'
 import * as nostrTools from 'nostr-tools'
+import { decrypt } from './crypto'
+import { createNostrRelay } from './nostr-relay'
 
-const { __mockPublish: mockPublish, __mockSubscribeMany: mockSubscribeMany, __mockPoolClose: mockPoolClose } =
-	nostrTools as unknown as { __mockPublish: ReturnType<typeof vi.fn>; __mockSubscribeMany: ReturnType<typeof vi.fn>; __mockPoolClose: ReturnType<typeof vi.fn> }
+const {
+	__mockPublish: mockPublish,
+	__mockSubscribeMany: mockSubscribeMany,
+	__mockPoolClose: mockPoolClose,
+} = nostrTools as unknown as {
+	__mockPublish: ReturnType<typeof vi.fn>
+	__mockSubscribeMany: ReturnType<typeof vi.fn>
+	__mockPoolClose: ReturnType<typeof vi.fn>
+}
 
 const SECRET_KEY_HEX = 'a'.repeat(64)
 
@@ -50,10 +57,16 @@ describe('createNostrRelay', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		onEventCallback = undefined
-		mockSubscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent: (event: { content: string }) => void }) => {
-			onEventCallback = params.onevent
-			return { close: vi.fn() }
-		})
+		mockSubscribeMany.mockImplementation(
+			(
+				_relays: string[],
+				_filter: unknown,
+				params: { onevent: (event: { content: string }) => void },
+			) => {
+				onEventCallback = params.onevent
+				return { close: vi.fn() }
+			},
+		)
 	})
 
 	it('subscribes to the correct kind and room tag', async () => {
@@ -138,7 +151,9 @@ describe('createNostrRelay', () => {
 	})
 
 	it('returns no-op relay when subscription fails', async () => {
-		mockSubscribeMany.mockImplementation(() => { throw new Error('network') })
+		mockSubscribeMany.mockImplementation(() => {
+			throw new Error('network')
+		})
 
 		const relay = await createNostrRelay('test-room', SECRET_KEY_HEX, 'self-1', vi.fn())
 
@@ -149,7 +164,13 @@ describe('createNostrRelay', () => {
 
 	it('forwards name and isCreator from relay envelope to onMessage', async () => {
 		const onMessage = vi.fn()
-		const envelope = JSON.stringify({ action: 'ping', from: 'peer-2', data: { ts: 123 }, name: 'Alice', isCreator: true })
+		const envelope = JSON.stringify({
+			action: 'ping',
+			from: 'peer-2',
+			data: { ts: 123 },
+			name: 'Alice',
+			isCreator: true,
+		})
 		vi.mocked(decrypt).mockResolvedValueOnce(envelope)
 
 		await createNostrRelay('test-room', SECRET_KEY_HEX, 'self-1', onMessage)
@@ -163,13 +184,16 @@ describe('createNostrRelay', () => {
 	it('includes identity from getIdentity in outgoing envelopes', async () => {
 		const { encrypt } = await import('./crypto')
 		const getIdentity = () => ({ name: 'Bob', isCreator: false })
-		const relay = await createNostrRelay('test-room', SECRET_KEY_HEX, 'self-1', vi.fn(), getIdentity)
+		const relay = await createNostrRelay(
+			'test-room',
+			SECRET_KEY_HEX,
+			'self-1',
+			vi.fn(),
+			getIdentity,
+		)
 
 		await relay.send('estimate', { mu: 2 })
 
-		expect(encrypt).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.stringContaining('"name":"Bob"'),
-		)
+		expect(encrypt).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('"name":"Bob"'))
 	})
 })

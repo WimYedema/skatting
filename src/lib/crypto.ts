@@ -9,13 +9,9 @@ const HKDF_INFO = 'skatting-room-v1'
 /** Derive a 256-bit AES-GCM key from a room code using HKDF-SHA256. */
 export async function deriveRoomKey(roomCode: string): Promise<CryptoKey> {
 	const encoder = new TextEncoder()
-	const ikm = await crypto.subtle.importKey(
-		'raw',
-		encoder.encode(roomCode),
-		'HKDF',
-		false,
-		['deriveKey'],
-	)
+	const ikm = await crypto.subtle.importKey('raw', encoder.encode(roomCode), 'HKDF', false, [
+		'deriveKey',
+	])
 	return crypto.subtle.deriveKey(
 		{
 			name: 'HKDF',
@@ -64,11 +60,7 @@ export async function decrypt(key: CryptoKey, encoded: string): Promise<string> 
 	const combined = base64ToUint8(encoded)
 	const iv = combined.slice(0, 12)
 	const ciphertext = combined.slice(12)
-	const plaintext = await crypto.subtle.decrypt(
-		{ name: 'AES-GCM', iv },
-		key,
-		ciphertext,
-	)
+	const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
 	return new TextDecoder().decode(plaintext)
 }
 

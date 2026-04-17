@@ -38,13 +38,16 @@ export async function createNostrRelay(
 	roomCode: string,
 	secretKeyHex: string,
 	selfId: string,
-	onMessage: (action: string, fromId: string, data: unknown, name?: string, isCreator?: boolean) => void,
+	onMessage: (
+		action: string,
+		fromId: string,
+		data: unknown,
+		name?: string,
+		isCreator?: boolean,
+	) => void,
 	getIdentity?: () => { name: string; isCreator: boolean },
 ): Promise<NostrRelay> {
-	const [roomKey, roomDTag] = await Promise.all([
-		deriveRoomKey(roomCode),
-		computeDTag(roomCode),
-	])
+	const [roomKey, roomDTag] = await Promise.all([deriveRoomKey(roomCode), computeDTag(roomCode)])
 	const sk = hexToBytes(secretKeyHex)
 	const pool = new SimplePool()
 	let sub: SubCloser | undefined
@@ -64,7 +67,7 @@ export async function createNostrRelay(
 							const msg: unknown = JSON.parse(plaintext)
 							if (isRelayEnvelope(msg) && msg.from !== selfId) {
 								debugLog('nostr-relay', `recv ${msg.action} from ${msg.from}`)
-							onMessage(msg.action, msg.from, msg.data, msg.name, msg.isCreator)
+								onMessage(msg.action, msg.from, msg.data, msg.name, msg.isCreator)
 							}
 						})
 						.catch(() => {
@@ -83,7 +86,13 @@ export async function createNostrRelay(
 	return {
 		async send(action: string, data: unknown) {
 			const identity = getIdentity?.()
-			const envelope: RelayEnvelope = { action, from: selfId, data, name: identity?.name, isCreator: identity?.isCreator }
+			const envelope: RelayEnvelope = {
+				action,
+				from: selfId,
+				data,
+				name: identity?.name,
+				isCreator: identity?.isCreator,
+			}
 			const ciphertext = await encrypt(roomKey, JSON.stringify(envelope))
 
 			const event = finalizeEvent(

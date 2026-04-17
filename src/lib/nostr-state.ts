@@ -56,10 +56,7 @@ export async function publishRoomState(
 	secretKeyHex: string,
 	state: RoomState,
 ): Promise<void> {
-	const [roomKey, dTag] = await Promise.all([
-		deriveRoomKey(roomCode),
-		computeDTag(roomCode),
-	])
+	const [roomKey, dTag] = await Promise.all([deriveRoomKey(roomCode), computeDTag(roomCode)])
 	const plaintext = JSON.stringify(state)
 	const ciphertext = await encrypt(roomKey, plaintext)
 	const sk = hexToBytes(secretKeyHex)
@@ -91,10 +88,7 @@ export async function publishPrepDone(
 	secretKeyHex: string,
 	signal: PrepDoneSignal,
 ): Promise<void> {
-	const [roomKey, roomDTag] = await Promise.all([
-		deriveRoomKey(roomCode),
-		computeDTag(roomCode),
-	])
+	const [roomKey, roomDTag] = await Promise.all([deriveRoomKey(roomCode), computeDTag(roomCode)])
 	const sk = hexToBytes(secretKeyHex)
 	const pk = getPublicKey(sk)
 	// Per-user d-tag: room hash + first 8 chars of pubkey
@@ -132,10 +126,7 @@ export async function publishPrepDone(
  * Returns null if no state is found (room doesn't exist or hasn't been published).
  */
 export async function queryRoomState(roomCode: string): Promise<RoomState | null> {
-	const [roomKey, dTag] = await Promise.all([
-		deriveRoomKey(roomCode),
-		computeDTag(roomCode),
-	])
+	const [roomKey, dTag] = await Promise.all([deriveRoomKey(roomCode), computeDTag(roomCode)])
 
 	const pool = new SimplePool()
 	try {
@@ -161,10 +152,7 @@ export async function queryRoomState(roomCode: string): Promise<RoomState | null
  * Query Nostr relays for prep-done signals from participants.
  */
 export async function queryPrepDone(roomCode: string): Promise<PrepDoneSignal[]> {
-	const [roomKey, roomDTag] = await Promise.all([
-		deriveRoomKey(roomCode),
-		computeDTag(roomCode),
-	])
+	const [roomKey, roomDTag] = await Promise.all([deriveRoomKey(roomCode), computeDTag(roomCode)])
 
 	const pool = new SimplePool()
 	try {

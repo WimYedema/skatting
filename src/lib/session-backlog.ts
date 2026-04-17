@@ -1,5 +1,17 @@
-import { getCurrentTicket, getEstimatedCount, persistSession, publishState, type SessionDeps, type SessionState } from './session-state'
-import { buildRevealPayload, resetReadyState, resetRound, saveRoundToHistory } from './session-round'
+import {
+	buildRevealPayload,
+	resetReadyState,
+	resetRound,
+	saveRoundToHistory,
+} from './session-round'
+import {
+	getCurrentTicket,
+	getEstimatedCount,
+	persistSession,
+	publishState,
+	type SessionDeps,
+	type SessionState,
+} from './session-state'
 import type { ImportedTicket } from './types'
 
 // ---------------------------------------------------------------------------
@@ -68,7 +80,7 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 			if (pre) {
 				s.mu = pre.mu
 				s.sigma = pre.sigma
-			s.myEstimates = new Map(s.myEstimates).set(ticket.id, pre)
+				s.myEstimates = new Map(s.myEstimates).set(ticket.id, pre)
 				s.hasMoved = true
 			} else {
 				s.mu = 2.0

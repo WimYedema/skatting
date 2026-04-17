@@ -1,5 +1,5 @@
-import { cleanup, render, screen, fireEvent } from '@testing-library/svelte'
-import { describe, expect, it, vi, afterEach } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import EstimationCanvas from './EstimationCanvas.svelte'
 
 // jsdom doesn't implement Canvas 2D — return a proxy that stubs all methods

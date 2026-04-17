@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { deriveRoomKey, computeDTag, encrypt, decrypt } from './crypto'
+import { describe, expect, it } from 'vitest'
+import { computeDTag, decrypt, deriveRoomKey, encrypt } from './crypto'
 
 describe('deriveRoomKey', () => {
 	it('returns an AES-GCM CryptoKey', async () => {

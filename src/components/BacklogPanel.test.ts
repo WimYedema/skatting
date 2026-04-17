@@ -1,7 +1,7 @@
-import { cleanup, render, screen, fireEvent } from '@testing-library/svelte'
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import BacklogPanel from './BacklogPanel.svelte'
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EstimatedTicket } from '../lib/types'
+import BacklogPanel from './BacklogPanel.svelte'
 
 function makeTickets(n: number): EstimatedTicket[] {
 	return Array.from({ length: n }, (_, i) => ({

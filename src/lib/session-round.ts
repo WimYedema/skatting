@@ -1,7 +1,7 @@
 import { getCurrentTicket, MIC_HOLDER_STALE_MS, type SessionState } from './session-state'
 import type { HistoryEntry, PeerEstimate, RevealMessage, VerdictSnapshot } from './types'
-import { applyVerdict, computeVerdict, upsertHistory } from './verdict'
 import type { VerdictResult } from './verdict'
+import { applyVerdict, computeVerdict, upsertHistory } from './verdict'
 
 // ---------------------------------------------------------------------------
 // Ready-state reset (shared primitive)
@@ -83,8 +83,9 @@ export function handleAbstain(s: SessionState): void {
  * `s.authoritativeVerdict` so the subsequent `saveRoundToHistory` uses it.
  */
 export function buildRevealPayload(s: SessionState, extra?: Partial<RevealMessage>): RevealMessage {
-	const peerEsts = Array.from(s.peerEstimateMap.values())
-		.filter((pe) => !s.abstainedPeers.has(pe.peerId))
+	const peerEsts = Array.from(s.peerEstimateMap.values()).filter(
+		(pe) => !s.abstainedPeers.has(pe.peerId),
+	)
 
 	const selfPeerId = s.session?.selfId ?? '__self__'
 	const estimates = [
@@ -104,7 +105,13 @@ export function buildRevealPayload(s: SessionState, extra?: Partial<RevealMessag
 			? computeVerdict(label, peerEstimatesForVerdict[0], peerEstimatesForVerdict.slice(1))
 			: null
 	if (result) {
-		verdict = { mu: result.mu, sigma: result.sigma, median: result.median, p10: result.p10, p90: result.p90 }
+		verdict = {
+			mu: result.mu,
+			sigma: result.sigma,
+			median: result.median,
+			p10: result.p10,
+			p90: result.p90,
+		}
 	}
 
 	// Set the authoritative verdict so saveRoundToHistory uses it (both sender and receiver)

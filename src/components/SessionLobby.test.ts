@@ -1,5 +1,5 @@
-import { cleanup, render, screen, fireEvent } from '@testing-library/svelte'
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SessionLobby from './SessionLobby.svelte'
 
 // Mock session-store module — called at import time by the component
@@ -108,14 +108,17 @@ describe('SessionLobby', () => {
 
 	it('Look up session queries Nostr and shows preview', async () => {
 		const queryRoomState = vi.fn().mockResolvedValue({
-			backlog: [{ id: '1', title: 'T1' }, { id: '2', title: 'T2' }],
+			backlog: [
+				{ id: '1', title: 'T1' },
+				{ id: '2', title: 'T2' },
+			],
 			unit: 'points',
 			prepMode: true,
 			topic: 'Sprint 42',
 		})
-		const queryPrepDone = vi.fn().mockResolvedValue([
-			{ name: 'Bob', ticketCount: 2, timestamp: 1000 },
-		])
+		const queryPrepDone = vi
+			.fn()
+			.mockResolvedValue([{ name: 'Bob', ticketCount: 2, timestamp: 1000 }])
 		render(SessionLobby, { props: { onJoin, queryRoomState, queryPrepDone } })
 		await fireEvent.click(screen.getByText('Join by Code'))
 		const input = screen.getByPlaceholderText('e.g. bakitume')
@@ -136,9 +139,9 @@ describe('SessionLobby', () => {
 			prepMode: false,
 			topic: 'Test',
 		})
-		const queryPrepDone = vi.fn().mockResolvedValue([
-			{ name: 'Carol', ticketCount: 5, timestamp: 2000 },
-		])
+		const queryPrepDone = vi
+			.fn()
+			.mockResolvedValue([{ name: 'Carol', ticketCount: 5, timestamp: 2000 }])
 		render(SessionLobby, { props: { onJoin, queryRoomState, queryPrepDone } })
 		await fireEvent.click(screen.getByText('Join by Code'))
 		const codeInput = screen.getByPlaceholderText('e.g. bakitume')

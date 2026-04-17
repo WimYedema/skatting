@@ -392,56 +392,56 @@ function drawGrabHandle(
 
 	// Arrows hidden while dragging — circle alone marks the position
 	if (!isDragging) {
-	// Left arm
-	ctx.beginPath()
-	ctx.moveTo(cx - r - 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
-	ctx.lineTo(cx - r - armLen + jitter(rng, 1), cy + jitter(rng, 1))
-	ctx.stroke()
-	// Left arrowhead
-	ctx.beginPath()
-	ctx.moveTo(cx - r - armLen, cy)
-	ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
-	ctx.moveTo(cx - r - armLen, cy)
-	ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
-	ctx.stroke()
-	// Right arm
-	ctx.beginPath()
-	ctx.moveTo(cx + r + 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
-	ctx.lineTo(cx + r + armLen + jitter(rng, 1), cy + jitter(rng, 1))
-	ctx.stroke()
-	// Right arrowhead
-	ctx.beginPath()
-	ctx.moveTo(cx + r + armLen, cy)
-	ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
-	ctx.moveTo(cx + r + armLen, cy)
-	ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
-	ctx.stroke()
+		// Left arm
+		ctx.beginPath()
+		ctx.moveTo(cx - r - 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
+		ctx.lineTo(cx - r - armLen + jitter(rng, 1), cy + jitter(rng, 1))
+		ctx.stroke()
+		// Left arrowhead
+		ctx.beginPath()
+		ctx.moveTo(cx - r - armLen, cy)
+		ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
+		ctx.moveTo(cx - r - armLen, cy)
+		ctx.lineTo(cx - r - armLen + tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
+		ctx.stroke()
+		// Right arm
+		ctx.beginPath()
+		ctx.moveTo(cx + r + 2 + jitter(rng, 0.5), cy + jitter(rng, 0.5))
+		ctx.lineTo(cx + r + armLen + jitter(rng, 1), cy + jitter(rng, 1))
+		ctx.stroke()
+		// Right arrowhead
+		ctx.beginPath()
+		ctx.moveTo(cx + r + armLen, cy)
+		ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy - tipLen + jitter(rng, 0.5))
+		ctx.moveTo(cx + r + armLen, cy)
+		ctx.lineTo(cx + r + armLen - tipLen + jitter(rng, 0.5), cy + tipLen + jitter(rng, 0.5))
+		ctx.stroke()
 
-	// Vertical arrows (certainty ↕)
-	// Up arm
-	ctx.beginPath()
-	ctx.moveTo(cx + jitter(rng, 0.5), cy - r - 2 + jitter(rng, 0.5))
-	ctx.lineTo(cx + jitter(rng, 1), cy - r - armLen + jitter(rng, 1))
-	ctx.stroke()
-	// Up arrowhead
-	ctx.beginPath()
-	ctx.moveTo(cx, cy - r - armLen)
-	ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
-	ctx.moveTo(cx, cy - r - armLen)
-	ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
-	ctx.stroke()
-	// Down arm
-	ctx.beginPath()
-	ctx.moveTo(cx + jitter(rng, 0.5), cy + r + 2 + jitter(rng, 0.5))
-	ctx.lineTo(cx + jitter(rng, 1), cy + r + armLen + jitter(rng, 1))
-	ctx.stroke()
-	// Down arrowhead
-	ctx.beginPath()
-	ctx.moveTo(cx, cy + r + armLen)
-	ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
-	ctx.moveTo(cx, cy + r + armLen)
-	ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
-	ctx.stroke()
+		// Vertical arrows (certainty ↕)
+		// Up arm
+		ctx.beginPath()
+		ctx.moveTo(cx + jitter(rng, 0.5), cy - r - 2 + jitter(rng, 0.5))
+		ctx.lineTo(cx + jitter(rng, 1), cy - r - armLen + jitter(rng, 1))
+		ctx.stroke()
+		// Up arrowhead
+		ctx.beginPath()
+		ctx.moveTo(cx, cy - r - armLen)
+		ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
+		ctx.moveTo(cx, cy - r - armLen)
+		ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy - r - armLen + tipLen + jitter(rng, 0.5))
+		ctx.stroke()
+		// Down arm
+		ctx.beginPath()
+		ctx.moveTo(cx + jitter(rng, 0.5), cy + r + 2 + jitter(rng, 0.5))
+		ctx.lineTo(cx + jitter(rng, 1), cy + r + armLen + jitter(rng, 1))
+		ctx.stroke()
+		// Down arrowhead
+		ctx.beginPath()
+		ctx.moveTo(cx, cy + r + armLen)
+		ctx.lineTo(cx - tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
+		ctx.moveTo(cx, cy + r + armLen)
+		ctx.lineTo(cx + tipLen + jitter(rng, 0.5), cy + r + armLen - tipLen + jitter(rng, 0.5))
+		ctx.stroke()
 	} // end !isDragging
 
 	ctx.restore()
@@ -1135,7 +1135,16 @@ export function drawScene(
 		// Grab handle: show when blob is draggable (pre-reveal, or live-adjust)
 		const canDrag = !revealed || (scene.liveAdjust ?? false)
 		if (canDrag) {
-			drawGrabHandle(ctx, myEstimate.mu, myEstimate.sigma, width, height, DEFAULT_CONFIG, scene.hoverHandle ?? false, scene.isDragging ?? false)
+			drawGrabHandle(
+				ctx,
+				myEstimate.mu,
+				myEstimate.sigma,
+				width,
+				height,
+				DEFAULT_CONFIG,
+				scene.hoverHandle ?? false,
+				scene.isDragging ?? false,
+			)
 		}
 	} else if (!revealed) {
 		// Draw a big sketchy "?" when user has no idea — same hatched style as blobs
@@ -1194,7 +1203,15 @@ export function drawScene(
 				// Ghost marker at original combined position
 				drawCombinedGhost(ctx, combined.mu, combined.sigma, width, height)
 				// Conclusion curve — drawn like combined but represents the facilitator's call
-				drawCombinedBlob(ctx, conclusionMu, conclusionSigma, width, height, DEFAULT_CONFIG, 'Conclusion')
+				drawCombinedBlob(
+					ctx,
+					conclusionMu,
+					conclusionSigma,
+					width,
+					height,
+					DEFAULT_CONFIG,
+					'Conclusion',
+				)
 			} else {
 				// No conclusion yet — draw the original combined blob
 				drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)
@@ -1224,7 +1241,16 @@ export function drawScene(
 			if (isCreator && !(scene.liveAdjust ?? false)) {
 				const handleMu = conclusionMu ?? combined.mu
 				const handleSigma = conclusionSigma ?? combined.sigma
-				drawGrabHandle(ctx, handleMu, handleSigma, width, height, DEFAULT_CONFIG, scene.hoverHandle ?? false, scene.isDragging ?? false)
+				drawGrabHandle(
+					ctx,
+					handleMu,
+					handleSigma,
+					width,
+					height,
+					DEFAULT_CONFIG,
+					scene.hoverHandle ?? false,
+					scene.isDragging ?? false,
+				)
 			}
 
 			// Verdict: show when converged OR when facilitator has placed a conclusion

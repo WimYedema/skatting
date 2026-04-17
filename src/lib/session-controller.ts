@@ -2,19 +2,72 @@ import { MAX_PEERS } from './config'
 import { debugLog } from './debug'
 import type { PrepDoneSignal, RoomState } from './nostr-state'
 import type { PeerCallbacks } from './peer'
-import type { ImportedTicket, PeerEstimate, RevealMessage } from './types'
-import { getCurrentTicket, persistSession, publishState, type SessionDeps, type SessionState, type PreloadedState } from './session-state'
-import { resetReadyState, resetRound, saveRoundToHistory } from './session-round'
 import { selectTicket } from './session-backlog'
+import { resetReadyState, resetRound, saveRoundToHistory } from './session-round'
+import {
+	getCurrentTicket,
+	type PreloadedState,
+	persistSession,
+	publishState,
+	type SessionDeps,
+	type SessionState,
+} from './session-state'
+import type { ImportedTicket, PeerEstimate, RevealMessage } from './types'
 
 // ---------------------------------------------------------------------------
 // Facade re-exports — components import only from session-controller.ts
 // ---------------------------------------------------------------------------
 
-export { type SessionState, type SessionDeps, type PreloadedState, createInitialState, getCurrentTicket, getEstimatedCount, persistSession, MIC_HOLDER_STALE_MS } from './session-state'
-export { resetReadyState, resetRound, saveRoundToHistory, addOrUpdateHistory, handleEstimateChange, handleDone, handleAbstain, handleForceReveal, checkAutoReveal, reEstimate, skipPeer, unskipPeer, toggleLiveAdjust } from './session-round'
-export { selectTicket, handleNext, processBacklogImport, mergeBacklogImport, handleReorder, handleRemove, startMeeting, returnToPrep, handleTopicChange } from './session-backlog'
-export { getAllParticipants, getActiveParticipants, getReadyCount, getAllReady, hasMic, handOffMic, takeMicBack, claimMic, claimCreator, changeUnit, buildParticipantsData, type ParticipantInfo } from './session-participants'
+export {
+	handleNext,
+	handleRemove,
+	handleReorder,
+	handleTopicChange,
+	mergeBacklogImport,
+	processBacklogImport,
+	returnToPrep,
+	selectTicket,
+	startMeeting,
+} from './session-backlog'
+export {
+	buildParticipantsData,
+	changeUnit,
+	claimCreator,
+	claimMic,
+	getActiveParticipants,
+	getAllParticipants,
+	getAllReady,
+	getReadyCount,
+	handOffMic,
+	hasMic,
+	type ParticipantInfo,
+	takeMicBack,
+} from './session-participants'
+export {
+	addOrUpdateHistory,
+	checkAutoReveal,
+	handleAbstain,
+	handleDone,
+	handleEstimateChange,
+	handleForceReveal,
+	reEstimate,
+	resetReadyState,
+	resetRound,
+	saveRoundToHistory,
+	skipPeer,
+	toggleLiveAdjust,
+	unskipPeer,
+} from './session-round'
+export {
+	createInitialState,
+	getCurrentTicket,
+	getEstimatedCount,
+	MIC_HOLDER_STALE_MS,
+	type PreloadedState,
+	persistSession,
+	type SessionDeps,
+	type SessionState,
+} from './session-state'
 
 // ---------------------------------------------------------------------------
 // Debug helpers
@@ -80,9 +133,15 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 
 	function clearNamelessTimers(peerId: string) {
 		const n = namelessNudgeTimers.get(peerId)
-		if (n) { clearTimeout(n); namelessNudgeTimers.delete(peerId) }
+		if (n) {
+			clearTimeout(n)
+			namelessNudgeTimers.delete(peerId)
+		}
 		const e = namelessEvictTimers.get(peerId)
-		if (e) { clearTimeout(e); namelessEvictTimers.delete(peerId) }
+		if (e) {
+			clearTimeout(e)
+			namelessEvictTimers.delete(peerId)
+		}
 	}
 
 	return {
@@ -99,20 +158,26 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			// 2. After 10s: evict (they're a ghost)
 			// Both timers are cancelled once onName fires for this peer.
 			clearNamelessTimers(peerId)
-			namelessNudgeTimers.set(peerId, setTimeout(() => {
-				namelessNudgeTimers.delete(peerId)
-				if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
-					debugLog('peer', 'nudging nameless peer (re-sending name)', peerId)
-					s.session?.sendName({ name: s.userName, isCreator: s.isCreator })
-				}
-			}, 5_000))
-			namelessEvictTimers.set(peerId, setTimeout(() => {
-				namelessEvictTimers.delete(peerId)
-				if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
-					debugLog('peer', 'evicting nameless ghost peer', peerId)
-					s.peerIds = s.peerIds.filter((id) => id !== peerId)
-				}
-			}, 10_000))
+			namelessNudgeTimers.set(
+				peerId,
+				setTimeout(() => {
+					namelessNudgeTimers.delete(peerId)
+					if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
+						debugLog('peer', 'nudging nameless peer (re-sending name)', peerId)
+						s.session?.sendName({ name: s.userName, isCreator: s.isCreator })
+					}
+				}, 5_000),
+			)
+			namelessEvictTimers.set(
+				peerId,
+				setTimeout(() => {
+					namelessEvictTimers.delete(peerId)
+					if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
+						debugLog('peer', 'evicting nameless ghost peer', peerId)
+						s.peerIds = s.peerIds.filter((id) => id !== peerId)
+					}
+				}, 10_000),
+			)
 			s.session?.sendEstimate({ mu: s.mu, sigma: s.sigma })
 			s.session?.sendName({ name: s.userName, isCreator: s.isCreator })
 			if (s.isCreator) {
@@ -235,7 +300,10 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 						nameConflictTimer = undefined
 						nameConflictPeerId = undefined
 						// Re-check: peer still present and still using our name
-						if (s.peerIds.includes(peerId) && s.peerNames.get(peerId)?.toLowerCase() === s.userName.toLowerCase()) {
+						if (
+							s.peerIds.includes(peerId) &&
+							s.peerNames.get(peerId)?.toLowerCase() === s.userName.toLowerCase()
+						) {
 							deps.onNameConflict?.(name)
 						}
 					}, 3000)
@@ -245,7 +313,8 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		onTopic(newTopic: string, url?: string, ticketId?: string) {
 			if (ticketId && s.backlog.length > 0) {
 				const idx = s.backlog.findIndex((t) => t.id === ticketId)
-				if (idx >= 0 && idx !== s.backlogIndex) selectTicket(s, idx, { skipSave: true, skipSend: true })
+				if (idx >= 0 && idx !== s.backlogIndex)
+					selectTicket(s, idx, { skipSave: true, skipSend: true })
 			}
 			if (newTopic) {
 				s.topic = newTopic
@@ -432,13 +501,14 @@ export function connectSession(s: SessionState, deps: SessionDeps, roomId: strin
 		s.session.leave()
 		s.session = null
 	}
-	const nostrConfig = s.roomCode && s.secretKeyHex
-		? {
-			roomCode: s.roomCode,
-			secretKeyHex: s.secretKeyHex,
-			getIdentity: () => ({ name: s.userName, isCreator: s.isCreator }),
-		}
-		: undefined
+	const nostrConfig =
+		s.roomCode && s.secretKeyHex
+			? {
+					roomCode: s.roomCode,
+					secretKeyHex: s.secretKeyHex,
+					getIdentity: () => ({ name: s.userName, isCreator: s.isCreator }),
+				}
+			: undefined
 	s.session = deps.createSession(roomId, createPeerCallbacks(s, deps), nostrConfig)
 	s.sessionStartedAt = Date.now()
 	// Publish initial room state so creatorName is available to late joiners

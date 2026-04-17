@@ -75,17 +75,21 @@ async function testStun(): Promise<{ ok: boolean; candidateTypes: string[]; erro
 				resolve({
 					ok: candidateTypes.includes('srflx'),
 					candidateTypes,
-					error: candidateTypes.includes('srflx') ? undefined : 'no server-reflexive candidates (STUN blocked?)',
+					error: candidateTypes.includes('srflx')
+						? undefined
+						: 'no server-reflexive candidates (STUN blocked?)',
 				})
 			}
 		}
 		// Create a dummy data channel + offer to trigger ICE gathering
 		pc.createDataChannel('test')
-		pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch((e) => {
-			clearTimeout(timer)
-			pc.close()
-			resolve({ ok: false, candidateTypes: [], error: String(e) })
-		})
+		pc.createOffer()
+			.then((offer) => pc.setLocalDescription(offer))
+			.catch((e) => {
+				clearTimeout(timer)
+				pc.close()
+				resolve({ ok: false, candidateTypes: [], error: String(e) })
+			})
 	})
 }
 
@@ -134,7 +138,8 @@ async function testLocalWebRtc(): Promise<{ ok: boolean; error?: string }> {
 		}
 		dc.onopen = () => dc.send('ping')
 
-		pc1.createOffer()
+		pc1
+			.createOffer()
 			.then((offer) => pc1.setLocalDescription(offer))
 			.then(() => pc2.setRemoteDescription(pc1.localDescription!))
 			.then(() => {
@@ -190,14 +195,18 @@ export async function runConnectivityCheck(
 	// 2. STUN check
 	const stunResult = await testStun()
 	result.stun = stunResult.ok ? 'ok' : 'fail'
-	result.details.push(`STUN: ${stunResult.ok ? '✓' : '✗'} candidates=[${stunResult.candidateTypes.join(',')}]${stunResult.error ? ' — ' + stunResult.error : ''}`)
+	result.details.push(
+		`STUN: ${stunResult.ok ? '✓' : '✗'} candidates=[${stunResult.candidateTypes.join(',')}]${stunResult.error ? ' — ' + stunResult.error : ''}`,
+	)
 	debugLog('check', 'STUN', stunResult)
 	onUpdate({ ...result, details: [...result.details] })
 
 	// 3. Local WebRTC loopback
 	const loopback = await testLocalWebRtc()
 	result.webRtcLocal = loopback.ok ? 'ok' : 'fail'
-	result.details.push(`WebRTC local: ${loopback.ok ? '✓' : '✗'}${loopback.error ? ' — ' + loopback.error : ''}`)
+	result.details.push(
+		`WebRTC local: ${loopback.ok ? '✓' : '✗'}${loopback.error ? ' — ' + loopback.error : ''}`,
+	)
 	debugLog('check', 'WebRTC local', loopback)
 	onUpdate({ ...result, details: [...result.details] })
 

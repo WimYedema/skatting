@@ -3,47 +3,47 @@ import type { PeerCallbacks, PeerSession } from './peer'
 import type { SessionDeps, SessionState } from './session-controller'
 import {
 	applyNostrState,
+	buildParticipantsData,
+	changeUnit,
 	checkAutoReveal,
+	claimCreator,
+	claimMic,
 	connectSession,
 	createInitialState,
 	createPeerCallbacks,
+	getActiveParticipants,
 	getAllParticipants,
 	getAllReady,
 	getCurrentTicket,
 	getEstimatedCount,
 	getReadyCount,
-	handleDone,
 	handleAbstain,
+	handleDone,
 	handleEstimateChange,
 	handleForceReveal,
 	handleNext,
 	handleRemove,
 	handleReorder,
 	handleTopicChange,
+	handOffMic,
+	hasMic,
 	joinSession,
 	leaveSession,
+	mergeBacklogImport,
 	persistSession,
 	prepareJoin,
 	processBacklogImport,
-	resetRound,
+	reEstimate,
 	resetReadyState,
+	resetRound,
+	returnToPrep,
 	saveRoundToHistory,
 	selectTicket,
-	startMeeting,
-	returnToPrep,
-	reEstimate,
-	changeUnit,
-	toggleLiveAdjust,
-	mergeBacklogImport,
 	skipPeer,
-	unskipPeer,
-	getActiveParticipants,
-	hasMic,
-	handOffMic,
+	startMeeting,
 	takeMicBack,
-	claimMic,
-	claimCreator,
-	buildParticipantsData,
+	toggleLiveAdjust,
+	unskipPeer,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -57,7 +57,13 @@ import { computeVerdict } from './verdict'
 function setVerdict(s: SessionState): void {
 	const result = computeVerdict('test', { mu: s.mu, sigma: s.sigma }, [])
 	if (result) {
-		s.authoritativeVerdict = { mu: result.mu, sigma: result.sigma, median: result.median, p10: result.p10, p90: result.p90 }
+		s.authoritativeVerdict = {
+			mu: result.mu,
+			sigma: result.sigma,
+			median: result.median,
+			p10: result.p10,
+			p90: result.p90,
+		}
 	}
 }
 
@@ -1053,7 +1059,11 @@ describe('joinSession', () => {
 		expect(s.isCreator).toBe(true)
 		expect(s.unit).toBe('points')
 		expect(s.session).toBeTruthy()
-		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object), expect.objectContaining({ roomCode: 'te-st-ro' }))
+		expect(deps.createSession).toHaveBeenCalledWith(
+			'te-st-ro',
+			expect.any(Object),
+			expect.objectContaining({ roomCode: 'te-st-ro' }),
+		)
 		expect(deps.saveSession).toHaveBeenCalled()
 	})
 
@@ -1168,7 +1178,11 @@ describe('prepareJoin + connectSession', () => {
 		connectSession(s, deps, 'te-st-ro')
 
 		expect(s.session).toBeTruthy()
-		expect(deps.createSession).toHaveBeenCalledWith('te-st-ro', expect.any(Object), expect.objectContaining({ roomCode: 'te-st-ro' }))
+		expect(deps.createSession).toHaveBeenCalledWith(
+			'te-st-ro',
+			expect.any(Object),
+			expect.objectContaining({ roomCode: 'te-st-ro' }),
+		)
 	})
 
 	it('mimics joinSession when called sequentially', () => {
@@ -1634,7 +1648,7 @@ describe('createPeerCallbacks', () => {
 		s.sessionStartedAt = Date.now()
 		s.peerIds = ['p1']
 		cb.onName('p1', 'Alice', true) // conflict scheduled
-		cb.onName('p1', 'Bob', true)   // peer changed name
+		cb.onName('p1', 'Bob', true) // peer changed name
 		vi.advanceTimersByTime(3000)
 		expect(conflictSpy).not.toHaveBeenCalled()
 		vi.useRealTimers()
@@ -2775,7 +2789,10 @@ describe('mic-drop on peer leave', () => {
 		const s = createInitialState()
 		withSession(s)
 		s.peerIds = ['peer-a', 'peer-b']
-		s.peerNames = new Map([['peer-a', 'Alice'], ['peer-b', 'Bob']])
+		s.peerNames = new Map([
+			['peer-a', 'Alice'],
+			['peer-b', 'Bob'],
+		])
 		s.micHolder = 'peer-a'
 
 		const callbacks = createPeerCallbacks(s, mockDeps())
@@ -2841,7 +2858,9 @@ describe('authoritative verdict', () => {
 
 		handleForceReveal(s)
 
-		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as {
+			estimates: Array<{ peerId: string }>
+		}
 		const peerIds = call.estimates.map((e) => e.peerId)
 		expect(peerIds).toContain('self-id')
 		expect(peerIds).toContain('p1')
@@ -2855,7 +2874,9 @@ describe('authoritative verdict', () => {
 
 		handleForceReveal(s)
 
-		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as {
+			estimates: Array<{ peerId: string }>
+		}
 		const peerIds = call.estimates.map((e) => e.peerId)
 		expect(peerIds).not.toContain('self-id')
 		expect(peerIds).toContain('p1')
@@ -2874,7 +2895,9 @@ describe('authoritative verdict', () => {
 
 		handleForceReveal(s)
 
-		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as { estimates: Array<{ peerId: string }> }
+		const call = vi.mocked(s.session!.sendReveal).mock.calls[0][0] as {
+			estimates: Array<{ peerId: string }>
+		}
 		const peerIds = call.estimates.map((e) => e.peerId)
 		expect(peerIds).toContain('p1')
 		expect(peerIds).not.toContain('p2')
@@ -3103,9 +3126,15 @@ describe('buildParticipantsData', () => {
 		const s = createInitialState()
 		s.userName = 'Alice'
 		s.peerIds = ['peer-1', 'peer-2']
-		s.peerNames = new Map([['peer-1', 'Bob'], ['peer-2', 'Carol']])
+		s.peerNames = new Map([
+			['peer-1', 'Bob'],
+			['peer-2', 'Carol'],
+		])
 		s.readyPeers = new Set(['peer-1'])
-		s.peerLastSeen = new Map([['peer-1', Date.now()], ['peer-2', Date.now()]])
+		s.peerLastSeen = new Map([
+			['peer-1', Date.now()],
+			['peer-2', Date.now()],
+		])
 
 		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
 
@@ -3162,10 +3191,16 @@ describe('buildParticipantsData', () => {
 		const s = createInitialState()
 		s.userName = 'Alice'
 		s.peerIds = ['peer-1', 'peer-2']
-		s.peerNames = new Map([['peer-1', 'Bob'], ['peer-2', 'Carol']])
+		s.peerNames = new Map([
+			['peer-1', 'Bob'],
+			['peer-2', 'Carol'],
+		])
 		s.skippedPeers = new Set(['peer-1'])
 		s.abstainedPeers = new Set(['peer-2'])
-		s.peerLastSeen = new Map([['peer-1', Date.now()], ['peer-2', Date.now()]])
+		s.peerLastSeen = new Map([
+			['peer-1', Date.now()],
+			['peer-2', Date.now()],
+		])
 
 		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
 
