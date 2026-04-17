@@ -116,6 +116,12 @@ export function createSession(
 		const strategies = peerStrategies.get(peerId)
 		if (!strategies) return
 		strategies.delete(strategy)
+		// nostr-relay has no discrete "leave" event — if all real-time
+		// (WebRTC) strategies have dropped, treat the relay ref as stale
+		if (strategies.size === 1 && strategies.has('nostr-relay')) {
+			debugLog('peer', 'clearing stale nostr-relay strategy', peerId)
+			strategies.delete('nostr-relay')
+		}
 		debugLog('peer', `leave via ${strategy} (remaining: ${strategies.size})`, peerId)
 		if (strategies.size === 0) {
 			peerStrategies.delete(peerId)

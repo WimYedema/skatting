@@ -127,6 +127,21 @@
 		mode = 'join'
 	}
 
+	function clearRoomFromUrl() {
+		const url = new URL(window.location.href)
+		if (url.searchParams.has('room')) {
+			url.searchParams.delete('room')
+			window.history.replaceState({}, '', url.toString())
+		}
+	}
+
+	function goBackToChoose() {
+		mode = 'choose'
+		selectedSession = null
+		roomPreview = null
+		clearRoomFromUrl()
+	}
+
 	function handleSubmit() {
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
@@ -381,7 +396,7 @@
 				{/if}
 			</div>
 			<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>Start</button>
-			<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
+			<button class="back" onclick={goBackToChoose}>← Back</button>
 		</div>
 	{:else if mode === 'rejoin'}
 		<div class="room-info">
@@ -403,7 +418,7 @@
 			<button class="primary" onclick={submitRejoin} disabled={userName.trim().length === 0}>
 				{#if userName.trim()}Join as {userName.trim()}{:else}Join{/if}
 			</button>
-			<button class="back" onclick={() => { mode = 'choose'; selectedSession = null; roomPreview = null }}>← Back</button>
+			<button class="back" onclick={goBackToChoose}>← Back</button>
 		</div>
 	{:else}
 		<div class="room-info">
@@ -418,7 +433,7 @@
 				<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
 					{#if userName.trim() && roomPreview.knownNames.some((kn) => kn.name.toLowerCase() === userName.trim().toLowerCase())}Join as {userName.trim()}{:else}Join{/if}
 				</button>
-				<button class="back" onclick={() => { roomPreview = null }}>← Back</button>
+				<button class="back" onclick={() => { roomPreview = null; clearRoomFromUrl() }}>← Back</button>
 			{:else}
 				<p>Enter room code:</p>
 				<input
@@ -455,7 +470,7 @@
 				<button class="primary" onclick={handleSubmit} disabled={!canSubmit}>
 					Join directly
 				</button>
-				<button class="back" onclick={() => (mode = 'choose')}>← Back</button>
+				<button class="back" onclick={goBackToChoose}>← Back</button>
 			{/if}
 		</div>
 	{/if}
