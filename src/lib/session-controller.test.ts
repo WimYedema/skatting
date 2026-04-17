@@ -235,12 +235,23 @@ describe('handleEstimateChange', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleDone', () => {
-	it('marks selfReady and sends ready message', () => {
+	it('marks selfReady and sends ready message when blob was moved', () => {
+		const s = createInitialState()
+		withSession(s)
+		s.hasMoved = true
+		handleDone(s)
+		expect(s.selfReady).toBe(true)
+		expect(s.selfAbstained).toBe(false)
+		expect(s.session!.sendReady).toHaveBeenCalledWith({ ready: true })
+	})
+
+	it('auto-abstains when blob was never moved', () => {
 		const s = createInitialState()
 		withSession(s)
 		handleDone(s)
 		expect(s.selfReady).toBe(true)
-		expect(s.session!.sendReady).toHaveBeenCalledWith({ ready: true })
+		expect(s.selfAbstained).toBe(true)
+		expect(s.session!.sendReady).toHaveBeenCalledWith({ ready: true, abstained: true })
 	})
 
 	it('is idempotent', () => {
@@ -837,18 +848,26 @@ describe('handleRemove', () => {
 // ---------------------------------------------------------------------------
 
 describe('startMeeting', () => {
-	it('sets prepMode false and sends backlog with prepMode:false', () => {
+	it('resets to first ticket, restores pre-estimate, and sends state', () => {
 		const s = createInitialState()
 		const deps = mockDeps()
 		withSession(s)
 		withBacklog(s)
 		s.prepMode = true
-		s.mu = 3.0
-		s.sigma = 0.5
+		// Simulate: user prepped ticket T1 then navigated to T3 (last)
+		s.myEstimates = new Map([['T1', { mu: 3.0, sigma: 0.5 }]])
+		s.backlogIndex = 2
+		s.mu = 1.5
+		s.sigma = 0.8
+		s.hasMoved = true
 
 		startMeeting(s, deps)
 
 		expect(s.prepMode).toBe(false)
+		expect(s.backlogIndex).toBe(0) // reset to first ticket
+		expect(s.mu).toBe(3.0) // restored T1 pre-estimate
+		expect(s.sigma).toBe(0.5)
+		expect(s.hasMoved).toBe(true)
 		expect(s.session!.sendBacklog).toHaveBeenCalledWith({
 			tickets: s.backlog,
 			prepMode: false,
@@ -859,6 +878,20 @@ describe('startMeeting', () => {
 			url: undefined,
 			ticketId: 'T1',
 		})
+	})
+
+	it('starts with ghost blob when first ticket has no pre-estimate', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.backlogIndex = 2
+
+		startMeeting(s, deps)
+
+		expect(s.backlogIndex).toBe(0)
+		expect(s.hasMoved).toBe(false)
 	})
 })
 
@@ -1149,6 +1182,19 @@ describe('prepareJoin + connectSession', () => {
 		expect(s.isCreator).toBe(false)
 		expect(s.session).toBeTruthy()
 	})
+
+	it('connectSession leaves old session before creating new one', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		const oldSession = mockSession()
+		s.session = oldSession
+
+		prepareJoin(s, deps, 'te-st-ro', 'Alice', 'points')
+		connectSession(s, deps, 'te-st-ro')
+
+		expect(oldSession.leave).toHaveBeenCalled()
+		expect(s.session).not.toBe(oldSession)
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -1362,6 +1408,67 @@ describe('createPeerCallbacks', () => {
 		expect(s.readyPeers.has('p1')).toBe(false)
 	})
 
+	it('evicts nameless ghost peers after 10s', () => {
+		vi.useFakeTimers()
+		const cb = createPeerCallbacks(s, deps)
+		cb.onPeerJoin('ghost1')
+		expect(s.peerIds).toContain('ghost1')
+		// Ghost never sends a name
+		vi.advanceTimersByTime(10_000)
+		expect(s.peerIds).not.toContain('ghost1')
+		vi.useRealTimers()
+	})
+
+	it('nudges nameless peer with name re-send at 5s', () => {
+		vi.useFakeTimers()
+		const sess = mockSession()
+		s.session = sess
+		s.userName = 'Alice'
+		s.isCreator = true
+		const cb = createPeerCallbacks(s, deps)
+		cb.onPeerJoin('slow1')
+		// Reset the sendName mock (it fires once for the initial join)
+		;(sess.sendName as ReturnType<typeof vi.fn>).mockClear()
+		vi.advanceTimersByTime(5_000)
+		// Should re-send name as a nudge
+		expect(sess.sendName).toHaveBeenCalledWith({ name: 'Alice', isCreator: true })
+		vi.useRealTimers()
+	})
+
+	it('does not nudge if peer already sent name', () => {
+		vi.useFakeTimers()
+		const sess = mockSession()
+		s.session = sess
+		const cb = createPeerCallbacks(s, deps)
+		cb.onPeerJoin('quick1')
+		cb.onName('quick1', 'QuickPeer', false)
+		;(sess.sendName as ReturnType<typeof vi.fn>).mockClear()
+		vi.advanceTimersByTime(5_000)
+		expect(sess.sendName).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('does not evict peers that send a name', () => {
+		vi.useFakeTimers()
+		const cb = createPeerCallbacks(s, deps)
+		cb.onPeerJoin('real1')
+		cb.onName('real1', 'RealPeer', false)
+		vi.advanceTimersByTime(10_000)
+		expect(s.peerIds).toContain('real1')
+		vi.useRealTimers()
+	})
+
+	it('cancels nameless timer when peer leaves before timeout', () => {
+		vi.useFakeTimers()
+		const cb = createPeerCallbacks(s, deps)
+		cb.onPeerJoin('temp1')
+		cb.onPeerLeave('temp1')
+		vi.advanceTimersByTime(10_000)
+		// Should not throw or re-add the peer
+		expect(s.peerIds).not.toContain('temp1')
+		vi.useRealTimers()
+	})
+
 	it('onEstimate adds peer estimate via clone-and-reassign', () => {
 		callbacks.onEstimate({ peerId: 'p1', mu: 3, sigma: 0.5 })
 		expect(s.peerEstimateMap.get('p1')).toEqual({ peerId: 'p1', mu: 3, sigma: 0.5 })
@@ -1387,15 +1494,19 @@ describe('createPeerCallbacks', () => {
 	})
 
 	it('onName fires nameConflict when peer name matches own name (recent joiner)', () => {
+		vi.useFakeTimers()
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
-		// Re-create callbacks with updated deps
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
 		s.sessionStartedAt = Date.now() // recent joiner
-		// Peer is creator, we're not → we yield
+		s.peerIds = ['p1']
+		// Peer is creator, we're not → we yield (after debounce)
 		cb.onName('p1', 'Alice', true)
+		expect(conflictSpy).not.toHaveBeenCalled()
+		vi.advanceTimersByTime(3000)
 		expect(conflictSpy).toHaveBeenCalledWith('Alice')
+		vi.useRealTimers()
 	})
 
 	it('onName does not fire nameConflict for different names', () => {
@@ -1409,14 +1520,18 @@ describe('createPeerCallbacks', () => {
 	})
 
 	it('onName fires nameConflict case-insensitively', () => {
+		vi.useFakeTimers()
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
 		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
 		// Peer is creator, we're not → we yield
 		cb.onName('p1', 'alice', true)
+		vi.advanceTimersByTime(3000)
 		expect(conflictSpy).toHaveBeenCalledWith('alice')
+		vi.useRealTimers()
 	})
 
 	it('onName does not bounce creator when non-creator has same name', () => {
@@ -1432,14 +1547,18 @@ describe('createPeerCallbacks', () => {
 	})
 
 	it('onName uses selfId tiebreaker when both non-creators (recent joiner)', () => {
+		vi.useFakeTimers()
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
 		s.sessionStartedAt = Date.now()
+		s.peerIds = ['aaa']
 		// Our selfId is 'self-id', peer is 'aaa' which is lower → we yield
 		cb.onName('aaa', 'Alice', false)
+		vi.advanceTimersByTime(3000)
 		expect(conflictSpy).toHaveBeenCalled()
+		vi.useRealTimers()
 	})
 
 	it('onName does not bounce when selfId is lower in tiebreak', () => {
@@ -1454,14 +1573,18 @@ describe('createPeerCallbacks', () => {
 	})
 
 	it('onName uses selfId tiebreaker when both creators (same name)', () => {
+		vi.useFakeTimers()
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
 		s.isCreator = true
 		s.sessionStartedAt = Date.now()
+		s.peerIds = ['aaa']
 		cb.onName('aaa', 'Alice', true)
+		vi.advanceTimersByTime(3000)
 		expect(conflictSpy).toHaveBeenCalled()
+		vi.useRealTimers()
 	})
 
 	it('onName does not bounce when both creators and selfId is lower', () => {
@@ -1484,6 +1607,37 @@ describe('createPeerCallbacks', () => {
 		// Even though peer is creator and we're not, established peer stays
 		cb.onName('p1', 'Alice', true)
 		expect(conflictSpy).not.toHaveBeenCalled()
+	})
+
+	it('onName cancels conflict when ghost peer leaves before debounce', () => {
+		vi.useFakeTimers()
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
+		cb.onName('p1', 'Alice', true)
+		// Ghost peer vanishes before the 3s debounce fires
+		cb.onPeerLeave('p1')
+		vi.advanceTimersByTime(3000)
+		expect(conflictSpy).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('onName skips conflict after debounce when peer renamed', () => {
+		vi.useFakeTimers()
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
+		cb.onName('p1', 'Alice', true) // conflict scheduled
+		cb.onName('p1', 'Bob', true)   // peer changed name
+		vi.advanceTimersByTime(3000)
+		expect(conflictSpy).not.toHaveBeenCalled()
+		vi.useRealTimers()
 	})
 
 	it('onTopic syncs backlog index by ticketId', () => {
@@ -1623,6 +1777,47 @@ describe('state machine sequences', () => {
 		selectTicket(s, 1)
 
 		expect(s.storage!.savePreEstimate).not.toHaveBeenCalled()
+	})
+
+	it('selectTicket auto-reveals when revisiting a concluded ticket', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+		// Mark T2 as concluded (has a verdict)
+		s.backlog[1].median = 5
+		s.backlog[1].p10 = 2
+		s.backlog[1].p90 = 12
+		s.myEstimates = new Map([['T2', { mu: 1.6, sigma: 0.4 }]])
+
+		selectTicket(s, 1)
+
+		expect(s.revealed).toBe(true)
+		expect(s.mu).toBe(1.6)
+		expect(s.hasMoved).toBe(true)
+	})
+
+	it('selectTicket does not auto-reveal for unconcluded ticket', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+
+		selectTicket(s, 1)
+
+		expect(s.revealed).toBe(false)
+	})
+
+	it('selectTicket does not auto-reveal in prep mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.backlog[1].median = 5
+
+		selectTicket(s, 1)
+
+		expect(s.revealed).toBe(false)
 	})
 
 	it('Start meeting → sendBacklog with prepMode:false', () => {

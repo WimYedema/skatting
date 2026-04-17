@@ -1,4 +1,5 @@
 import { MAX_PEERS } from './config'
+import { debugLog } from './debug'
 import type { PrepDoneSignal, RoomState } from './nostr-state'
 import type { PeerCallbacks } from './peer'
 import type { ImportedTicket, PeerEstimate, RevealMessage } from './types'
@@ -68,6 +69,22 @@ function touchPeer(s: SessionState, peerId: string): void {
 }
 
 export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCallbacks {
+	// Debounce name-conflict detection: ghost peers that join and vanish
+	// within a few seconds shouldn't bounce the user.
+	let nameConflictTimer: ReturnType<typeof setTimeout> | undefined
+	let nameConflictPeerId: string | undefined
+
+	// Track nameless-peer timers for ghost cleanup
+	const namelessNudgeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+	const namelessEvictTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+	function clearNamelessTimers(peerId: string) {
+		const n = namelessNudgeTimers.get(peerId)
+		if (n) { clearTimeout(n); namelessNudgeTimers.delete(peerId) }
+		const e = namelessEvictTimers.get(peerId)
+		if (e) { clearTimeout(e); namelessEvictTimers.delete(peerId) }
+	}
+
 	return {
 		onPeerJoin(peerId: string) {
 			if (peerId === deps.selfId) return
@@ -77,6 +94,25 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			}
 			s.peerIds = [...s.peerIds, peerId]
 			touchPeer(s, peerId)
+			// Two-phase ghost cleanup for peers that never send a name:
+			// 1. After 5s: re-send our own name as a nudge (prompts real peers to respond)
+			// 2. After 10s: evict (they're a ghost)
+			// Both timers are cancelled once onName fires for this peer.
+			clearNamelessTimers(peerId)
+			namelessNudgeTimers.set(peerId, setTimeout(() => {
+				namelessNudgeTimers.delete(peerId)
+				if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
+					debugLog('peer', 'nudging nameless peer (re-sending name)', peerId)
+					s.session?.sendName({ name: s.userName, isCreator: s.isCreator })
+				}
+			}, 5_000))
+			namelessEvictTimers.set(peerId, setTimeout(() => {
+				namelessEvictTimers.delete(peerId)
+				if (s.peerIds.includes(peerId) && !s.peerNames.has(peerId)) {
+					debugLog('peer', 'evicting nameless ghost peer', peerId)
+					s.peerIds = s.peerIds.filter((id) => id !== peerId)
+				}
+			}, 10_000))
 			s.session?.sendEstimate({ mu: s.mu, sigma: s.sigma })
 			s.session?.sendName({ name: s.userName, isCreator: s.isCreator })
 			if (s.isCreator) {
@@ -104,6 +140,14 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			}
 		},
 		onPeerLeave(peerId: string) {
+			// Cancel pending name conflict if the ghost peer left
+			if (nameConflictPeerId === peerId) {
+				clearTimeout(nameConflictTimer)
+				nameConflictTimer = undefined
+				nameConflictPeerId = undefined
+			}
+			// Cancel nameless-peer timers
+			clearNamelessTimers(peerId)
 			s.peerIds = s.peerIds.filter((id) => id !== peerId)
 			const em = new Map(s.peerEstimateMap)
 			em.delete(peerId)
@@ -160,6 +204,8 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 		},
 		onName(peerId: string, name: string, peerIsCreator: boolean) {
 			touchPeer(s, peerId)
+			// Cancel nameless-peer timers — this peer identified themselves
+			clearNamelessTimers(peerId)
 			s.peerNames = new Map(s.peerNames).set(peerId, name)
 			if (peerIsCreator) {
 				s.creatorPeerId = peerId
@@ -177,12 +223,22 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			persistSession(s, deps)
 			// Bounce if another peer is using our name and we're the one who should yield.
 			// Only newcomers (joined < 10s ago) can be bounced — established peers stay.
+			// Debounced: ghost peers that join and vanish within 3s are ignored.
 			if (name.toLowerCase() === s.userName.toLowerCase()) {
 				const recentJoin = Date.now() - s.sessionStartedAt < 10_000
 				const theyWin = peerIsCreator && !s.isCreator
 				const tiebreak = peerIsCreator === s.isCreator && deps.selfId > peerId
 				if (recentJoin && (theyWin || tiebreak)) {
-					deps.onNameConflict?.(name)
+					if (nameConflictTimer) clearTimeout(nameConflictTimer)
+					nameConflictPeerId = peerId
+					nameConflictTimer = setTimeout(() => {
+						nameConflictTimer = undefined
+						nameConflictPeerId = undefined
+						// Re-check: peer still present and still using our name
+						if (s.peerIds.includes(peerId) && s.peerNames.get(peerId)?.toLowerCase() === s.userName.toLowerCase()) {
+							deps.onNameConflict?.(name)
+						}
+					}, 3000)
 				}
 			}
 		},
@@ -370,8 +426,18 @@ export function applyNostrState(
 
 /** Phase 2: Connect to P2P network (can be called after async Nostr query). */
 export function connectSession(s: SessionState, deps: SessionDeps, roomId: string): void {
+	// Clean up any existing session so the old Trystero rooms are properly left.
+	// Without this, peers may not see a leave→join cycle and won't re-send their name.
+	if (s.session) {
+		s.session.leave()
+		s.session = null
+	}
 	const nostrConfig = s.roomCode && s.secretKeyHex
-		? { roomCode: s.roomCode, secretKeyHex: s.secretKeyHex }
+		? {
+			roomCode: s.roomCode,
+			secretKeyHex: s.secretKeyHex,
+			getIdentity: () => ({ name: s.userName, isCreator: s.isCreator }),
+		}
 		: undefined
 	s.session = deps.createSession(roomId, createPeerCallbacks(s, deps), nostrConfig)
 	s.sessionStartedAt = Date.now()

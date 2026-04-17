@@ -4,7 +4,7 @@
 
 Real-time, peer-to-peer 2D estimation tool for agile teams. Users position a log-normal "blob" on a continuous plane (X = effort, Y = certainty). Fully serverless — P2P via WebRTC, deployed as a single static HTML file.
 
-See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../ARCHITECTURE.md) for architecture decisions, [FMEA.md](../../FMEA.md) for risk analysis.
+See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../ARCHITECTURE.md) for architecture decisions, [PROTOCOL.md](../../PROTOCOL.md) for P2P protocol details, [FMEA.md](../../FMEA.md) for risk analysis.
 
 ## Implementation Design
 
@@ -44,9 +44,9 @@ Next ticket (mic holder):
 Three independent channels, all broadcasting simultaneously:
 1. **WebRTC/Nostr** — Trystero signaling via Nostr relays → direct peer connections
 2. **WebRTC/MQTT** — Trystero signaling via HiveMQ → direct peer connections
-3. **Nostr relay** — AES-256-GCM encrypted ephemeral events (kind 25078), no WebRTC needed
+3. **Nostr relay** — AES-256-GCM encrypted ephemeral events (kind 25078), self-describing envelopes (every message carries sender's name + role)
 
-`peer.ts` deduplicates: join fires on first strategy to see a peer, leave fires when all strategies drop them. Relay messages auto-discover unknown peers.
+`peer.ts` deduplicates: join fires on first strategy to see a peer, leave fires when all strategies drop them. Relay messages carry identity — every message auto-discovers and identifies unknown peers. See [PROTOCOL.md](../../PROTOCOL.md).
 
 ### State ownership
 
@@ -76,25 +76,33 @@ Three independent channels, all broadcasting simultaneously:
 12. **Name collision bounce** — `onName` detects duplicate names case-insensitively. Creator wins over non-creator; between non-creators, lower `selfId` stays. Loser is bounced via `deps.onNameConflict`.
 13. **Claimed creator yields to original** — `claimCreator` sets `claimedCreator = true`. When `onName` sees `peerIsCreator: true`, a claimed creator automatically yields (`isCreator = false`) and re-broadcasts.
 14. **`persistSession` excludes claimed creators** — writes `isCreator: s.isCreator && !s.claimedCreator` so claimed roles don't survive rejoin.
+15. **Self-describing relay envelopes** — every Nostr relay message carries `name` and `isCreator` in the envelope via a `getIdentity` closure. `routeRelayMessage` calls `onName` for every incoming relay message, so relay-discovered peers are identified atomically.
+16. **Ghost peer two-phase cleanup** — nameless peers (WebRTC-discovered but never sent a name) get nudged at 5s (re-send own name) and evicted at 10s. Timers cancelled on `onName` or `onPeerLeave`.
+17. **`handleDone` auto-abstains unmoved users** — if `!hasMoved && !selfAbstained`, delegates to `handleAbstain` instead of marking ready (prevents default position from polluting combined estimate).
+18. **`peerSyncPending` gates shared actions** — Ready, Force Reveal, and Abstain are disabled when all peers are nameless (still syncing).
 
 ### Module responsibilities (quick reference)
 
 | Module | Purpose | Key exports |
 |---|---|---|
-| `session-controller.ts` | Facade & P2P callback factory, session lifecycle (join/leave) | `createPeerCallbacks`, `joinSession`, `leaveSession`, `prepareJoin`, re-exports from sub-modules |
+| `session-controller.ts` | Facade & P2P callback factory, session lifecycle (join/leave), ghost peer cleanup | `createPeerCallbacks`, `joinSession`, `leaveSession`, `prepareJoin`, re-exports from sub-modules |
 | `session-state.ts` | `SessionState`, `SessionDeps`, `createInitialState`, pure queries, persistence helpers | `SessionState`, `createInitialState`, `getCurrentTicket`, `getEstimatedCount`, `persistSession`, `publishState` |
 | `session-round.ts` | Round lifecycle: reset, reveal, verdict, estimation actions | `resetReadyState`, `resetRound`, `handleDone`, `handleAbstain`, `checkAutoReveal`, `buildRevealPayload`, `saveRoundToHistory` |
 | `session-backlog.ts` | Backlog management: ticket navigation, import/merge, reorder/remove, meeting mode | `selectTicket`, `handleNext`, `processBacklogImport`, `startMeeting`, `returnToPrep` |
-| `session-participants.ts` | Participant queries, mic/backlog claiming, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `takeMicBack`, `claimMic`, `claimCreator`, `changeUnit`, `buildParticipantsData` |
+| `session-participants.ts` | Participant queries, mic/backlog claiming, unit management, syncing status | `getAllParticipants`, `hasMic`, `handOffMic`, `takeMicBack`, `claimMic`, `claimCreator`, `changeUnit`, `buildParticipantsData`, `ParticipantInfo` |
 | `peer.ts` | Transport layer: 3-strategy P2P, message senders, heartbeat, dedup | `createSession`, `selfId`, `PeerSession`, `PeerCallbacks` |
-| `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078) | `createNostrRelay`, `isRelayEnvelope` |
+| `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078, self-describing envelopes) | `createNostrRelay` |
 | `types.ts` | Message shapes, `VerdictSnapshot`, `PeerEstimate`, `SceneState` | All message types |
 | `lognormal.ts` | PDF/CDF math, quantiles, combine estimates, snap verdicts | `lognormalPdf`, `combineEstimates`, `snapVerdict` |
 | `canvas.ts` | Drawing facade: `drawScene()` entry point, coordinate transforms | `drawScene`, `mathToCanvasX`, `canvasYToSigmaFromPeak` |
+| `facilitation.ts` | Convergence analysis, cluster detection, pattern prompts (pure) | `detectClusters`, `computeConvergence`, `getPatternPrompt` |
+| `csv.ts` | CSV/Excel import/export, paste-a-list parser | `parseCsvBacklog`, `exportCsv`, `exportExcel` |
 | `verdict.ts` | Pure verdict computation, history upsert | `computeVerdict`, `applyVerdict`, `upsertHistory` |
 | `session-store.ts` | localStorage: sessions, scoped pre-estimates/verdicts/backlog | `ScopedStorage`, `saveSession`, `setStorageQuotaHandler` |
 | `nostr-state.ts` | Nostr event persistence (replaceable events kind 30078/30079) | `publishRoomState`, `queryRoomState` |
 | `crypto.ts` | AES-256-GCM encrypt/decrypt, HKDF key derivation, d-tag hash | `deriveRoomKey`, `encrypt`, `decrypt`, `computeDTag` |
+| `connectivity.ts` | WebSocket/STUN/WebRTC diagnostic checks | `runConnectivityChecks`, `ConnectivityResult` |
+| `debug.ts` | Conditional debug logging, hotkey toggle (Ctrl+Shift+D) | `debugLog`, `DEBUG`, `toggleDebug` |
 | `config.ts` | Constants: relay URLs, app ID, `MAX_PEERS`, room ID generator | `NOSTR_RELAY_URLS`, `MAX_PEERS`, `generateRoomId` |
 
 ## Tech Stack
@@ -196,7 +204,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (445+ tests)
+npm run test         # vitest run (463+ tests)
 ```
 
 ## Deployment

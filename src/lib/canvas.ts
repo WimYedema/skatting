@@ -496,6 +496,7 @@ function drawCombinedBlob(
 	canvasWidth: number,
 	canvasHeight: number,
 	config: CanvasConfig = DEFAULT_CONFIG,
+	label = 'Combined',
 ): void {
 	const points = generateLogSpaceBlob(mu, sigma, config.blobArea, 200, config)
 	if (points.length === 0) return
@@ -536,7 +537,7 @@ function drawCombinedBlob(
 	ctx.font = '14px Caveat, cursive'
 	ctx.fillStyle = '#2a2520'
 	ctx.textAlign = 'center'
-	ctx.fillText('Combined', peakX, peakY - 10)
+	ctx.fillText(label, peakX, peakY - 10)
 
 	ctx.restore()
 }
@@ -1193,7 +1194,7 @@ export function drawScene(
 				// Ghost marker at original combined position
 				drawCombinedGhost(ctx, combined.mu, combined.sigma, width, height)
 				// Conclusion curve — drawn like combined but represents the facilitator's call
-				drawCombinedBlob(ctx, conclusionMu, conclusionSigma, width, height)
+				drawCombinedBlob(ctx, conclusionMu, conclusionSigma, width, height, DEFAULT_CONFIG, 'Conclusion')
 			} else {
 				// No conclusion yet — draw the original combined blob
 				drawCombinedBlob(ctx, combined.mu, combined.sigma, width, height)

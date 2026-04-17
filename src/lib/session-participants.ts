@@ -17,6 +17,7 @@ export interface ParticipantInfo {
 	isSelf: boolean
 	isOffline: boolean
 	isStale: boolean
+	isSyncing: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -124,14 +125,16 @@ export function buildParticipantsData(
 		isSelf: true,
 		isOffline: false,
 		isStale: false,
+		isSyncing: false,
 	}
 
 	const peers: ParticipantInfo[] = s.peerIds.map((peerId) => {
 		const lastSeen = s.peerLastSeen.get(peerId)
 		const isStale = lastSeen != null && now - lastSeen > staleThreshold
+		const isSyncing = !s.peerNames.has(peerId)
 		return {
 			id: peerId,
-			name: s.peerNames.get(peerId) ?? 'Connecting…',
+			name: isSyncing ? 'Connecting…' : s.peerNames.get(peerId)!,
 			color: getPeerColor(peerId, s.peerIds),
 			isReady: s.readyPeers.has(peerId),
 			isSkipped: s.skippedPeers.has(peerId),
@@ -141,6 +144,7 @@ export function buildParticipantsData(
 			isSelf: false,
 			isOffline: false,
 			isStale,
+			isSyncing,
 		}
 	})
 
@@ -159,6 +163,7 @@ export function buildParticipantsData(
 			isSelf: false,
 			isOffline: true,
 			isStale: false,
+			isSyncing: false,
 		})
 	}
 

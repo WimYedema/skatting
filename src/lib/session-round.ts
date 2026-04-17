@@ -51,6 +51,11 @@ export function handleEstimateChange(s: SessionState, mu: number, sigma: number)
 
 export function handleDone(s: SessionState): void {
 	if (s.selfReady) return
+	// Auto-abstain: clicking Ready without moving the blob means "no opinion"
+	if (!s.hasMoved && !s.selfAbstained) {
+		handleAbstain(s)
+		return
+	}
 	s.selfReady = true
 	// Always send estimate before ready — prep→meeting transition may not have sent it
 	if (s.hasMoved && !s.selfAbstained) {

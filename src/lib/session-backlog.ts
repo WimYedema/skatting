@@ -94,6 +94,11 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 	if (!s.prepMode && s.hasMoved && !s.selfAbstained) {
 		s.session?.sendEstimate({ mu: s.mu, sigma: s.sigma })
 	}
+
+	// Auto-reveal when revisiting an already-concluded ticket in meeting mode
+	if (!s.prepMode && ticket.median != null) {
+		s.revealed = true
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +246,10 @@ export function handleRemove(s: SessionState, deps: SessionDeps, index: number):
 // ---------------------------------------------------------------------------
 
 export function startMeeting(s: SessionState, deps: SessionDeps): void {
+	// Save current prep estimate and reset to first ticket so the meeting
+	// starts from the beginning.  selectTicket is called while still in
+	// prepMode so it won't broadcast topic/estimate — we send them below.
+	selectTicket(s, 0)
 	s.prepMode = false
 	const currentTicket = getCurrentTicket(s)
 	s.session?.sendBacklog({ tickets: s.backlog, prepMode: false })

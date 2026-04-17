@@ -81,7 +81,7 @@ function broadcastAll<T>(senders: Array<(data: T) => Promise<void>>, action?: st
 export function createSession(
 	roomId: string,
 	callbacks: PeerCallbacks,
-	nostrConfig?: { roomCode: string; secretKeyHex: string },
+	nostrConfig?: { roomCode: string; secretKeyHex: string; getIdentity: () => { name: string; isCreator: boolean } },
 ): PeerSession {
 	// Track which strategies each peer is connected through
 	const peerStrategies = new Map<string, Set<string>>()
@@ -214,8 +214,11 @@ export function createSession(
 
 	// Route incoming Nostr relay messages to the same callbacks as WebRTC.
 	// If the sender is unknown, register them as a peer via the relay strategy.
-	function routeRelayMessage(action: string, fromId: string, data: unknown) {
+	// Every relay message is self-describing (carries sender's name in the
+	// envelope), so even pings register peers — no more ghost "Connecting…".
+	function routeRelayMessage(action: string, fromId: string, data: unknown, name?: string, isCreator?: boolean) {
 		handlePeerJoin('nostr-relay', fromId)
+		if (name) callbacks.onName(fromId, name, !!isCreator)
 		switch (action) {
 			case 'estimate': {
 				const d = data as EstimateMessage
@@ -339,6 +342,7 @@ export function createSession(
 			nostrConfig.secretKeyHex,
 			selfId,
 			routeRelayMessage,
+			nostrConfig.getIdentity,
 		).then((r) => {
 			nostrRelay = r
 			debugLog('nostr-relay', 'transport ready')

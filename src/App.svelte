@@ -92,7 +92,6 @@
 	let showOnboarding = $state(false)
 	let pendingImport = $state<ImportedTicket[] | null>(null)
 	let connecting = $state(false)
-	let reconnecting = $state(false)
 	let storageWarning = $state(false)
 	let missedRounds = $state(0)
 	let nameConflict = $state('')
@@ -169,43 +168,11 @@
 		}
 	}
 
-	/** Reconnect to the same room — tears down P2P and re-establishes, preserving all local state */
-	function reconnectSession() {
-		if (!s.session) return
-		const roomId = s.session.roomId
-		debugLog('app', 'reconnecting…', { roomId })
-		reconnecting = true
-		s.session.leave()
-		s.session = null
-		s.peerIds = []
-		s.peerLastSeen = new Map()
-		connectSession(s, deps, roomId)
-		reconnecting = false
-		debugLog('app', 'reconnected', { sessionExists: !!s.session })
-	}
-
 	// Derived values
 	let currentTicket = $derived(getCurrentTicket(s))
 	let estimatedCount = $derived(getEstimatedCount(s))
 	let holdsMic = $derived(hasMic(s, selfId))
 	let noCreator = $derived(!s.isCreator && s.creatorPeerId === null)
-
-	// Auto-reconnect when all peers go stale
-	let lastAutoReconnect = 0
-	$effect(() => {
-		void staleTick // trigger on tick
-		if (s.peerIds.length === 0 || !s.session) return
-		const now = Date.now()
-		const allStale = s.peerIds.every((id) => {
-			const lastSeen = s.peerLastSeen.get(id)
-			return lastSeen != null && now - lastSeen > STALE_THRESHOLD
-		})
-		if (allStale && now - lastAutoReconnect > 30_000) {
-			lastAutoReconnect = now
-			debugLog('app', 'all peers stale — auto-reconnecting')
-			reconnectSession()
-		}
-	})
 
 	let peerEstimates = $derived(
 		Array.from(s.peerEstimateMap.values())
@@ -220,6 +187,12 @@
 	let activeCount = $derived(getActiveParticipants(s, selfId).length)
 	let readyCount = $derived(getReadyCount(s, selfId))
 	let allReady = $derived(getAllReady(s, selfId))
+
+	// True when we have peers but haven't received a name from any of them yet.
+	// This means our outbound messages may be failing — block shared actions.
+	let peerSyncPending = $derived(
+		s.peerIds.length > 0 && s.peerIds.every((id) => !s.peerNames.has(id)),
+	)
 
 	// Stale mic holder warning: mic holder is remote + stale + everyone ready → auto-reveal blocked
 	let micHolderStale = $derived.by(() => {
@@ -351,12 +324,6 @@
 		</div>
 	{/if}
 {:else}
-	{#if reconnecting}
-		<div class="connecting-overlay">
-			<div class="connecting-spinner"></div>
-			<span class="connecting-text">Reconnecting…</span>
-		</div>
-	{/if}
 	<main
 		class:has-backlog={s.backlog.length > 0}
 		class:backlog-expanded={s.backlog.length > 0 && !backlogCollapsed}
@@ -447,9 +414,9 @@
 						<button class="mode-toggle" onclick={() => reEstimate(s)}>Re-estimate ↺</button>
 					{/if}
 				{:else if !s.selfReady}
-					<button class="done" data-tour="ready" onclick={() => handleDone(s)}>Ready ✓</button>
+					<button class="done" data-tour="ready" disabled={peerSyncPending} title={peerSyncPending ? 'Waiting for peers to sync…' : ''} onclick={() => handleDone(s)}>Ready ✓</button>
 				{:else if !allReady}
-					<button class="force-reveal" onclick={() => handleForceReveal(s)}>Reveal anyway</button>
+					<button class="force-reveal" disabled={peerSyncPending} onclick={() => handleForceReveal(s)}>Reveal anyway</button>
 				{/if}
 				<div class="overflow-menu">
 					<button class="overflow-btn" onclick={() => (showOverflow = !showOverflow)} title="More options">⋮</button>
@@ -465,7 +432,6 @@
 								<button onclick={() => { returnToPrep(s); showOverflow = false }}>Back to prep</button>
 							{/if}
 							<button onclick={() => { showOnboarding = true; showOverflow = false }}>Help ?</button>
-							<button onclick={() => { reconnectSession(); showOverflow = false }}>Reconnect ↻</button>
 							<button class="overflow-leave" onclick={() => { showOverflow = false; leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) }}>Leave</button>
 						</div>
 					{/if}
@@ -555,7 +521,7 @@
 			conclusionMode={s.conclusionMode}
 			conclusionSigma={s.conclusionSigma}
 			onConclusionChange={(mode, sig) => { s.conclusionMode = mode; s.conclusionSigma = sig; sendConclusionThrottled(mode, sig) }}
-			showAbstainButton={!s.selfReady && !s.revealed}
+			showAbstainButton={!s.selfReady && !s.revealed && !peerSyncPending}
 			onAbstain={() => handleAbstain(s)}
 		/>
 

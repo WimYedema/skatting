@@ -126,7 +126,7 @@ export interface SessionDeps {
 	createSession: (
 		roomId: string,
 		callbacks: PeerCallbacks,
-		nostrConfig?: { roomCode: string; secretKeyHex: string },
+		nostrConfig?: { roomCode: string; secretKeyHex: string; getIdentity: () => { name: string; isCreator: boolean } },
 	) => PeerSession
 	saveSession: (session: SavedSession) => void
 	createScopedStorage: (roomId: string, userName: string) => ScopedStorage

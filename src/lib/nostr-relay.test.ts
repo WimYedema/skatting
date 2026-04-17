@@ -88,7 +88,7 @@ describe('createNostrRelay', () => {
 		onEventCallback!({ content: 'ciphertext' })
 		// Wait for async decrypt
 		await vi.waitFor(() => {
-			expect(onMessage).toHaveBeenCalledWith('estimate', 'peer-2', { mu: 3 })
+			expect(onMessage).toHaveBeenCalledWith('estimate', 'peer-2', { mu: 3 }, undefined, undefined)
 		})
 	})
 
@@ -145,5 +145,31 @@ describe('createNostrRelay', () => {
 		// send and close should not throw
 		await relay.send('test', {})
 		relay.close()
+	})
+
+	it('forwards name and isCreator from relay envelope to onMessage', async () => {
+		const onMessage = vi.fn()
+		const envelope = JSON.stringify({ action: 'ping', from: 'peer-2', data: { ts: 123 }, name: 'Alice', isCreator: true })
+		vi.mocked(decrypt).mockResolvedValueOnce(envelope)
+
+		await createNostrRelay('test-room', SECRET_KEY_HEX, 'self-1', onMessage)
+
+		onEventCallback!({ content: 'ciphertext' })
+		await vi.waitFor(() => {
+			expect(onMessage).toHaveBeenCalledWith('ping', 'peer-2', { ts: 123 }, 'Alice', true)
+		})
+	})
+
+	it('includes identity from getIdentity in outgoing envelopes', async () => {
+		const { encrypt } = await import('./crypto')
+		const getIdentity = () => ({ name: 'Bob', isCreator: false })
+		const relay = await createNostrRelay('test-room', SECRET_KEY_HEX, 'self-1', vi.fn(), getIdentity)
+
+		await relay.send('estimate', { mu: 2 })
+
+		expect(encrypt).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.stringContaining('"name":"Bob"'),
+		)
 	})
 })

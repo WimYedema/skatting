@@ -144,7 +144,7 @@ All three transports run simultaneously. Peers connect via whichever succeeds fi
 
 **Encryption**: Relay messages are encrypted with AES-256-GCM using a key derived (HKDF-SHA256) from the room code. Only participants who know the room code can decrypt messages.
 
-**Liveness**: WebRTC heartbeat at 5s intervals (15s stale threshold), relay heartbeat at 15s intervals. Auto-reconnect triggers when all peers go stale for 30s.
+**Liveness**: WebRTC heartbeat at 5s intervals (15s stale threshold), relay heartbeat at 15s intervals. Ghost peers (discovered but never identified) are nudged at 5s and evicted at 10s. See [PROTOCOL.md](PROTOCOL.md) for the full protocol specification.
 
 **Consistency**: The mic holder (facilitator) is the single source of truth for verdicts. On reveal, the mic holder snapshots all estimates and computes the authoritative verdict, broadcasting both to all peers. This eliminates timing races from different message arrival orders.
 

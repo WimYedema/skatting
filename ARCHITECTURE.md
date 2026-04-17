@@ -43,15 +43,18 @@ estimate/
 │       ├── session-store.ts        ← localStorage: session persistence, verdict history
 │       ├── session-store.test.ts   ← 43 tests
 │       ├── session-controller.ts   ← state machine: all session logic, P2P callbacks, mic handoff
-│       ├── session-controller.test.ts ← 199 tests
+│       ├── session-controller.test.ts ─ 215 tests
 │       ├── verdict.ts              ← verdict computation, history upsert (pure functions)
 │       ├── verdict.test.ts         ← 11 tests
 │       ├── nostr-state.ts          ← Nostr event persistence (kind 30078/30079), encryption
 │       ├── nostr-state.test.ts     ← 4 tests
 │       ├── crypto.ts               ← AES-256-GCM encryption, HKDF key derivation
 │       ├── crypto.test.ts          ← 11 tests
-│       ├── nostr-relay.ts           ← encrypted Nostr relay transport (WebRTC fallback)
-│       ├── nostr-relay.test.ts     ← 8 tests
+│       ├── nostr-relay.ts           ─ encrypted Nostr relay transport (self-describing envelopes)
+│       ├── nostr-relay.test.ts     ─ 10 tests
+│       ├── facilitation.ts         ─ convergence analysis, cluster detection, pattern prompts
+│       ├── facilitation.test.ts    ─ 24 tests
+│       ├── connectivity.ts         ─ WebSocket/STUN/WebRTC diagnostic checks
 │       ├── config.ts               ← Nostr relay URLs, app ID
 │       ├── debug.ts                ← conditional debug logging
 │       └── types.ts                ← message types, SceneState, HistoryEntry, peer colors
@@ -94,9 +97,10 @@ Corporate firewalls can block WebRTC peer connections even when signaling succee
 - The relay transport uses AES-256-GCM encryption with HKDF-SHA256 key derivation from the room code
 - Relay messages use Nostr kind 25078 (ephemeral) with a room-specific `r` tag for filtering
 - WebRTC heartbeat: 5s ping interval, 15s stale threshold. Relay heartbeat: 15s interval.
-- Auto-reconnect triggers when all peers are stale for 30s
+- Every relay message carries the sender's name and role in the envelope (self-describing), so peers are discovered and identified atomically.
+- See [PROTOCOL.md](PROTOCOL.md) for full protocol details including failure modes and recovery.
 
-Pinned Nostr relays: `relay.damus.io`, `nos.lol`, `purplerelay.com`, `relay.nostr.band`, `relay.snort.social`.  
+Pinned Nostr relays: `nos.lol`, `relay.primal.net`.  
 MQTT uses Trystero's default HiveMQ broker.
 
 ### Canvas Drawing Architecture
@@ -225,7 +229,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (399 tests)
+npm run test         # vitest run (463 tests)
 ```
 
 ---

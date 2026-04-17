@@ -21,9 +21,9 @@
 
 <div class="participants">
 	{#each participants as p}
-		<div class="participant" class:is-ready={p.isReady} class:is-skipped={p.isSkipped} class:is-offline={p.isOffline} class:is-stale={p.isStale}>
-			<span class="ready-dot" class:ready={p.isReady} class:stale={p.isStale} style={p.color ? `--peer-color: ${p.color}` : ''}></span>
-			<span class="name">{p.name}{#if p.isSelf} (you){/if}{#if p.isOffline} <span class="offline-tag">offline</span>{/if}{#if p.isStale} <span class="stale-tag">⚠</span>{/if}{#if p.isAbstained} <span class="abstain-tag">🤷</span>{/if}{#if p.isSkipped} <span class="skipped-tag">skipped</span>{/if}{#if p.hasMic}<span class="mic-tag"> 🎤</span>{/if}{#if p.isLeader}<span class="leader-tag"> ✎</span>{/if}</span>
+		<div class="participant" class:is-ready={p.isReady} class:is-skipped={p.isSkipped} class:is-offline={p.isOffline} class:is-stale={p.isStale} class:is-syncing={p.isSyncing}>
+			<span class="ready-dot" class:ready={p.isReady} class:stale={p.isStale} class:syncing={p.isSyncing} style={p.color ? `--peer-color: ${p.color}` : ''}></span>
+			<span class="name">{p.name}{#if p.isSelf} (you){/if}{#if p.isSyncing} <span class="syncing-tag" title="Peer hasn't fully connected — will be removed shortly">⏳</span>{/if}{#if p.isOffline} <span class="offline-tag">offline</span>{/if}{#if p.isStale} <span class="stale-tag">⚠</span>{/if}{#if p.isAbstained} <span class="abstain-tag">🤷</span>{/if}{#if p.isSkipped} <span class="skipped-tag">skipped</span>{/if}{#if p.hasMic}<span class="mic-tag"> 🎤</span>{/if}{#if p.isLeader}<span class="leader-tag"> ✎</span>{/if}</span>
 			{#if p.isSelf && isCreator && micHolder !== null}
 				<button class="mic-action" title="Take mic back" onclick={onTakeMicBack}>← Take 🎤</button>
 			{/if}
@@ -221,5 +221,25 @@
 	@keyframes pulse-stale {
 		0%, 100% { opacity: 0.5; }
 		50% { opacity: 1; }
+	}
+
+	.participant.is-syncing {
+		opacity: 0.45;
+		font-style: italic;
+	}
+
+	.ready-dot.syncing {
+		background: var(--c-text-ghost);
+		animation: pulse-syncing 1.5s ease-in-out infinite;
+	}
+
+	.syncing-tag {
+		font-size: 0.85em;
+		cursor: help;
+	}
+
+	@keyframes pulse-syncing {
+		0%, 100% { opacity: 0.3; }
+		50% { opacity: 0.8; }
 	}
 </style>
