@@ -1,4 +1,6 @@
 <script lang="ts">
+	import AboutDialog from './AboutDialog.svelte'
+	import ProductBrief from './ProductBrief.svelte'
 	import { generateRoomId, MAX_PEERS, NOSTR_RELAY_URLS } from '../lib/config'
 	import { runConnectivityCheck, type ConnectivityResult } from '../lib/connectivity'
 	import { DEBUG } from '../lib/debug'
@@ -226,6 +228,8 @@
 	}
 
 	let canSubmit = $derived(roomId.trim().length > 0 && userName.trim().length > 0)
+	let showAbout = $state(false)
+	let showBrief = $state(false)
 </script>
 
 {#snippet roomStatePreview(rs: import('../lib/nostr-state').RoomState)}
@@ -518,7 +522,21 @@
 			</div>
 		{/if}
 	{/if}
+
+	<div class="lobby-footer">
+		<button class="about-link" onclick={() => (showBrief = true)}>Learn more</button>
+		<span class="footer-dot">·</span>
+		<button class="about-link" onclick={() => (showAbout = true)}>About</button>
+	</div>
 </div>
+
+{#if showAbout}
+	<AboutDialog onClose={() => (showAbout = false)} />
+{/if}
+
+{#if showBrief}
+	<ProductBrief onClose={() => (showBrief = false)} />
+{/if}
 
 <style>
 	.lobby {
@@ -932,5 +950,35 @@
 
 	.conn-details div {
 		padding: 1px 0;
+	}
+
+	.about-link {
+		background: none;
+		border: none;
+		font-family: var(--font);
+		font-size: var(--fs-sm);
+		color: var(--c-text-muted);
+		cursor: pointer;
+		opacity: 0.6;
+		transition: opacity var(--tr-fast);
+		padding: var(--sp-xs);
+	}
+
+	.about-link:hover {
+		opacity: 1;
+		text-decoration: underline;
+	}
+
+	.lobby-footer {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-xs);
+		margin-top: var(--sp-md);
+	}
+
+	.footer-dot {
+		color: var(--c-text-muted);
+		opacity: 0.4;
+		font-size: var(--fs-sm);
 	}
 </style>

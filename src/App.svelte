@@ -590,7 +590,11 @@
 	/>
 {/if}
 
-<a class="version-badge" href="https://github.com/WimYedema/skatting/commit/{__BUILD_HASH__}" target="_blank" rel="noopener" title="Build {__BUILD_HASH__}">{__BUILD_HASH__}</a>
+<div class="footer-links">
+	<a class="footer-link" href="https://github.com/WimYedema/skatting" target="_blank" rel="noopener" title="View on GitHub">GitHub</a>
+	<span class="footer-sep">·</span>
+	<a class="footer-link hash" href="https://github.com/WimYedema/skatting/commit/{__BUILD_HASH__}" target="_blank" rel="noopener" title="Build {__BUILD_HASH__}">{__BUILD_HASH__}</a>
+</div>
 
 <style>
 	:global(body) {
@@ -1044,20 +1048,38 @@
 		border: 1px dashed #8aaacc;
 	}
 
-	.version-badge {
+	.footer-links {
 		position: fixed;
 		bottom: var(--sp-sm);
 		right: var(--sp-sm);
-		font-family: var(--font-mono, monospace);
+		display: flex;
+		align-items: center;
+		gap: var(--sp-xs);
+		font-family: var(--font);
 		font-size: var(--fs-xs);
-		color: var(--c-text-muted);
-		text-decoration: none;
 		opacity: 0.4;
 		z-index: 1;
 		transition: opacity var(--tr-fast);
 	}
 
-	.version-badge:hover {
+	.footer-links:hover {
 		opacity: 1;
+	}
+
+	.footer-link {
+		color: var(--c-text-muted);
+		text-decoration: none;
+	}
+
+	.footer-link:hover {
+		text-decoration: underline;
+	}
+
+	.footer-link.hash {
+		font-family: var(--font-mono, monospace);
+	}
+
+	.footer-sep {
+		color: var(--c-text-muted);
 	}
 </style>
