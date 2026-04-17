@@ -1425,6 +1425,16 @@ describe('createPeerCallbacks', () => {
 		expect(s.storage!.saveBacklog).toHaveBeenCalled()
 	})
 
+	it('onBacklog selects first ticket for non-creators', () => {
+		s.isCreator = false
+		const tickets: ImportedTicket[] = [
+			{ id: 'A', title: 'Alpha' },
+			{ id: 'B', title: 'Beta' },
+		]
+		callbacks.onBacklog!(tickets, true)
+		expect(s.backlogIndex).toBe(0)
+	})
+
 	it('onBacklog is ignored for creators', () => {
 		s.isCreator = true
 		callbacks.onBacklog!([{ id: 'A', title: 'Alpha' }], true)

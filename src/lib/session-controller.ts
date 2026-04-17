@@ -217,6 +217,7 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.backlogIndex = -1
 				s.prepMode = peerPrepMode ?? true
 				if (s.storage) s.storage.saveBacklog(tickets)
+				selectTicket(s, 0, { skipSend: true })
 			} else if (!s.isCreator && peerPrepMode !== undefined) {
 				s.prepMode = peerPrepMode
 			}
