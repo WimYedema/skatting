@@ -252,7 +252,7 @@ The app is deployable as a **single HTML file** (~680 KB, ~215 KB gzipped) — o
 
 1. **X-axis scale**: Configurable units — the session creator chooses "points" or "days" at creation time. This is synced to all peers and displayed on the axis. Range is 0–20.
 
-2. **Facilitator role**: The session creator starts as facilitator — they control ticket navigation, can trigger re-estimates, toggle live-adjust mode, and drag the conclusion curve to set verdicts. The 🎤 (mic) can be handed off to any peer, transferring all navigation controls. If the mic holder disconnects, a "mic-drop" toast notifies the team and anyone can grab or reclaim the mic. Other participants estimate and discuss.
+2. **Facilitator role**: The session creator starts as facilitator — they control ticket navigation, can trigger re-estimates, toggle live-adjust mode, and drag the conclusion curve to set verdicts. The 🎤 (mic) can be handed off to any peer, transferring all navigation controls. If the mic holder disconnects, a "mic-drop" toast notifies the team and anyone can grab or reclaim the mic. Other participants estimate and discuss. **Backlog ownership** (✎) and **mic** (🎤) are independent artifacts: the backlog owner manages tickets and starts the meeting; the mic holder runs each round. If the original creator becomes unavailable, any peer can "Claim backlog ✎" — the claimed owner automatically yields when the original creator returns. Duplicate names are bounced: creator wins; between non-creators, a deterministic tiebreaker decides.
 
 3. **Blob interaction feel**: The blob follows the cursor exactly (no inertia). Horizontal position controls mode (peak), vertical position controls sigma (certainty). The peak always tracks the cursor position precisely via `muFromMode`.
 

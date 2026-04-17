@@ -73,6 +73,9 @@ Three independent channels, all broadcasting simultaneously:
 9. **`resetReadyState(s)` is the shared reset primitive** — used by `resetRound`, `reEstimate`, `selectTicket`, and `onReveal` reEstimate branch. Resets: `revealed`, `selfReady`, `selfAbstained`, `readyPeers`, `abstainedPeers`, `skippedPeers`, `peerEstimateMap`.
 10. **`selectTicket` uses `{skipSave, skipSend}` options** — `skipSave` prevents saving current estimate to history; `skipSend` prevents sending topic to peers. `handleNext` uses `{skipSave: true}` (already saved), `onTopic` uses `{skipSave: true, skipSend: true}` (incoming P2P).
 11. **`peerEstimateMap` must never contain `selfId`** — enforced by guards in `onEstimate`/`onReveal` + debug assertions in DEV mode.
+12. **Name collision bounce** — `onName` detects duplicate names case-insensitively. Creator wins over non-creator; between non-creators, lower `selfId` stays. Loser is bounced via `deps.onNameConflict`.
+13. **Claimed creator yields to original** — `claimCreator` sets `claimedCreator = true`. When `onName` sees `peerIsCreator: true`, a claimed creator automatically yields (`isCreator = false`) and re-broadcasts.
+14. **`persistSession` excludes claimed creators** — writes `isCreator: s.isCreator && !s.claimedCreator` so claimed roles don't survive rejoin.
 
 ### Module responsibilities (quick reference)
 
@@ -82,7 +85,7 @@ Three independent channels, all broadcasting simultaneously:
 | `session-state.ts` | `SessionState`, `SessionDeps`, `createInitialState`, pure queries, persistence helpers | `SessionState`, `createInitialState`, `getCurrentTicket`, `getEstimatedCount`, `persistSession`, `publishState` |
 | `session-round.ts` | Round lifecycle: reset, reveal, verdict, estimation actions | `resetReadyState`, `resetRound`, `handleDone`, `handleAbstain`, `checkAutoReveal`, `buildRevealPayload`, `saveRoundToHistory` |
 | `session-backlog.ts` | Backlog management: ticket navigation, import/merge, reorder/remove, meeting mode | `selectTicket`, `handleNext`, `processBacklogImport`, `startMeeting`, `returnToPrep` |
-| `session-participants.ts` | Participant queries, mic/facilitator handoff, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `claimMic`, `changeUnit`, `buildParticipantsData` |
+| `session-participants.ts` | Participant queries, mic/backlog claiming, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `takeMicBack`, `claimMic`, `claimCreator`, `changeUnit`, `buildParticipantsData` |
 | `peer.ts` | Transport layer: 3-strategy P2P, message senders, heartbeat, dedup | `createSession`, `selfId`, `PeerSession`, `PeerCallbacks` |
 | `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078) | `createNostrRelay`, `isRelayEnvelope` |
 | `types.ts` | Message shapes, `VerdictSnapshot`, `PeerEstimate`, `SceneState` | All message types |
@@ -131,7 +134,7 @@ Three independent channels, all broadcasting simultaneously:
   - `session-state.ts` — `SessionState`, `SessionDeps`, `createInitialState`, pure queries (`getCurrentTicket`, `getEstimatedCount`), persistence helpers
   - `session-round.ts` — round lifecycle: reset, reveal, verdict, estimation actions (`handleDone`, `handleAbstain`, `checkAutoReveal`, etc.)
   - `session-backlog.ts` — backlog management: ticket navigation, import/merge, reorder/remove, meeting mode transitions
-  - `session-participants.ts` — participant queries, mic/facilitator handoff, unit management
+  - `session-participants.ts` — participant queries, mic/backlog claiming, unit management
   - Components import only from `session-controller.ts` — never from sub-modules directly
 - Keep log-normal math in `src/lib/lognormal.ts` — pure functions, easily testable
 - P2P wrapper in `src/lib/peer.ts` — triple-transport (WebRTC/Nostr + WebRTC/MQTT + Nostr relay), isolates transport from the rest of the app
@@ -148,6 +151,7 @@ Three independent channels, all broadcasting simultaneously:
 - ResizeObserver should observe the **container div**, not the canvas itself
 - Svelte 5 tracks `Map.set()`/`Map.delete()`/`Set.add()` mutations directly only within Svelte's own reactive context; mutations inside **external callbacks** (P2P, WebSocket, setTimeout) require clone-and-reassign: `map = new Map(map).set(k, v)`
 - Unit selection (points/days) is set by creator only; joiners receive it via P2P — use `isCreator` flag to guard
+- Backlog ownership (`isCreator`) can be claimed via `claimCreator()` when no creator peer is present; claimed role auto-yields when original returns
 - Sketchy visual style uses seeded PRNG (`mulberry32`) for deterministic jitter — same seed = same hand-drawn look
 
 ## Design Hygiene
@@ -192,7 +196,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (422+ tests)
+npm run test         # vitest run (445+ tests)
 ```
 
 ## Deployment

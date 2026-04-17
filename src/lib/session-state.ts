@@ -31,6 +31,8 @@ export interface SessionState {
 	showPersistentHistory: boolean
 	unit: string
 	isCreator: boolean
+	/** True when creator role was claimed (not original) — yields if original creator returns */
+	claimedCreator: boolean
 	connectionError: string
 	backlog: EstimatedTicket[]
 	backlogIndex: number
@@ -87,6 +89,7 @@ export function createInitialState(): SessionState {
 		showPersistentHistory: true,
 		unit: 'points',
 		isCreator: false,
+		claimedCreator: false,
 		connectionError: '',
 		backlog: [],
 		backlogIndex: -1,
@@ -130,6 +133,7 @@ export interface SessionDeps {
 	queryRoomState: (roomCode: string) => Promise<RoomState | null>
 	queryPrepDone: (roomCode: string) => Promise<PrepDoneSignal[]>
 	onConclusion?: (mode: number | null, sigma: number | null, ts: number) => void
+	onNameConflict?: (conflictingName: string) => void
 }
 
 /** State that can be pre-loaded from Nostr relays before connecting P2P. */
@@ -176,7 +180,8 @@ export function persistSession(s: SessionState, deps: SessionDeps): void {
 		userName: s.userName,
 		topic: s.topic.trim(),
 		unit: s.unit,
-		isCreator: s.isCreator,
+		// Only persist creator role for original creators, not claimed ones
+		isCreator: s.isCreator && !s.claimedCreator,
 		peerNames: Array.from(s.peerNames.values()),
 		lastUsed: Date.now(),
 	})

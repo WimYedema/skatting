@@ -13,7 +13,7 @@ import { selectTicket } from './session-backlog'
 export { type SessionState, type SessionDeps, type PreloadedState, createInitialState, getCurrentTicket, getEstimatedCount, persistSession, MIC_HOLDER_STALE_MS } from './session-state'
 export { resetReadyState, resetRound, saveRoundToHistory, addOrUpdateHistory, handleEstimateChange, handleDone, handleAbstain, handleForceReveal, checkAutoReveal, reEstimate, skipPeer, unskipPeer, toggleLiveAdjust } from './session-round'
 export { selectTicket, handleNext, processBacklogImport, mergeBacklogImport, handleReorder, handleRemove, startMeeting, returnToPrep, handleTopicChange } from './session-backlog'
-export { getAllParticipants, getActiveParticipants, getReadyCount, getAllReady, hasMic, handOffMic, takeMicBack, claimMic, changeUnit, buildParticipantsData, type ParticipantInfo } from './session-participants'
+export { getAllParticipants, getActiveParticipants, getReadyCount, getAllReady, hasMic, handOffMic, takeMicBack, claimMic, claimCreator, changeUnit, buildParticipantsData, type ParticipantInfo } from './session-participants'
 
 // ---------------------------------------------------------------------------
 // Debug helpers
@@ -40,6 +40,7 @@ export function leaveSession(s: SessionState): void {
 	s.history = []
 	s.unit = 'points'
 	s.isCreator = false
+	s.claimedCreator = false
 	s.connectionError = ''
 	s.backlog = []
 	s.backlogIndex = -1
@@ -162,8 +163,27 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			if (peerIsCreator) {
 				s.creatorPeerId = peerId
 				s.creatorName = name
+				// Yield claimed creator role when the original creator returns
+				if (s.isCreator && s.claimedCreator) {
+					s.isCreator = false
+					s.claimedCreator = false
+					s.session?.sendName({ name: s.userName, isCreator: false })
+				}
+			} else if (s.creatorPeerId === peerId) {
+				// Peer yielded creator role — clear them as creator
+				s.creatorPeerId = null
 			}
 			persistSession(s, deps)
+			// Bounce if another peer is using our name and we're the one who should yield:
+			// - creator always wins (non-creator yields)
+			// - if both are non-creators, higher selfId yields (deterministic tiebreaker)
+			if (name.toLowerCase() === s.userName.toLowerCase()) {
+				const theyWin = peerIsCreator && !s.isCreator
+				const tiebreak = !peerIsCreator && !s.isCreator && deps.selfId > peerId
+				if (theyWin || tiebreak) {
+					deps.onNameConflict?.(name)
+				}
+			}
 		},
 		onTopic(newTopic: string, url?: string, ticketId?: string) {
 			if (ticketId && s.backlog.length > 0) {
@@ -326,10 +346,6 @@ export function applyNostrState(
 ): void {
 	if (roomState && !s.isCreator) {
 		if (roomState.creatorName) s.creatorName = roomState.creatorName
-		// Restore creator role if this user's name matches the room creator
-		if (roomState.creatorName && roomState.creatorName === s.userName) {
-			s.isCreator = true
-		}
 		if (s.backlog.length === 0 && roomState.backlog.length > 0) {
 			s.backlog = roomState.backlog.map((t) => ({ ...t }))
 			s.prepMode = roomState.prepMode

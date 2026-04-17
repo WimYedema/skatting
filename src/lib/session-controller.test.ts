@@ -42,6 +42,7 @@ import {
 	handOffMic,
 	takeMicBack,
 	claimMic,
+	claimCreator,
 	buildParticipantsData,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
@@ -1269,6 +1270,27 @@ describe('applyNostrState', () => {
 		expect(s.backlog.length).toBe(0)
 		expect(s.prepDone).toEqual([])
 	})
+
+	it('does not promote joiner to creator even if name matches creatorName', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		prepareJoin(s, deps, 'te-st-ro', 'Alice', null)
+
+		applyNostrState(
+			s,
+			{
+				backlog: [{ id: 'N1', title: 'Ticket' }],
+				unit: 'points',
+				prepMode: true,
+				topic: '',
+				creatorName: 'Alice',
+			},
+			[],
+		)
+
+		expect(s.isCreator).toBe(false)
+		expect(s.creatorName).toBe('Alice')
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -1362,6 +1384,67 @@ describe('createPeerCallbacks', () => {
 		callbacks.onName('p1', 'Bob', true)
 		expect(s.peerNames.get('p1')).toBe('Bob')
 		expect(s.creatorPeerId).toBe('p1')
+	})
+
+	it('onName fires nameConflict when peer name matches own name', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		// Re-create callbacks with updated deps
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		// Peer is creator, we're not → we yield
+		cb.onName('p1', 'Alice', true)
+		expect(conflictSpy).toHaveBeenCalledWith('Alice')
+	})
+
+	it('onName does not fire nameConflict for different names', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		cb.onName('p1', 'Bob', false)
+		expect(conflictSpy).not.toHaveBeenCalled()
+	})
+
+	it('onName fires nameConflict case-insensitively', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		// Peer is creator, we're not → we yield
+		cb.onName('p1', 'alice', true)
+		expect(conflictSpy).toHaveBeenCalledWith('alice')
+	})
+
+	it('onName does not bounce creator when non-creator has same name', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.isCreator = true
+		// Peer is NOT creator → creator wins, no bounce
+		cb.onName('p1', 'Alice', false)
+		expect(conflictSpy).not.toHaveBeenCalled()
+	})
+
+	it('onName uses selfId tiebreaker when both non-creators', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		// Our selfId is 'test-self' (from mockDeps), peer is 'aaa' which is lower → we yield
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		cb.onName('aaa', 'Alice', false)
+		expect(conflictSpy).toHaveBeenCalled()
+	})
+
+	it('onName does not bounce when selfId is lower in tiebreak', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		// Our selfId is 'test-self', peer is 'zzz' which is higher → peer yields, not us
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		cb.onName('zzz', 'Alice', false)
+		expect(conflictSpy).not.toHaveBeenCalled()
 	})
 
 	it('onTopic syncs backlog index by ticketId', () => {
@@ -2867,5 +2950,117 @@ describe('buildParticipantsData', () => {
 		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
 
 		expect(result[1]).toMatchObject({ hasMic: true })
+	})
+})
+
+describe('claimCreator', () => {
+	it('promotes non-creator to creator when no creator peer is present', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = false
+		s.creatorPeerId = null
+		s.userName = 'Bob'
+
+		claimCreator(s, deps)
+
+		expect(s.isCreator).toBe(true)
+		expect(s.session!.sendName).toHaveBeenCalledWith({ name: 'Bob', isCreator: true })
+		expect(deps.saveSession).toHaveBeenCalled()
+	})
+
+	it('does nothing if already creator', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = true
+
+		claimCreator(s, deps)
+
+		expect(s.session!.sendName).not.toHaveBeenCalled()
+	})
+
+	it('does nothing if another creator peer is present', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = false
+		s.creatorPeerId = 'peer-a'
+
+		claimCreator(s, deps)
+
+		expect(s.isCreator).toBe(false)
+		expect(s.session!.sendName).not.toHaveBeenCalled()
+	})
+
+	it('clears mic-drop message when claiming creator with no mic holder', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = false
+		s.creatorPeerId = null
+		s.micHolder = null
+		s.micDropMessage = 'Alice dropped the mic 🎤'
+
+		claimCreator(s, deps)
+
+		expect(s.isCreator).toBe(true)
+		expect(s.claimedCreator).toBe(true)
+		expect(s.micDropMessage).toBe('')
+	})
+
+	it('yields creator role when original creator returns', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = false
+		s.creatorPeerId = null
+		s.userName = 'Bob'
+
+		// Bob claims creator
+		claimCreator(s, deps)
+		expect(s.isCreator).toBe(true)
+		expect(s.claimedCreator).toBe(true)
+
+		// Alice (original creator) joins and announces
+		const callbacks = createPeerCallbacks(s, deps)
+		callbacks.onName('alice-id', 'Alice', true)
+
+		expect(s.isCreator).toBe(false)
+		expect(s.claimedCreator).toBe(false)
+		expect(s.creatorPeerId).toBe('alice-id')
+		expect(s.session!.sendName).toHaveBeenCalledWith({ name: 'Bob', isCreator: false })
+	})
+
+	it('does not yield if original creator (not claimed)', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = true
+		s.claimedCreator = false
+		s.userName = 'Alice'
+
+		// A peer falsely claims creator
+		const callbacks = createPeerCallbacks(s, deps)
+		callbacks.onName('bob-id', 'Bob', true)
+
+		// Alice should NOT yield — she's the original creator
+		expect(s.isCreator).toBe(true)
+	})
+
+	it('clears creatorPeerId when peer yields creator role', () => {
+		const s = createInitialState()
+		withSession(s)
+		const deps = mockDeps()
+		s.isCreator = true
+		s.creatorPeerId = 'bob-id'
+		s.peerIds = ['bob-id']
+		s.peerNames = new Map([['bob-id', 'Bob']])
+
+		// Bob sends name with isCreator: false (yielding)
+		const callbacks = createPeerCallbacks(s, deps)
+		callbacks.onName('bob-id', 'Bob', false)
+
+		expect(s.creatorPeerId).toBeNull()
 	})
 })

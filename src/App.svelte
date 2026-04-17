@@ -56,6 +56,7 @@
 		handOffMic,
 		takeMicBack,
 		claimMic,
+		claimCreator,
 		buildParticipantsData,
 		MIC_HOLDER_STALE_MS,
 		type SessionDeps,
@@ -94,6 +95,7 @@
 	let reconnecting = $state(false)
 	let storageWarning = $state(false)
 	let missedRounds = $state(0)
+	let nameConflict = $state('')
 	let showPasteModal = $state(false)
 	let showOverflow = $state(false)
 	let dragOver = $state(false)
@@ -131,10 +133,15 @@
 			s.conclusionMode = mode
 			s.conclusionSigma = sigma
 		},
+		onNameConflict(conflictingName) {
+			nameConflict = conflictingName
+			leaveSession(s)
+		},
 	}
 
 	async function handleJoin(roomId: string, name: string, selectedUnit: string | null) {
 		debugLog('app', 'handleJoin', { roomId, name, selectedUnit })
+		nameConflict = ''
 		connecting = true
 		prepareJoin(s, deps, roomId, name, selectedUnit)
 		try {
@@ -181,6 +188,7 @@
 	let currentTicket = $derived(getCurrentTicket(s))
 	let estimatedCount = $derived(getEstimatedCount(s))
 	let holdsMic = $derived(hasMic(s, selfId))
+	let noCreator = $derived(!s.isCreator && s.creatorPeerId === null)
 
 	// Auto-reconnect when all peers go stale
 	let lastAutoReconnect = 0
@@ -335,7 +343,7 @@
 </script>
 
 {#if !s.session}
-	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} />
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} {nameConflict} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>
@@ -502,6 +510,13 @@
 			<div class="missed-rounds">
 				Storage full — history may not be saved. Clear old sessions in the lobby.
 				<button onclick={() => (storageWarning = false)}>×</button>
+			</div>
+		{/if}
+
+		{#if noCreator}
+			<div class="missed-rounds">
+				No one owns the backlog
+				<button onclick={() => claimCreator(s, deps)}>Claim backlog ✎</button>
 			</div>
 		{/if}
 

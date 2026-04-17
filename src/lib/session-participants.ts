@@ -1,5 +1,5 @@
 import { getPeerColor } from './peer'
-import type { SessionState } from './session-state'
+import { persistSession, type SessionDeps, type SessionState } from './session-state'
 
 // ---------------------------------------------------------------------------
 // ParticipantInfo — shared shape used by ParticipantsList
@@ -74,6 +74,20 @@ export function claimMic(s: SessionState, selfId: string): void {
 	s.micHolder = selfId
 	s.micDropMessage = ''
 	s.session?.sendMic({ holder: selfId })
+}
+
+/** Claim the creator (facilitator) role when no one else has it. */
+export function claimCreator(s: SessionState, deps: SessionDeps): void {
+	if (s.isCreator) return
+	if (s.creatorPeerId !== null) return
+	s.isCreator = true
+	s.claimedCreator = true
+	// Also take the mic if no one has it
+	if (s.micHolder === null) {
+		s.micDropMessage = ''
+	}
+	s.session?.sendName({ name: s.userName, isCreator: true })
+	persistSession(s, deps)
 }
 
 // ---------------------------------------------------------------------------

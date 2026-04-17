@@ -41,9 +41,9 @@ estimate/
 │       ├── peer.ts                 ← Trystero wrapper, dual-strategy P2P, room management
 │       ├── peer.test.ts            ← 7 tests
 │       ├── session-store.ts        ← localStorage: session persistence, verdict history
-│       ├── session-store.test.ts   ← 40 tests
+│       ├── session-store.test.ts   ← 43 tests
 │       ├── session-controller.ts   ← state machine: all session logic, P2P callbacks, mic handoff
-│       ├── session-controller.test.ts ← 156 tests
+│       ├── session-controller.test.ts ← 199 tests
 │       ├── verdict.ts              ← verdict computation, history upsert (pure functions)
 │       ├── verdict.test.ts         ← 11 tests
 │       ├── nostr-state.ts          ← Nostr event persistence (kind 30078/30079), encryption

@@ -14,9 +14,10 @@
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
 		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
 		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
+		nameConflict?: string
 	}
 
-	let { onJoin, queryRoomState, queryPrepDone }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone, nameConflict = '' }: Props = $props()
 
 	// Check URL for a shared room link (?room=XYZ)
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
@@ -152,7 +153,17 @@
 				url.searchParams.set('room', trimmedRoom)
 				window.history.replaceState({}, '', url.toString())
 			}
-			onJoin(trimmedRoom, trimmedName, mode === 'create' ? effectiveUnit : null)
+			// Restore creator role from saved sessions (same logic as submitRejoin)
+			let selectedUnit: string | null = null
+			if (mode === 'create') {
+				selectedUnit = effectiveUnit
+			} else {
+				const match = recentSessions.find(
+					(s) => s.roomId === trimmedRoom && s.userName.toLowerCase() === trimmedName.toLowerCase(),
+				)
+				if (match?.isCreator) selectedUnit = match.unit
+			}
+			onJoin(trimmedRoom, trimmedName, selectedUnit)
 		}
 	}
 
@@ -319,6 +330,12 @@
 				fill="#8a8070">estimate with uncertainty</text>
 		</svg>
 	</h1>
+
+	{#if nameConflict}
+		<div class="name-conflict">
+			"{nameConflict}" is already in this room — pick a different name
+		</div>
+	{/if}
 
 	{#if mode === 'choose'}
 		{#if displaySessions.length > 0}
@@ -512,6 +529,17 @@
 		padding: 48px var(--sp-2xl);
 		gap: var(--sp-xl);
 		box-sizing: border-box;
+	}
+
+	.name-conflict {
+		background: rgba(180, 80, 60, 0.12);
+		border: 1px solid rgba(180, 80, 60, 0.3);
+		color: var(--c-danger, #a04030);
+		padding: var(--sp-sm) var(--sp-lg);
+		border-radius: var(--radius-sm);
+		font-size: var(--fs-sm);
+		max-width: 400px;
+		text-align: center;
 	}
 
 	h1, .logo {
