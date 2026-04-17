@@ -82,7 +82,7 @@ Three independent channels, all broadcasting simultaneously:
 | `session-state.ts` | `SessionState`, `SessionDeps`, `createInitialState`, pure queries, persistence helpers | `SessionState`, `createInitialState`, `getCurrentTicket`, `getEstimatedCount`, `persistSession`, `publishState` |
 | `session-round.ts` | Round lifecycle: reset, reveal, verdict, estimation actions | `resetReadyState`, `resetRound`, `handleDone`, `handleAbstain`, `checkAutoReveal`, `buildRevealPayload`, `saveRoundToHistory` |
 | `session-backlog.ts` | Backlog management: ticket navigation, import/merge, reorder/remove, meeting mode | `selectTicket`, `handleNext`, `processBacklogImport`, `startMeeting`, `returnToPrep` |
-| `session-participants.ts` | Participant queries, mic/facilitator handoff, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `claimMic`, `changeUnit` |
+| `session-participants.ts` | Participant queries, mic/facilitator handoff, unit management | `getAllParticipants`, `hasMic`, `handOffMic`, `claimMic`, `changeUnit`, `buildParticipantsData` |
 | `peer.ts` | Transport layer: 3-strategy P2P, message senders, heartbeat, dedup | `createSession`, `selfId`, `PeerSession`, `PeerCallbacks` |
 | `nostr-relay.ts` | Encrypted Nostr relay channel (AES-256-GCM, kind 25078) | `createNostrRelay`, `isRelayEnvelope` |
 | `types.ts` | Message shapes, `VerdictSnapshot`, `PeerEstimate`, `SceneState` | All message types |
@@ -192,7 +192,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (415+ tests)
+npm run test         # vitest run (422+ tests)
 ```
 
 ## Deployment
