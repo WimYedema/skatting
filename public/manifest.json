@@ -1,0 +1,11 @@
+{
+  "name": "Skatting",
+  "short_name": "Skatting",
+  "description": "2D continuous estimation for agile teams",
+  "start_url": "/skatting/",
+  "scope": "/skatting/",
+  "display": "standalone",
+  "background_color": "#e8e0d0",
+  "theme_color": "#e8e0d0",
+  "icons": []
+}

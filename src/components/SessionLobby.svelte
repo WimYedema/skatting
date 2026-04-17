@@ -544,6 +544,7 @@
 		flex-direction: column;
 		align-items: center;
 		min-height: 100vh;
+		min-height: 100dvh;
 		padding: 48px var(--sp-2xl);
 		gap: var(--sp-xl);
 		box-sizing: border-box;
