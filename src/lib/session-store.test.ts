@@ -442,11 +442,11 @@ describe('scoped storage — backlog', () => {
 
 describe('storage quota error detection', () => {
 	let store: Record<string, string>
-	let quotaCb: ReturnType<typeof vi.fn>
+	let quotaCb: ReturnType<typeof vi.fn<() => void>>
 
 	beforeEach(() => {
 		store = {}
-		quotaCb = vi.fn()
+		quotaCb = vi.fn<() => void>()
 		setStorageQuotaHandler(quotaCb)
 		vi.stubGlobal('localStorage', {
 			getItem: (key: string) => store[key] ?? null,

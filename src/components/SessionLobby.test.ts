@@ -17,10 +17,12 @@ vi.mock('../lib/config', () => ({
 }))
 
 describe('SessionLobby', () => {
-	let onJoin: ReturnType<typeof vi.fn>
+	let onJoin: ReturnType<
+		typeof vi.fn<(roomId: string, userName: string, unit: string | null) => void>
+	>
 
 	beforeEach(() => {
-		onJoin = vi.fn()
+		onJoin = vi.fn<(roomId: string, userName: string, unit: string | null) => void>()
 	})
 
 	afterEach(() => {

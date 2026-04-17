@@ -1,6 +1,4 @@
 <script lang="ts">
-	declare const __BUILD_HASH__: string;
-
 	import BacklogPanel from './components/BacklogPanel.svelte'
 	import DebugPanel from './components/DebugPanel.svelte'
 	import EstimationCanvas from './components/EstimationCanvas.svelte'
@@ -71,7 +69,7 @@
 	onDebugToggle((active) => {
 		debugActive = active
 		if (active) {
-			;(window as Record<string, unknown>).__estimate = {
+			;(window as unknown as Record<string, unknown>).__estimate = {
 				get state() { return s },
 				get session() { return s.session },
 				get peerIds() { return s.peerIds },
@@ -82,7 +80,7 @@
 
 	// Expose internals in debug mode for console diagnostics
 	if (DEBUG) {
-		;(window as Record<string, unknown>).__estimate = {
+		;(window as unknown as Record<string, unknown>).__estimate = {
 			get state() { return s },
 			get session() { return s.session },
 			get peerIds() { return s.peerIds },

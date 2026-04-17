@@ -13,7 +13,7 @@ export type EstimateMessage = {
 	sigma: number
 }
 
-export interface VerdictSnapshot {
+export type VerdictSnapshot = {
 	mu: number
 	sigma: number
 	median: number

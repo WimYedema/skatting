@@ -18,6 +18,7 @@ function defaultProps() {
 		prepMode: true,
 		myEstimates: new Map<string, { mu: number; sigma: number }>(),
 		estimatedCount: 0,
+		unit: 'points' as const,
 		onSelect: vi.fn(),
 		onReorder: vi.fn(),
 		onRemove: vi.fn(),

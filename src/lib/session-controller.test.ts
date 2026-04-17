@@ -80,6 +80,8 @@ function mockSession(): PeerSession {
 		sendBacklog: vi.fn().mockResolvedValue(undefined),
 		sendLiveAdjust: vi.fn().mockResolvedValue(undefined),
 		sendMic: vi.fn().mockResolvedValue(undefined),
+		sendConclusion: vi.fn().mockResolvedValue(undefined),
+		sendPing: vi.fn().mockResolvedValue(undefined),
 		leave: vi.fn(),
 	}
 }
@@ -2534,10 +2536,10 @@ describe('onLiveAdjust callback', () => {
 		const deps = mockDeps()
 		const callbacks = createPeerCallbacks(s, deps)
 
-		callbacks.onLiveAdjust(true)
+		callbacks.onLiveAdjust!(true)
 		expect(s.liveAdjust).toBe(true)
 
-		callbacks.onLiveAdjust(false)
+		callbacks.onLiveAdjust!(false)
 		expect(s.liveAdjust).toBe(false)
 	})
 })
