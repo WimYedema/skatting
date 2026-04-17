@@ -55,6 +55,7 @@ export function leaveSession(s: SessionState): void {
 	s.micHolder = null
 	s.micDropMessage = ''
 	s.peerLastSeen = new Map()
+	s.sessionStartedAt = 0
 }
 
 // ---------------------------------------------------------------------------
@@ -174,13 +175,13 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 				s.creatorPeerId = null
 			}
 			persistSession(s, deps)
-			// Bounce if another peer is using our name and we're the one who should yield:
-			// - creator always wins (non-creator yields)
-			// - if both are non-creators, higher selfId yields (deterministic tiebreaker)
+			// Bounce if another peer is using our name and we're the one who should yield.
+			// Only newcomers (joined < 10s ago) can be bounced — established peers stay.
 			if (name.toLowerCase() === s.userName.toLowerCase()) {
+				const recentJoin = Date.now() - s.sessionStartedAt < 10_000
 				const theyWin = peerIsCreator && !s.isCreator
-				const tiebreak = !peerIsCreator && !s.isCreator && deps.selfId > peerId
-				if (theyWin || tiebreak) {
+				const tiebreak = peerIsCreator === s.isCreator && deps.selfId > peerId
+				if (recentJoin && (theyWin || tiebreak)) {
 					deps.onNameConflict?.(name)
 				}
 			}
@@ -373,6 +374,7 @@ export function connectSession(s: SessionState, deps: SessionDeps, roomId: strin
 		? { roomCode: s.roomCode, secretKeyHex: s.secretKeyHex }
 		: undefined
 	s.session = deps.createSession(roomId, createPeerCallbacks(s, deps), nostrConfig)
+	s.sessionStartedAt = Date.now()
 	// Publish initial room state so creatorName is available to late joiners
 	if (s.isCreator) publishState(s, deps)
 }

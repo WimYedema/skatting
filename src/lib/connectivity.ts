@@ -170,11 +170,14 @@ export async function runConnectivityCheck(
 	}
 	onUpdate({ ...result })
 
-	// 1. WebSocket relay check (test first 2 relays)
-	const wsTests = relayUrls.slice(0, 2).map(async (url) => {
-		const r = await testWebSocket(url)
-		return { url, ...r }
-	})
+	// 1. WebSocket relay check (test one Nostr + one MQTT for diversity)
+	const wsTests = [relayUrls[0], relayUrls[relayUrls.length - 1]]
+		.filter(Boolean)
+		.filter((url, i, arr) => arr.indexOf(url) === i)
+		.map(async (url) => {
+			const r = await testWebSocket(url)
+			return { url, ...r }
+		})
 	const wsResults = await Promise.all(wsTests)
 	const wsOk = wsResults.some((r) => r.ok)
 	result.webSocket = wsOk ? 'ok' : 'fail'

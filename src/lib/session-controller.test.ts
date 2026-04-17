@@ -1386,12 +1386,13 @@ describe('createPeerCallbacks', () => {
 		expect(s.creatorPeerId).toBe('p1')
 	})
 
-	it('onName fires nameConflict when peer name matches own name', () => {
+	it('onName fires nameConflict when peer name matches own name (recent joiner)', () => {
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
 		// Re-create callbacks with updated deps
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now() // recent joiner
 		// Peer is creator, we're not → we yield
 		cb.onName('p1', 'Alice', true)
 		expect(conflictSpy).toHaveBeenCalledWith('Alice')
@@ -1402,6 +1403,7 @@ describe('createPeerCallbacks', () => {
 		deps.onNameConflict = conflictSpy
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
 		cb.onName('p1', 'Bob', false)
 		expect(conflictSpy).not.toHaveBeenCalled()
 	})
@@ -1411,6 +1413,7 @@ describe('createPeerCallbacks', () => {
 		deps.onNameConflict = conflictSpy
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
 		// Peer is creator, we're not → we yield
 		cb.onName('p1', 'alice', true)
 		expect(conflictSpy).toHaveBeenCalledWith('alice')
@@ -1422,17 +1425,19 @@ describe('createPeerCallbacks', () => {
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
 		s.isCreator = true
+		s.sessionStartedAt = Date.now()
 		// Peer is NOT creator → creator wins, no bounce
 		cb.onName('p1', 'Alice', false)
 		expect(conflictSpy).not.toHaveBeenCalled()
 	})
 
-	it('onName uses selfId tiebreaker when both non-creators', () => {
+	it('onName uses selfId tiebreaker when both non-creators (recent joiner)', () => {
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
-		// Our selfId is 'test-self' (from mockDeps), peer is 'aaa' which is lower → we yield
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		// Our selfId is 'self-id', peer is 'aaa' which is lower → we yield
 		cb.onName('aaa', 'Alice', false)
 		expect(conflictSpy).toHaveBeenCalled()
 	})
@@ -1440,10 +1445,44 @@ describe('createPeerCallbacks', () => {
 	it('onName does not bounce when selfId is lower in tiebreak', () => {
 		const conflictSpy = vi.fn()
 		deps.onNameConflict = conflictSpy
-		// Our selfId is 'test-self', peer is 'zzz' which is higher → peer yields, not us
 		const cb = createPeerCallbacks(s, deps)
 		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		// Our selfId is 'self-id', peer is 'zzz' which is higher → peer yields, not us
 		cb.onName('zzz', 'Alice', false)
+		expect(conflictSpy).not.toHaveBeenCalled()
+	})
+
+	it('onName uses selfId tiebreaker when both creators (same name)', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.isCreator = true
+		s.sessionStartedAt = Date.now()
+		cb.onName('aaa', 'Alice', true)
+		expect(conflictSpy).toHaveBeenCalled()
+	})
+
+	it('onName does not bounce when both creators and selfId is lower', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.isCreator = true
+		s.sessionStartedAt = Date.now()
+		cb.onName('zzz', 'Alice', true)
+		expect(conflictSpy).not.toHaveBeenCalled()
+	})
+
+	it('onName does not bounce established peer (session > 10s old)', () => {
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now() - 30_000 // joined 30s ago
+		// Even though peer is creator and we're not, established peer stays
+		cb.onName('p1', 'Alice', true)
 		expect(conflictSpy).not.toHaveBeenCalled()
 	})
 

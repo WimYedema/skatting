@@ -63,6 +63,8 @@ export interface SessionState {
 	/** Post-reveal conclusion curve position (dragged by mic holder) */
 	conclusionMode: number | null
 	conclusionSigma: number | null
+	/** Timestamp when this session was connected (used to protect established peers from name conflicts) */
+	sessionStartedAt: number
 }
 
 export function createInitialState(): SessionState {
@@ -111,6 +113,7 @@ export function createInitialState(): SessionState {
 		authoritativeVerdict: null,
 		conclusionMode: null,
 		conclusionSigma: null,
+		sessionStartedAt: 0,
 	}
 }
 
