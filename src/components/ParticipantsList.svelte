@@ -1,17 +1,5 @@
 <script lang="ts">
-	interface ParticipantInfo {
-		id: string
-		name: string
-		color: string
-		isReady: boolean
-		isSkipped: boolean
-		isAbstained: boolean
-		hasMic: boolean
-		isLeader: boolean
-		isSelf: boolean
-		isOffline?: boolean
-		isStale?: boolean
-	}
+	import type { ParticipantInfo } from '../lib/session-controller'
 
 	interface Props {
 		participants: ParticipantInfo[]

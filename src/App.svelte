@@ -56,6 +56,7 @@
 		handOffMic,
 		takeMicBack,
 		claimMic,
+		buildParticipantsData,
 		MIC_HOLDER_STALE_MS,
 		type SessionDeps,
 	} from './lib/session-controller'
@@ -220,58 +221,10 @@
 		return lastSeen != null && Date.now() - lastSeen > MIC_HOLDER_STALE_MS
 	})
 
-	// Show creator as offline ghost when they're known but not connected
-	// Exclude self (name match) to avoid ghost when creator rejoins without isCreator flag
-	let creatorOffline = $derived(
-		!s.isCreator && s.creatorName && !s.creatorPeerId && s.creatorName !== s.userName
-	)
-
-	let participantsData = $derived([
-		{
-			id: selfId,
-			name: s.userName,
-			color: '',
-			isReady: s.selfReady,
-			isSkipped: false,
-			isAbstained: s.selfAbstained,
-			hasMic: holdsMic,
-			isLeader: s.isCreator,
-			isSelf: true,
-			isOffline: false,
-			isStale: false,
-		},
-		...s.peerIds.map((peerId) => {
-			// staleTick forces re-evaluation every 5s
-			void staleTick
-			const lastSeen = s.peerLastSeen.get(peerId)
-			const isStale = lastSeen != null && Date.now() - lastSeen > STALE_THRESHOLD
-			return {
-				id: peerId,
-				name: s.peerNames.get(peerId) ?? 'Connecting…',
-				color: getPeerColor(peerId, s.peerIds),
-				isReady: s.readyPeers.has(peerId),
-				isSkipped: s.skippedPeers.has(peerId),
-				isAbstained: s.abstainedPeers.has(peerId),
-				hasMic: s.micHolder === peerId,
-				isLeader: peerId === s.creatorPeerId,
-				isSelf: false,
-				isOffline: false,
-				isStale,
-			}
-		}),
-		...(creatorOffline ? [{
-			id: '__creator__',
-			name: s.creatorName,
-			color: '',
-			isReady: false,
-			isSkipped: false,
-			isAbstained: false,
-			hasMic: false,
-			isLeader: true,
-			isSelf: false,
-			isOffline: true,
-		}] : []),
-	])
+	let participantsData = $derived.by(() => {
+		void staleTick
+		return buildParticipantsData(s, selfId, holdsMic, STALE_THRESHOLD, Date.now())
+	})
 
 	// Throttled conclusion send: at most one send per 50ms, always sending the latest value
 	let conclusionSendTimer: ReturnType<typeof setTimeout> | null = null

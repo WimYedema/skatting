@@ -13,7 +13,7 @@ import { selectTicket } from './session-backlog'
 export { type SessionState, type SessionDeps, type PreloadedState, createInitialState, getCurrentTicket, getEstimatedCount, persistSession, MIC_HOLDER_STALE_MS } from './session-state'
 export { resetReadyState, resetRound, saveRoundToHistory, addOrUpdateHistory, handleEstimateChange, handleDone, handleAbstain, handleForceReveal, checkAutoReveal, reEstimate, skipPeer, unskipPeer, toggleLiveAdjust } from './session-round'
 export { selectTicket, handleNext, processBacklogImport, mergeBacklogImport, handleReorder, handleRemove, startMeeting, returnToPrep, handleTopicChange } from './session-backlog'
-export { getAllParticipants, getActiveParticipants, getReadyCount, getAllReady, hasMic, handOffMic, takeMicBack, claimMic, changeUnit } from './session-participants'
+export { getAllParticipants, getActiveParticipants, getReadyCount, getAllReady, hasMic, handOffMic, takeMicBack, claimMic, changeUnit, buildParticipantsData, type ParticipantInfo } from './session-participants'
 
 // ---------------------------------------------------------------------------
 // Debug helpers

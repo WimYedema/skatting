@@ -1,4 +1,23 @@
+import { getPeerColor } from './peer'
 import type { SessionState } from './session-state'
+
+// ---------------------------------------------------------------------------
+// ParticipantInfo — shared shape used by ParticipantsList
+// ---------------------------------------------------------------------------
+
+export interface ParticipantInfo {
+	id: string
+	name: string
+	color: string
+	isReady: boolean
+	isSkipped: boolean
+	isAbstained: boolean
+	hasMic: boolean
+	isLeader: boolean
+	isSelf: boolean
+	isOffline: boolean
+	isStale: boolean
+}
 
 // ---------------------------------------------------------------------------
 // Participant queries (pure functions)
@@ -66,4 +85,68 @@ export function changeUnit(s: SessionState, newUnit: string): void {
 	s.unit = newUnit
 	s.session?.sendUnit({ unit: newUnit })
 	if (s.storage) s.persistentHistory = s.storage.getVerdictHistory(newUnit)
+}
+
+// ---------------------------------------------------------------------------
+// Build participants data for the UI
+// ---------------------------------------------------------------------------
+
+export function buildParticipantsData(
+	s: SessionState,
+	selfId: string,
+	holdsMic: boolean,
+	staleThreshold: number,
+	now: number,
+): ParticipantInfo[] {
+	const self: ParticipantInfo = {
+		id: selfId,
+		name: s.userName,
+		color: '',
+		isReady: s.selfReady,
+		isSkipped: false,
+		isAbstained: s.selfAbstained,
+		hasMic: holdsMic,
+		isLeader: s.isCreator,
+		isSelf: true,
+		isOffline: false,
+		isStale: false,
+	}
+
+	const peers: ParticipantInfo[] = s.peerIds.map((peerId) => {
+		const lastSeen = s.peerLastSeen.get(peerId)
+		const isStale = lastSeen != null && now - lastSeen > staleThreshold
+		return {
+			id: peerId,
+			name: s.peerNames.get(peerId) ?? 'Connecting…',
+			color: getPeerColor(peerId, s.peerIds),
+			isReady: s.readyPeers.has(peerId),
+			isSkipped: s.skippedPeers.has(peerId),
+			isAbstained: s.abstainedPeers.has(peerId),
+			hasMic: s.micHolder === peerId,
+			isLeader: peerId === s.creatorPeerId,
+			isSelf: false,
+			isOffline: false,
+			isStale,
+		}
+	})
+
+	const creatorOffline =
+		!s.isCreator && s.creatorName && !s.creatorPeerId && s.creatorName !== s.userName
+	if (creatorOffline) {
+		peers.push({
+			id: '__creator__',
+			name: s.creatorName,
+			color: '',
+			isReady: false,
+			isSkipped: false,
+			isAbstained: false,
+			hasMic: false,
+			isLeader: true,
+			isSelf: false,
+			isOffline: true,
+			isStale: false,
+		})
+	}
+
+	return [self, ...peers]
 }

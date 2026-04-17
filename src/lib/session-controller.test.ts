@@ -42,6 +42,7 @@ import {
 	handOffMic,
 	takeMicBack,
 	claimMic,
+	buildParticipantsData,
 } from './session-controller'
 import type { ScopedStorage } from './session-store'
 import type { EstimatedTicket, ImportedTicket } from './types'
@@ -2619,5 +2620,118 @@ describe('authoritative verdict', () => {
 		// Switching should have saved the first ticket's verdict
 		expect(s.history).toHaveLength(1)
 		expect(s.backlogIndex).toBe(1)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// buildParticipantsData
+// ---------------------------------------------------------------------------
+
+describe('buildParticipantsData', () => {
+	it('returns self entry first', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.isCreator = true
+		s.selfReady = true
+
+		const result = buildParticipantsData(s, 'self-id', true, 15_000, Date.now())
+
+		expect(result).toHaveLength(1)
+		expect(result[0]).toMatchObject({
+			id: 'self-id',
+			name: 'Alice',
+			isSelf: true,
+			isReady: true,
+			hasMic: true,
+			isLeader: true,
+			isOffline: false,
+		})
+	})
+
+	it('includes connected peers with colors and ready state', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.peerIds = ['peer-1', 'peer-2']
+		s.peerNames = new Map([['peer-1', 'Bob'], ['peer-2', 'Carol']])
+		s.readyPeers = new Set(['peer-1'])
+		s.peerLastSeen = new Map([['peer-1', Date.now()], ['peer-2', Date.now()]])
+
+		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
+
+		expect(result).toHaveLength(3)
+		expect(result[1]).toMatchObject({ id: 'peer-1', name: 'Bob', isReady: true, isSelf: false })
+		expect(result[2]).toMatchObject({ id: 'peer-2', name: 'Carol', isReady: false, isSelf: false })
+		expect(result[1].color).toBeTruthy()
+	})
+
+	it('marks stale peers', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.peerIds = ['peer-1']
+		s.peerNames = new Map([['peer-1', 'Bob']])
+		const now = Date.now()
+		s.peerLastSeen = new Map([['peer-1', now - 20_000]])
+
+		const result = buildParticipantsData(s, 'self-id', false, 15_000, now)
+
+		expect(result[1].isStale).toBe(true)
+	})
+
+	it('appends offline creator when creator is known but disconnected', () => {
+		const s = createInitialState()
+		s.userName = 'Bob'
+		s.isCreator = false
+		s.creatorName = 'Alice'
+		s.creatorPeerId = null
+
+		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
+
+		expect(result).toHaveLength(2)
+		expect(result[1]).toMatchObject({
+			id: '__creator__',
+			name: 'Alice',
+			isLeader: true,
+			isOffline: true,
+		})
+	})
+
+	it('does not append offline creator when self is creator', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.isCreator = true
+		s.creatorName = 'Alice'
+		s.creatorPeerId = null
+
+		const result = buildParticipantsData(s, 'self-id', true, 15_000, Date.now())
+
+		expect(result).toHaveLength(1)
+	})
+
+	it('reflects skipped and abstained peers', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.peerIds = ['peer-1', 'peer-2']
+		s.peerNames = new Map([['peer-1', 'Bob'], ['peer-2', 'Carol']])
+		s.skippedPeers = new Set(['peer-1'])
+		s.abstainedPeers = new Set(['peer-2'])
+		s.peerLastSeen = new Map([['peer-1', Date.now()], ['peer-2', Date.now()]])
+
+		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
+
+		expect(result[1]).toMatchObject({ isSkipped: true, isAbstained: false })
+		expect(result[2]).toMatchObject({ isSkipped: false, isAbstained: true })
+	})
+
+	it('marks mic holder peer', () => {
+		const s = createInitialState()
+		s.userName = 'Alice'
+		s.peerIds = ['peer-1']
+		s.peerNames = new Map([['peer-1', 'Bob']])
+		s.micHolder = 'peer-1'
+		s.peerLastSeen = new Map([['peer-1', Date.now()]])
+
+		const result = buildParticipantsData(s, 'self-id', false, 15_000, Date.now())
+
+		expect(result[1]).toMatchObject({ hasMic: true })
 	})
 })
