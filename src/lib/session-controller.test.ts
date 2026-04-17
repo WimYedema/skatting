@@ -478,6 +478,35 @@ describe('handleNext', () => {
 			ticketId: 'T2',
 		})
 	})
+
+	it('does NOT save to history during prep mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		handleNext(s, deps)
+
+		expect(s.history).toHaveLength(0)
+		expect(s.storage!.saveVerdict).not.toHaveBeenCalled()
+	})
+
+	it('does NOT send reveal during prep mode', () => {
+		const s = createInitialState()
+		const deps = mockDeps()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+
+		handleNext(s, deps)
+
+		expect(s.session!.sendReveal).not.toHaveBeenCalled()
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -599,6 +628,44 @@ describe('selectTicket', () => {
 		})
 	})
 
+	it('broadcasts restored estimate in meeting mode after ticket switch', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
+
+		selectTicket(s, 1)
+
+		expect(s.session!.sendEstimate).toHaveBeenCalledWith({ mu: 4.0, sigma: 0.3 })
+	})
+
+	it('does NOT broadcast estimate in prep mode after ticket switch', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
+
+		selectTicket(s, 1)
+
+		expect(s.session!.sendEstimate).not.toHaveBeenCalled()
+	})
+
+	it('broadcasts estimate on peer side after incoming topic switch', () => {
+		const s = createInitialState()
+		withSession(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.myEstimates.set('T2', { mu: 4.0, sigma: 0.3 })
+
+		// Simulate peer side: skipSave + skipSend (from onTopic handler)
+		selectTicket(s, 1, { skipSave: true, skipSend: true })
+
+		// Even with skipSend, estimate should still be broadcast
+		expect(s.session!.sendEstimate).toHaveBeenCalledWith({ mu: 4.0, sigma: 0.3 })
+	})
+
 	it('sends topic with skipSave but not skipSend', () => {
 		const s = createInitialState()
 		withSession(s)
@@ -623,6 +690,59 @@ describe('selectTicket', () => {
 		selectTicket(s, 1, { skipSend: true })
 
 		expect(s.session!.sendTopic).not.toHaveBeenCalled()
+	})
+
+	it('does NOT save to history when switching tickets in prep mode', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.prepMode = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		selectTicket(s, 1)
+
+		expect(s.history).toHaveLength(0)
+		expect(s.storage!.saveVerdict).not.toHaveBeenCalled()
+		// But pre-estimate should still be saved
+		expect(s.storage!.savePreEstimate).toHaveBeenCalledWith('T1', 3.0, 0.5)
+	})
+
+	it('does NOT save to history when switching tickets in meeting mode without reveal', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.revealed = false
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		selectTicket(s, 1)
+
+		expect(s.history).toHaveLength(0)
+		expect(s.storage!.saveVerdict).not.toHaveBeenCalled()
+		// But pre-estimate should still be saved
+		expect(s.storage!.savePreEstimate).toHaveBeenCalledWith('T1', 3.0, 0.5)
+	})
+
+	it('saves to history when switching tickets in meeting mode after reveal', () => {
+		const s = createInitialState()
+		withSession(s)
+		withStorage(s)
+		withBacklog(s)
+		s.prepMode = false
+		s.revealed = true
+		s.mu = 3.0
+		s.sigma = 0.5
+		s.hasMoved = true
+
+		selectTicket(s, 1)
+
+		expect(s.history).toHaveLength(1)
 	})
 })
 
@@ -1902,6 +2022,7 @@ describe('revisit verdict overwrite', () => {
 		withSession(s)
 		withBacklog(s)
 		s.prepMode = false
+		s.revealed = true
 		s.hasMoved = true
 		s.mu = 3.0
 		s.sigma = 0.5
@@ -2611,6 +2732,8 @@ describe('authoritative verdict', () => {
 		withSession(s)
 		withStorage(s)
 		withBacklog(s)
+		s.prepMode = false
+		s.revealed = true
 		s.mu = 3.0
 		s.sigma = 0.5
 		s.hasMoved = true

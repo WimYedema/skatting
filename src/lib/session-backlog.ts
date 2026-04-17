@@ -38,8 +38,11 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 	if (!opts.skipSave && currentTicket && s.hasMoved && !s.selfAbstained) {
 		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
-		buildRevealPayload(s) // sets authoritativeVerdict for saveRoundToHistory
-		saveRoundToHistory(s)
+		// Only save to history when a round was actually revealed in meeting mode
+		if (!s.prepMode && s.revealed) {
+			buildRevealPayload(s)
+			saveRoundToHistory(s)
+		}
 	}
 
 	resetReadyState(s)
@@ -86,6 +89,11 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 			ticketId: ticket.id,
 		})
 	}
+
+	// In meeting mode, broadcast restored estimate so peers see the new position
+	if (!s.prepMode && s.hasMoved && !s.selfAbstained) {
+		s.session?.sendEstimate({ mu: s.mu, sigma: s.sigma })
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -109,17 +117,19 @@ export function handleNext(
 		s.abstainedTickets.add(currentTicket.id)
 	}
 
-	// Build authoritative verdict payload before saveRoundToHistory consumes state
-	const revealPayload = buildRevealPayload(s, { revealed: false })
-	// Apply verdictOverride to the outgoing payload if the facilitator positioned a call
-	if (verdictOverride != null && revealPayload.verdict) {
-		revealPayload.verdict = { ...revealPayload.verdict, median: verdictOverride }
-	}
-
-	saveRoundToHistory(s, verdictOverride)
-	resetRound(s)
 	if (!s.prepMode) {
+		// Build authoritative verdict payload before saveRoundToHistory consumes state
+		const revealPayload = buildRevealPayload(s, { revealed: false })
+		// Apply verdictOverride to the outgoing payload if the facilitator positioned a call
+		if (verdictOverride != null && revealPayload.verdict) {
+			revealPayload.verdict = { ...revealPayload.verdict, median: verdictOverride }
+		}
+
+		saveRoundToHistory(s, verdictOverride)
+		resetRound(s)
 		s.session?.sendReveal(revealPayload)
+	} else {
+		resetRound(s)
 	}
 
 	if (s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1) {
