@@ -1,6 +1,4 @@
 <script lang="ts">
-	declare const __BUILD_HASH__: string
-
 	interface Props {
 		onClose: () => void
 	}
