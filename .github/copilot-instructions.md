@@ -4,7 +4,7 @@
 
 Real-time, peer-to-peer 2D estimation tool for agile teams. Users position a log-normal "blob" on a continuous plane (X = effort, Y = certainty). Fully serverless — P2P via WebRTC, deployed as a single static HTML file.
 
-See [PRODUCT.md](../../PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../ARCHITECTURE.md) for architecture decisions, [PROTOCOL.md](../../PROTOCOL.md) for P2P protocol details, [FMEA.md](../../FMEA.md) for risk analysis.
+See [PRODUCT.md](../../docs/PRODUCT.md) for full product spec, [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) for architecture decisions, [PROTOCOL.md](../../docs/PROTOCOL.md) for P2P protocol details, [FMEA.md](../../docs/FMEA.md) for risk analysis.
 
 ## Implementation Design
 
@@ -46,7 +46,7 @@ Three independent channels, all broadcasting simultaneously:
 2. **WebRTC/MQTT** — Trystero signaling via HiveMQ → direct peer connections
 3. **Nostr relay** — AES-256-GCM encrypted ephemeral events (kind 25078), self-describing envelopes (every message carries sender's name + role)
 
-`peer.ts` deduplicates: join fires on first strategy to see a peer, leave fires when all strategies drop them. Relay messages carry identity — every message auto-discovers and identifies unknown peers. See [PROTOCOL.md](../../PROTOCOL.md).
+`peer.ts` deduplicates: join fires on first strategy to see a peer, leave fires when all strategies drop them. Relay messages carry identity — every message auto-discovers and identifies unknown peers. See [PROTOCOL.md](../../docs/PROTOCOL.md).
 
 ### State ownership
 

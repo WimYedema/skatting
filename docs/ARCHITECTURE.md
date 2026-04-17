@@ -63,8 +63,14 @@ estimate/
 ├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
 ├── biome.json
 ├── package.json
-├── PRODUCT.md                      ← product spec
-└── ARCHITECTURE.md                 ← this file
+├── docs/
+│   ├── PRODUCT.md                  ← product spec
+│   ├── ARCHITECTURE.md             ← this file
+│   ├── PROTOCOL.md                 ← P2P protocol spec
+│   ├── FMEA.md                     ← risk analysis
+│   ├── PLAN.md
+│   ├── USER-JOURNEYS.md
+│   └── UX-REVIEW.md
 ```
 
 Tests are colocated with source files (`*.test.ts` next to `*.ts`), not in a separate `tests/` directory.
