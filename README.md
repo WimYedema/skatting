@@ -1,5 +1,9 @@
 # Skatting — 2D Continuous Estimation for Agile Teams
 
+[![CI](https://github.com/WimYedema/skatting/actions/workflows/ci.yml/badge.svg)](https://github.com/WimYedema/skatting/actions/workflows/ci.yml)
+[![Deploy](https://github.com/WimYedema/skatting/actions/workflows/deploy.yml/badge.svg)](https://github.com/WimYedema/skatting/actions/workflows/deploy.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A real-time, peer-to-peer estimation tool that replaces discrete planning poker with **two-dimensional continuous input**. Users position a log-normal "blob" on a plane where X = effort and Y = certainty — capturing both the estimate and confidence in a single gesture.
 
 **Fully serverless** — peers connect directly via WebRTC, signaled through Nostr relays and MQTT. Deployed as a single static HTML file.

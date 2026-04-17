@@ -1,8 +1,19 @@
 {
-  "name": "estimate",
-  "private": true,
-  "version": "0.0.0",
+  "name": "skatting",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Real-time peer-to-peer 2D estimation tool for agile teams",
+  "author": "Wim Yedema <wim.yedema@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WimYedema/skatting.git"
+  },
+  "homepage": "https://wimyedema.github.io/skatting/",
+  "bugs": {
+    "url": "https://github.com/WimYedema/skatting/issues"
+  },
+  "keywords": ["estimation", "agile", "planning-poker", "p2p", "webrtc", "svelte"],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
