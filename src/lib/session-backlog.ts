@@ -36,7 +36,7 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 
 	const currentTicket = getCurrentTicket(s)
 	if (!opts.skipSave && currentTicket && s.hasMoved && !s.selfAbstained) {
-		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
+		s.myEstimates = new Map(s.myEstimates).set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 		// Only save to history when a round was actually revealed in meeting mode
 		if (!s.prepMode && s.revealed) {
@@ -68,7 +68,7 @@ export function selectTicket(s: SessionState, index: number, opts: SelectTicketO
 			if (pre) {
 				s.mu = pre.mu
 				s.sigma = pre.sigma
-				s.myEstimates.set(ticket.id, pre)
+			s.myEstimates = new Map(s.myEstimates).set(ticket.id, pre)
 				s.hasMoved = true
 			} else {
 				s.mu = 2.0
@@ -108,7 +108,7 @@ export function handleNext(
 	if (!s.prepMode && !s.revealed) return
 	const currentTicket = getCurrentTicket(s)
 	if (currentTicket && s.hasMoved && !s.selfAbstained) {
-		s.myEstimates.set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
+		s.myEstimates = new Map(s.myEstimates).set(currentTicket.id, { mu: s.mu, sigma: s.sigma })
 		if (s.storage) s.storage.savePreEstimate(currentTicket.id, s.mu, s.sigma)
 	}
 	// Auto-abstain: if user never dragged and didn't explicitly estimate, treat as skip
@@ -181,10 +181,12 @@ export function mergeBacklogImport(
 	// Pre-populate myEstimates from storage for merged tickets
 	if (s.storage) {
 		const stored = s.storage.getPreEstimates()
+		let merged = s.myEstimates
 		for (const t of newTickets) {
 			const pre = stored.get(t.id)
-			if (pre) s.myEstimates.set(t.id, pre)
+			if (pre) merged = new Map(merged).set(t.id, pre)
 		}
+		if (merged !== s.myEstimates) s.myEstimates = merged
 		s.storage.saveBacklog(s.backlog)
 	}
 	s.session?.sendBacklog({ tickets: s.backlog, prepMode: s.prepMode })

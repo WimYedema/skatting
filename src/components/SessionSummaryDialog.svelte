@@ -1,15 +1,30 @@
 <script lang="ts">
+	import { lognormalMode } from '../lib/lognormal'
+	import { snapVerdict } from '../lib/lognormal'
 	import type { EstimatedTicket } from '../lib/types'
 
 	interface Props {
 		backlog: EstimatedTicket[]
 		unit: string
+		myEstimates: Map<string, { mu: number; sigma: number }>
 		onExportCsv: () => void
 		onExportExcel: () => void
 		onClose: () => void
 	}
 
-	let { backlog, unit, onExportCsv, onExportExcel, onClose }: Props = $props()
+	let { backlog, unit, myEstimates, onExportCsv, onExportExcel, onClose }: Props = $props()
+
+	function estimateLabel(ticket: EstimatedTicket): string {
+		if (ticket.median != null) {
+			return `${ticket.median.toFixed(1)} ${unit}`
+		}
+		const est = myEstimates.get(ticket.id)
+		if (est) {
+			const mode = lognormalMode(est.mu, est.sigma)
+			return `~${snapVerdict(mode, unit)}`
+		}
+		return '—'
+	}
 </script>
 
 <div class="overlay" role="dialog" aria-label="Session summary">
@@ -25,11 +40,11 @@
 			</thead>
 			<tbody>
 				{#each backlog as ticket}
-					<tr class:unestimated={ticket.median == null}>
+					<tr class:unestimated={ticket.median == null && !myEstimates.has(ticket.id)}>
 						<td class="summary-id">{ticket.id}</td>
 						<td class="summary-title">{ticket.title}</td>
 						<td class="summary-verdict">
-							{ticket.median != null ? `${ticket.median.toFixed(1)} ${unit}` : '—'}
+							{estimateLabel(ticket)}
 						</td>
 					</tr>
 				{/each}

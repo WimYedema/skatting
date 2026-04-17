@@ -372,6 +372,7 @@ describe('handleNext', () => {
 
 		handleNext(s, deps)
 
+		expect(s.myEstimates.get('T1')).toEqual({ mu: 3.0, sigma: 0.5 })
 		expect(s.storage!.savePreEstimate).toHaveBeenCalledWith('T1', 3.0, 0.5)
 		expect(s.backlogIndex).toBe(1)
 	})

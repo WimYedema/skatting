@@ -570,6 +570,7 @@
 		<SessionSummaryDialog
 			backlog={s.backlog}
 			unit={s.unit}
+			myEstimates={s.myEstimates}
 			onExportCsv={handleExportCsv}
 			onExportExcel={handleExportExcel}
 			onClose={() => (s.showSummary = false)}
