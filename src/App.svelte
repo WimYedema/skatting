@@ -100,6 +100,141 @@
 	let dragOver = $state(false)
 	let backlogCollapsed = $state(window.innerWidth < 768)
 
+	// --- Demo mode ----------------------------------------------------------
+	const DEMO_PEER_IDS = ['demo-alice', 'demo-bob', 'demo-carol'] as const
+	const DEMO_NAMES = new Map([
+		['demo-alice', 'Alice'],
+		['demo-bob', 'Bob'],
+		['demo-carol', 'Carol'],
+	])
+	const DEMO_ESTIMATES: Record<string, { mu: number; sigma: number }> = {
+		'demo-alice': { mu: 2.5, sigma: 0.35 },
+		'demo-bob':   { mu: 1.9, sigma: 0.80 },
+		'demo-carol': { mu: 3.1, sigma: 0.45 },
+	}
+	const DEMO_ROOM_ID = 'demo'
+
+	let demoMode = $state(new URLSearchParams(window.location.search).has('demo'))
+	let demoResetIn = $state<number | null>(null)
+	let displayRoomId = $derived(s.session?.roomId ?? (demoMode ? DEMO_ROOM_ID : ''))
+
+	function exitDemo() {
+		demoMode = false
+		s = createInitialState()
+		const url = new URL(window.location.href)
+		url.searchParams.delete('demo')
+		window.history.replaceState({}, '', url.toString())
+	}
+
+	$effect(() => {
+		if (!demoMode) return
+
+		s.userName = 'You'
+		s.mu = 2.2
+		s.sigma = 0.50
+		s.hasMoved = true
+		s.topic = 'User auth redesign'
+		s.peerIds = [...DEMO_PEER_IDS]
+		s.peerNames = new Map(DEMO_NAMES)
+		s.isCreator = false
+		s.creatorPeerId = 'demo-alice'
+		s.prepMode = false
+
+		const COUNTDOWN_SECS = 13 // after all peers ready → total ~20 s (3+2+2+13)
+		let cancelled = false
+		const timers: ReturnType<typeof setTimeout>[] = []
+		let countdownInterval: ReturnType<typeof setInterval> | null = null
+
+		function schedule(fn: () => void, ms: number) {
+			const t = setTimeout(() => { if (!cancelled) fn() }, ms)
+			timers.push(t)
+		}
+
+		function stopCountdown() {
+			if (countdownInterval !== null) { clearInterval(countdownInterval); countdownInterval = null }
+			demoResetIn = null
+		}
+
+		function startCountdown(secs: number) {
+			stopCountdown()
+			demoResetIn = secs
+			countdownInterval = setInterval(() => {
+				if (cancelled) { stopCountdown(); return }
+				demoResetIn = demoResetIn !== null && demoResetIn > 1 ? demoResetIn - 1 : null
+				if (demoResetIn === null) stopCountdown()
+			}, 1000)
+		}
+
+		function resetDemoRound() {
+			stopCountdown()
+			s.readyPeers = new Set()
+			s.selfReady = false
+			s.revealed = false
+			s.peerEstimateMap = new Map()
+			s.conclusionMode = null
+			s.conclusionSigma = null
+		}
+
+		function runLoop() {
+			timers.forEach(clearTimeout)
+			timers.length = 0
+			resetDemoRound()
+			schedule(() => {
+				s.readyPeers = new Set(['demo-alice'])
+				schedule(() => {
+					s.readyPeers = new Set(['demo-alice', 'demo-bob'])
+					schedule(() => {
+						s.peerEstimateMap = new Map(
+							DEMO_PEER_IDS.map((id) => [id, { peerId: id, ...DEMO_ESTIMATES[id] }]),
+						)
+						s.readyPeers = new Set([...DEMO_PEER_IDS])
+						// User clicks "Ready ✓" themselves — checkAutoReveal fires when allReady
+						startCountdown(COUNTDOWN_SECS)
+						schedule(runLoop, COUNTDOWN_SECS * 1000)
+					}, 2000)
+				}, 2000)
+			}, 3000)
+		}
+
+		runLoop()
+
+		return () => {
+			cancelled = true
+			timers.forEach(clearTimeout)
+			stopCountdown()
+		}
+	})
+
+	// Animate Alice dragging the conclusion curve after demo reveal
+	$effect(() => {
+		if (!demoMode || !s.revealed) return
+
+		// Animate mode from ~8 → 12 (snaps to 13 pts) over ~2s, 2s after reveal
+		const STEPS = [8.0, 9.2, 10.5, 11.4, 12.0]
+		const SIGMA = 0.25
+		let stepIndex = 0
+		let intervalId: ReturnType<typeof setInterval> | null = null
+
+		const startId = setTimeout(() => {
+			intervalId = setInterval(() => {
+				if (stepIndex < STEPS.length) {
+					s.conclusionMode = STEPS[stepIndex]
+					s.conclusionSigma = SIGMA
+					stepIndex++
+				} else {
+					clearInterval(intervalId!)
+					intervalId = null
+				}
+			}, 300)
+		}, 2000)
+
+		return () => {
+			clearTimeout(startId)
+			if (intervalId !== null) clearInterval(intervalId)
+		}
+	})
+	// --- End demo mode ------------------------------------------------------
+
 	// Tick counter for stale-peer detection (updates every 5s to re-evaluate)
 	const STALE_THRESHOLD = 15_000
 	let staleTick = $state(0)
@@ -315,8 +450,8 @@
 	}
 </script>
 
-{#if !s.session}
-	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} {nameConflict} />
+{#if !s.session && !demoMode}
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>
@@ -346,7 +481,7 @@
 				</svg>
 				<span class="logo-text">Skatting</span>
 			</h1>
-				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(s.session!.roomId)}>{s.session.roomId} <span class="copy-icon">⎘</span></span>
+				<span class="room-badge" role="button" tabindex="0" title="Copy room code" data-tour="room" onclick={() => navigator.clipboard.writeText(displayRoomId)}>{displayRoomId} <span class="copy-icon">⎘</span></span>
 				{#if s.isCreator && estimatedCount === 0 && s.history.length === 0}
 					{#if s.unit === 'points' || s.unit === 'days'}
 						<select class="unit-select" value={s.unit} onchange={(e) => changeUnit(s, (e.target as HTMLSelectElement).value)}>
@@ -432,12 +567,20 @@
 								<button onclick={() => { returnToPrep(s); showOverflow = false }}>Back to prep</button>
 							{/if}
 							<button onclick={() => { showOnboarding = true; showOverflow = false }}>Help ?</button>
-							<button class="overflow-leave" onclick={() => { showOverflow = false; leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) }}>Leave</button>
+							<button class="overflow-leave" onclick={() => { showOverflow = false; if (demoMode) { exitDemo() } else { leaveSession(s); const url = new URL(window.location.href); url.searchParams.delete('room'); window.history.replaceState({}, '', url.toString()) } }}>Leave</button>
 						</div>
 					{/if}
 				</div>
 			</div>
 		</header>
+
+		{#if demoMode}
+			<div class="demo-banner">
+				Demo — drag the blob to try it out!
+				{#if demoResetIn !== null}<span class="demo-timer">Resets in {demoResetIn}s</span>{/if}
+				<a href="." onclick={(e) => { e.preventDefault(); exitDemo() }}>Start a real session →</a>
+			</div>
+		{/if}
 
 		{#if s.connectionError}
 			<div class="connection-error">
@@ -808,6 +951,32 @@
 	.topic-input:focus {
 		border-color: var(--c-accent);
 		background: rgba(245, 240, 230, 0.6);
+	}
+
+	.demo-banner {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--sp-sm);
+		background: var(--c-accent-bg);
+		border: 1px dashed var(--c-accent-border);
+		border-radius: var(--radius-sm);
+		color: var(--c-accent-text);
+		font-size: var(--fs-sm);
+		padding: var(--sp-xs) var(--sp-md);
+	}
+
+	.demo-banner a {
+		font-weight: 600;
+		color: var(--c-accent-text);
+	}
+
+	.demo-timer {
+		background: var(--c-accent-bg-hover);
+		border-radius: var(--radius-lg);
+		padding: 1px var(--sp-sm);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
 	.connection-error {

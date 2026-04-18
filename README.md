@@ -4,6 +4,9 @@
 [![Deploy](https://github.com/WimYedema/skatting/actions/workflows/deploy.yml/badge.svg)](https://github.com/WimYedema/skatting/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+<!-- Replace the line below with: ![Three team members reveal their estimates simultaneously](docs/screenshot-reveal.png) -->
+> **Screenshot coming soon** — see [docs/SCREENSHOT-SCRIPT.md](docs/SCREENSHOT-SCRIPT.md) for how to produce one.
+
 A real-time, peer-to-peer estimation tool that replaces discrete planning poker with **two-dimensional continuous input**. Users position a log-normal "blob" on a plane where X = effort and Y = certainty — capturing both the estimate and confidence in a single gesture.
 
 **Fully serverless** — peers connect directly via WebRTC, signaled through Nostr relays and MQTT. Deployed as a single static HTML file.

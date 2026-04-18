@@ -17,9 +17,10 @@
 		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
 		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
 		nameConflict?: string
+		onDemo?: () => void
 	}
 
-	let { onJoin, queryRoomState, queryPrepDone, nameConflict = '' }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone, nameConflict = '', onDemo }: Props = $props()
 
 	// Check URL for a shared room link (?room=XYZ)
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
@@ -524,6 +525,10 @@
 	{/if}
 
 	<div class="lobby-footer">
+		{#if onDemo}
+			<button class="about-link" onclick={onDemo}>Try demo</button>
+			<span class="footer-dot">·</span>
+		{/if}
 		<button class="about-link" onclick={() => (showBrief = true)}>Learn more</button>
 		<span class="footer-dot">·</span>
 		<button class="about-link" onclick={() => (showAbout = true)}>About</button>
