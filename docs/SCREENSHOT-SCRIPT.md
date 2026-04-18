@@ -3,10 +3,99 @@
 A step-by-step playbook to produce the best screenshots for marketing materials
 (README hero image, GitHub social preview, blog posts, etc.).
 
-**Setup:** You need 3 browser windows/tabs open simultaneously.  
-Use one normal window + one incognito window + one extra incognito tab  
-(Chrome: Ctrl+Shift+N for incognito; then Ctrl+T for an extra tab in it).  
-URL: https://wimyedema.github.io/skatting/ (or `npm run dev` for local).
+**Setup:** One browser window is enough — use demo mode.  
+URL: https://wimyedema.github.io/skatting/?demo (or `npm run dev` locally, then add `?demo`)
+
+Demo mode pre-populates Alice, Bob, and Carol with realistic blob positions and animates
+the full reveal sequence automatically. No extra windows or incognito tabs needed.
+
+---
+
+## Shot A — The Reveal (primary hero image)
+
+This is the money shot: all blobs revealed, three participants with different
+certainty levels, and Alice animating the conclusion curve to "call it 13".
+
+### Steps
+
+1. Open `/?demo`
+2. Wait for all three peer badges to appear and go ready (about 7 s)
+3. Click **Ready ✓** — the blobs all reveal simultaneously
+4. Wait ~2 s — Alice's conclusion curve slides into place and the label appears
+5. **Take the screenshot** when the "call it 13" label is visible on the canvas
+
+> Best crop: full canvas including the axis ticks, participant badges, and the
+> verdict label. The demo banner at the top can be cropped out.
+
+**Optional Shot A0 — "hidden blobs" / in-progress state**  
+Don't click Ready yet. Screenshot the canvas showing your blob (green) while
+Alice, Bob, and Carol show as colored name badges — estimates still hidden.
+This illustrates the pre-reveal phase well.
+
+---
+
+## Shot B — The Divergence (great for blog posts / alt hero)
+
+Demo mode uses sensible blob positions. For a more dramatic *disagreement* shot
+you'll need a real session with 2 windows (you + one incognito tab):
+
+1. Window 1: **Alice** — New Session, Points, drag blob far left (~30% across, ~65% up)
+2. Window 2: **Bob** — Join, drag blob far right (~75% across, ~30% up)
+3. Both click Ready ✓ → reveal
+
+After reveal: two blobs at opposite ends of the canvas with minimal overlap.
+The facilitation prompt "Big spread — discuss anchoring bias" should appear.
+Screenshot Window 1 showing the full canvas with that prompt.
+
+> If a 2-window setup is too awkward, skip Shot B — Shot A from demo mode is
+> sufficient for the README hero and social preview.
+
+---
+
+## Shot C — Backlog Panel (good for feature showcase)
+
+This shows the sidebar + ticket list. Needs a real session (one window is fine as creator).
+
+1. Open the app, enter name **Alice**, click **+ New Session**, choose **Points**
+2. Click **+ Add tickets ▾ → Import CSV**, import `example-backlog.csv` from the repo root
+3. The sidebar opens with tickets. Estimate a couple (drag + Ready ✓) so they get verdict badges.
+4. Navigate to the next ticket and place a blob (not yet revealed)
+
+**Take a screenshot** showing:
+- Sidebar on the right with 2–3 tickets having verdict badges
+- Canvas with the current blob visible
+- Topic name visible at the top
+
+---
+
+## Shot D — Lobby (simple, for docs)
+
+1. Open the app fresh (no saved sessions)
+2. Enter name **Alice** in the name field
+3. Do NOT click any button yet
+
+Screenshot the lobby screen as-is — clean, minimal.
+
+---
+
+## Tips for great screenshots
+
+- **Browser zoom**: Set to 100% (Ctrl+0). The sketchy aesthetic looks best at native pixel ratio.
+- **Window size**: Aim for 1280×800 or 1440×900 — wide enough to show canvas comfortably.
+- **DevTools device mode** (F12 → Ctrl+Shift+M): lock to 1280×800, then
+  "Capture screenshot" (Ctrl+Shift+P → "Capture screenshot") — cleanest result, no OS chrome.
+- **Crop the demo banner**: the blue "Demo — drag the blob…" bar at the top can be cropped
+  out of marketing images — it's only useful for visitors trying the live app.
+
+## Which shot goes where
+
+| Use | Best shot |
+|---|---|
+| README hero (top of page) | Shot A — reveal with "call it 13" label |
+| GitHub social preview (1280×640) | Shot A — wide canvas crop |
+| Blog post thumbnail | Shot B — divergence state (more dramatic) |
+| Feature row: "Backlog import" | Shot C |
+| Feature row: "Join in seconds" | Shot D |
 
 ---
 
