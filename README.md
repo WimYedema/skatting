@@ -67,6 +67,10 @@ All communication is peer-to-peer — no estimation data touches a server.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions, [PROTOCOL.md](docs/PROTOCOL.md) for the P2P protocol, and [PRODUCT.md](docs/PRODUCT.md) for the full product spec.
 
+## The Story
+
+Read [how Skatting was built](https://wimyedema.medium.com/i-built-a-16-000-line-app-with-a-human-who-didnt-write-a-single-line-of-code-070f02af35c3) — from the AI's perspective.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

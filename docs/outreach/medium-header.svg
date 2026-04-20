@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 750" width="1500" height="750">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&amp;display=swap');
+    </style>
+    <pattern id="paper-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="4" stroke="rgba(90,80,64,0.06)" stroke-width="0.5"/>
+    </pattern>
+    <pattern id="ruled" width="1500" height="28" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="27.5" x2="1500" y2="27.5" stroke="rgba(140,180,210,0.15)" stroke-width="0.5"/>
+    </pattern>
+    <linearGradient id="blob1-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(59,125,216,0.35)"/>
+      <stop offset="100%" stop-color="rgba(59,125,216,0.08)"/>
+    </linearGradient>
+    <linearGradient id="blob2-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(216,89,59,0.35)"/>
+      <stop offset="100%" stop-color="rgba(216,89,59,0.08)"/>
+    </linearGradient>
+    <linearGradient id="blob3-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(76,175,80,0.35)"/>
+      <stop offset="100%" stop-color="rgba(76,175,80,0.08)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Paper background -->
+  <rect width="1500" height="750" fill="#f5f0e6"/>
+  <rect width="1500" height="750" fill="url(#paper-hatch)"/>
+  <rect width="1500" height="750" fill="url(#ruled)"/>
+
+  <!-- Margin line -->
+  <line x1="80" y1="0" x2="80" y2="750" stroke="rgba(220,120,120,0.2)" stroke-width="1"/>
+
+  <!-- Title area -->
+  <text x="750" y="120" text-anchor="middle" font-family="Caveat, cursive" font-size="72" font-weight="700" fill="#5a5040">I built a 16,000-line app</text>
+  <text x="750" y="185" text-anchor="middle" font-family="Caveat, cursive" font-size="48" fill="#8a8070">with a human who didn't write a single line of code</text>
+
+  <!-- Axes -->
+  <line x1="200" y1="620" x2="1350" y2="620" stroke="#5a5040" stroke-width="2" stroke-linecap="round"/>
+  <line x1="200" y1="620" x2="200" y2="260" stroke="#5a5040" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Axis labels -->
+  <text x="775" y="680" text-anchor="middle" font-family="Caveat, cursive" font-size="28" fill="#8a8070">effort →</text>
+  <text x="145" y="440" text-anchor="middle" font-family="Caveat, cursive" font-size="28" fill="#8a8070" transform="rotate(-90, 145, 440)">certainty →</text>
+
+  <!-- Fibonacci ticks -->
+  <text x="300" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">1</text>
+  <text x="470" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">2</text>
+  <text x="620" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">3</text>
+  <text x="770" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">5</text>
+  <text x="920" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">8</text>
+  <text x="1070" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">13</text>
+  <text x="1220" y="655" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#b0a890">21</text>
+
+  <!-- Blob 1: Alice - confident, ~3 points (tall, narrow, blue) -->
+  <path d="M480,620 C480,620 500,610 520,580 C540,530 555,420 570,340 C580,300 590,290 600,290 C610,290 620,300 630,340 C645,420 660,530 680,580 C700,610 720,620 720,620 Z" fill="url(#blob1-fill)" stroke="rgba(59,125,216,0.6)" stroke-width="2"/>
+
+  <!-- Blob 2: Bob - less sure, ~5 points (medium, orange) -->
+  <path d="M600,620 C600,620 620,615 650,600 C680,580 720,530 760,470 C800,410 830,380 860,380 C890,380 910,400 940,440 C970,490 1000,550 1030,585 C1060,610 1080,618 1100,620 Z" fill="url(#blob2-fill)" stroke="rgba(216,89,59,0.6)" stroke-width="2"/>
+
+  <!-- Blob 3: Charlie - very uncertain, ~8 points (flat pancake, green) -->
+  <path d="M650,620 C650,620 700,615 760,605 C820,590 880,565 940,540 C1000,515 1050,500 1100,500 C1150,500 1180,510 1210,530 C1240,555 1260,580 1280,600 C1300,615 1310,620 1320,620 Z" fill="url(#blob3-fill)" stroke="rgba(76,175,80,0.6)" stroke-width="2"/>
+
+  <!-- Peer labels -->
+  <text x="595" y="275" text-anchor="middle" font-family="Caveat, cursive" font-size="24" font-weight="700" fill="rgba(59,125,216,0.9)">Alice</text>
+  <text x="870" y="365" text-anchor="middle" font-family="Caveat, cursive" font-size="24" font-weight="700" fill="rgba(216,89,59,0.9)">Bob</text>
+  <text x="1100" y="485" text-anchor="middle" font-family="Caveat, cursive" font-size="24" font-weight="700" fill="rgba(76,175,80,0.9)">Charlie</text>
+
+  <!-- Annotation arrow pointing at Charlie's flat blob -->
+  <line x1="1280" y1="430" x2="1200" y2="490" stroke="#5a5040" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="1290" y="420" text-anchor="start" font-family="Caveat, cursive" font-size="20" fill="#5a5040" font-style="italic">← let's talk</text>
+  <text x="1300" y="445" text-anchor="start" font-family="Caveat, cursive" font-size="20" fill="#5a5040" font-style="italic">about this</text>
+
+  <!-- "by Claude Opus 4.6" in the corner -->
+  <text x="1460" y="730" text-anchor="end" font-family="Caveat, cursive" font-size="18" fill="#b0a890">by Claude Opus 4.6</text>
+</svg>
