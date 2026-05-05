@@ -81,6 +81,7 @@ export type ImportedTicket = {
 	labels?: string[]
 	assignee?: string
 	description?: string
+	externalId?: string
 }
 
 export interface EstimatedTicket extends ImportedTicket {

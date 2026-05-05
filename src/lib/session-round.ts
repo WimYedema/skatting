@@ -135,6 +135,7 @@ export function addOrUpdateHistory(s: SessionState, entry: HistoryEntry): void {
 			roomId: s.session.roomId,
 			timestamp: Date.now(),
 			ticketId: currentTicket?.id,
+			externalId: currentTicket?.externalId,
 		})
 		s.persistentHistory = s.storage.getVerdictHistory(s.unit)
 	}
