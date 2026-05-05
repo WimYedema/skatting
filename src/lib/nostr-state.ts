@@ -7,7 +7,14 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, SimplePool } from 'nostr-tools'
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils'
 import { NOSTR_RELAY_URLS } from './config'
-import { computeDTag, decrypt, deriveRoomKey, encrypt } from './crypto'
+import {
+	computeBridgeDTag,
+	computeDTag,
+	decrypt,
+	deriveBridgeKey,
+	deriveRoomKey,
+	encrypt,
+} from './crypto'
 import type { ImportedTicket } from './types'
 
 // --- Kind constants ---
@@ -198,6 +205,133 @@ function isPrepDoneSignal(v: unknown): v is PrepDoneSignal {
 	return (
 		typeof obj.name === 'string' &&
 		typeof obj.ticketCount === 'number' &&
+		typeof obj.timestamp === 'number'
+	)
+}
+
+// --- Bridge types (Slim ↔ Estimate) ---
+
+/** Estimation request pushed from Slim → Estimate via bridge channel. */
+export interface EstimationRequest {
+	type: 'estimation-request'
+	deliverables: {
+		id: string
+		title: string
+		kind: 'delivery' | 'discovery'
+	}[]
+	unit: 'days' | 'points'
+	boardName?: string
+	timestamp: number
+}
+
+/** Single verdict entry for bridge publishing. */
+export interface BridgeVerdict {
+	externalId: string
+	title: string
+	mu: number
+	sigma: number
+	n: number
+	snappedValue: string
+	unit: string
+	estimatedAt: number
+}
+
+// --- Bridge query ---
+
+/**
+ * Query the bridge channel for an estimation request from Slim.
+ * Returns null if no request is found.
+ */
+export async function queryEstimationRequest(roomCode: string): Promise<EstimationRequest | null> {
+	const [bridgeKey, dTag] = await Promise.all([
+		deriveBridgeKey(roomCode),
+		computeBridgeDTag(roomCode, 'request'),
+	])
+
+	const pool = new SimplePool()
+	try {
+		const event = await pool.get(NOSTR_RELAY_URLS, {
+			kinds: [KIND_ROOM_STATE],
+			'#d': [dTag],
+		})
+		if (!event) return null
+
+		const plaintext = await decrypt(bridgeKey, event.content)
+		const data: unknown = JSON.parse(plaintext)
+		if (!isEstimationRequest(data)) return null
+		return data
+	} catch {
+		return null
+	} finally {
+		pool.close(NOSTR_RELAY_URLS)
+	}
+}
+
+// --- Bridge publish ---
+
+/**
+ * Publish verdict results back to the bridge channel for Slim to consume.
+ */
+export async function publishBridgeVerdicts(
+	roomCode: string,
+	secretKeyHex: string,
+	verdicts: BridgeVerdict[],
+): Promise<void> {
+	const [bridgeKey, dTag] = await Promise.all([
+		deriveBridgeKey(roomCode),
+		computeBridgeDTag(roomCode, 'verdicts'),
+	])
+	const payload = {
+		type: 'verdict-result',
+		verdicts,
+		timestamp: Date.now(),
+	}
+	const ciphertext = await encrypt(bridgeKey, JSON.stringify(payload))
+	const sk = hexToBytes(secretKeyHex)
+	const expiration = String(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60)
+
+	const event = finalizeEvent(
+		{
+			kind: KIND_ROOM_STATE,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [
+				['d', dTag],
+				['expiration', expiration],
+			],
+			content: ciphertext,
+		},
+		sk,
+	)
+
+	const pool = new SimplePool()
+	try {
+		await Promise.any(pool.publish(NOSTR_RELAY_URLS, event))
+	} finally {
+		pool.close(NOSTR_RELAY_URLS)
+	}
+}
+
+// --- Bridge helpers ---
+
+/**
+ * Convert an estimation request from Slim into ImportedTickets for the backlog.
+ * Maps Slim deliverable IDs into externalId so verdicts can be linked back.
+ */
+export function estimationRequestToTickets(request: EstimationRequest): ImportedTicket[] {
+	return request.deliverables.map((d, i) => ({
+		id: `bridge-${i + 1}`,
+		title: d.title,
+		externalId: d.id,
+	}))
+}
+
+function isEstimationRequest(v: unknown): v is EstimationRequest {
+	if (typeof v !== 'object' || v === null) return false
+	const obj = v as Record<string, unknown>
+	return (
+		obj.type === 'estimation-request' &&
+		Array.isArray(obj.deliverables) &&
+		typeof obj.unit === 'string' &&
 		typeof obj.timestamp === 'number'
 	)
 }
