@@ -102,3 +102,43 @@ export function parseRoomCode(code: string): ParsedRoomCode {
 	}
 	return { teamCode: code.slice(0, idx), sessionCode: code.slice(idx + 1) }
 }
+
+// ── Bridge event types (Slim ↔ Skatting) ──
+
+/** Event type prefix for estimation requests. Full type: `slim:estimation-request:{sessionCode}`. */
+export const EVENT_ESTIMATION_REQUEST = 'slim:estimation-request'
+/** Event type prefix for verdict results. Full type: `skatting:verdicts:{sessionCode}`. */
+export const EVENT_VERDICTS = 'skatting:verdicts'
+
+/** Build a session-scoped event type: `prefix:sessionCode`. */
+export function sessionEventType(prefix: string, sessionCode: string): string {
+	return `${prefix}:${sessionCode}`
+}
+
+/** Estimation request payload (Slim → Skatting). */
+export interface EstimationRequestPayload {
+	deliverables: {
+		id: string
+		title: string
+		kind: 'delivery' | 'discovery'
+	}[]
+	unit: 'days' | 'points'
+	boardName?: string
+}
+
+/** Single verdict entry. */
+export interface VerdictEntry {
+	externalId: string
+	title: string
+	mu: number
+	sigma: number
+	n: number
+	snappedValue: string
+	unit: string
+	estimatedAt: number
+}
+
+/** Verdict result payload (Skatting → Slim). */
+export interface VerdictResultPayload {
+	verdicts: VerdictEntry[]
+}
