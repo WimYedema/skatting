@@ -11,17 +11,21 @@
 		getSavedSessions,
 		type SavedSession,
 	} from '../lib/session-store'
+	import { parseRoomCode } from '../lib/samen/types'
+	import { rosterNames } from '../lib/samen/roster'
+	import type { TeamSpace } from '../lib/samen/types'
 
 	interface Props {
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
 		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
 		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
 		queryBridgeRequest?: (roomCode: string) => Promise<EstimationRequest | null>
+		queryTeamRoster?: (teamCode: string) => Promise<TeamSpace | null>
 		nameConflict?: string
 		onDemo?: () => void
 	}
 
-	let { onJoin, queryRoomState, queryPrepDone, queryBridgeRequest, nameConflict = '', onDemo }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone, queryBridgeRequest, queryTeamRoster, nameConflict = '', onDemo }: Props = $props()
 
 	// Check URL for a shared room link (?room=XYZ)
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
@@ -68,8 +72,12 @@
 		ticketCount?: number
 	}
 
-	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string): KnownName[] {
+	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string, teamNames: string[] = []): KnownName[] {
 		const nameMap = new Map<string, KnownName>()
+		// From team roster (highest priority — canonical names)
+		for (const name of teamNames) {
+			nameMap.set(name.toLowerCase(), { name, isCreator: false })
+		}
 		// From Nostr room state (creator name published by room creator)
 		if (roomState?.creatorName) {
 			nameMap.set(roomState.creatorName.toLowerCase(), { name: roomState.creatorName, isCreator: true })
@@ -98,18 +106,31 @@
 		return Array.from(nameMap.values())
 	}
 
+	/** Query team roster names from a compound room code's team prefix. Returns [] for standalone codes. */
+	async function fetchTeamNames(code: string): Promise<string[]> {
+		const { teamCode } = parseRoomCode(code)
+		if (!teamCode || !queryTeamRoster) return []
+		try {
+			const roster = await queryTeamRoster(teamCode)
+			return roster ? rosterNames(roster) : []
+		} catch {
+			return []
+		}
+	}
+
 	async function handleLookup() {
 		if (!queryRoomState || !queryPrepDone) return
 		const code = roomId.trim().toLowerCase()
 		if (code.length < 4) return
 		loadingPreview = true
 		try {
-			const [roomState, prepDone, bridgeRequest] = await Promise.all([
+			const [roomState, prepDone, bridgeRequest, teamNames] = await Promise.all([
 				queryRoomState(code),
 				queryPrepDone(code),
 				queryBridgeRequest?.(code) ?? Promise.resolve(null),
+				fetchTeamNames(code),
 			])
-			const knownNames = buildKnownNames(roomState, prepDone, code)
+			const knownNames = buildKnownNames(roomState, prepDone, code, teamNames)
 			roomPreview = { roomState, prepDone, knownNames, bridgeRequest }
 		} catch {
 			// Query failed — fall back to direct join
@@ -184,9 +205,9 @@
 		// Fire off Nostr lookup to enrich with live data
 		if (queryRoomState && queryPrepDone) {
 			loadingPreview = true
-			Promise.all([queryRoomState(saved.roomId), queryPrepDone(saved.roomId)])
-				.then(([roomState, prepDone]) => {
-					const enriched = buildKnownNames(roomState, prepDone, saved.roomId)
+			Promise.all([queryRoomState(saved.roomId), queryPrepDone(saved.roomId), fetchTeamNames(saved.roomId)])
+				.then(([roomState, prepDone, teamNames]) => {
+					const enriched = buildKnownNames(roomState, prepDone, saved.roomId, teamNames)
 					roomPreview = { roomState, prepDone, knownNames: enriched }
 				})
 				.catch(() => {

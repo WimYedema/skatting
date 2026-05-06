@@ -27,6 +27,7 @@
 	} from './lib/nostr-state'
 	import { createSession, getPeerColor, selfId } from './lib/peer'
 	import { saveSession, createScopedStorage, setStorageQuotaHandler } from './lib/session-store'
+	import { queryRoster as queryTeamRoster } from './lib/samen/roster-sync'
 	import {
 		createInitialState,
 		getCurrentTicket,
@@ -494,7 +495,7 @@
 </script>
 
 {#if !s.session && !demoMode}
-	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} queryBridgeRequest={queryEstimationRequest} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} queryBridgeRequest={queryEstimationRequest} {queryTeamRoster} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>
