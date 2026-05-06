@@ -15,6 +15,9 @@ import {
 	deriveRoomKey,
 	encrypt,
 } from './crypto'
+import { parseRoomCode, sessionEventType, EVENT_ESTIMATION_REQUEST, EVENT_VERDICTS, type EstimationRequestPayload, type VerdictResultPayload, type VerdictEntry } from './samen/types'
+import { createEvent, publishEvent, queryEventByType } from './samen/events'
+import { type SyncKeys } from './samen/nostr-config'
 import type { ImportedTicket } from './types'
 
 // --- Kind constants ---
@@ -240,9 +243,26 @@ export interface BridgeVerdict {
 
 /**
  * Query the bridge channel for an estimation request from Slim.
- * Returns null if no request is found.
+ * Compound room codes query the SamenEvent bus; standalone codes use legacy bridge.
  */
 export async function queryEstimationRequest(roomCode: string): Promise<EstimationRequest | null> {
+	const { teamCode, sessionCode } = parseRoomCode(roomCode)
+	if (teamCode) {
+		const eventType = sessionEventType(EVENT_ESTIMATION_REQUEST, sessionCode)
+		const event = await queryEventByType(teamCode, eventType)
+		if (!event) return null
+		const payload = event.payload as EstimationRequestPayload
+		if (!Array.isArray(payload?.deliverables)) return null
+		return {
+			type: 'estimation-request',
+			deliverables: payload.deliverables,
+			unit: payload.unit,
+			boardName: payload.boardName,
+			timestamp: event.publishedAt,
+		}
+	}
+
+	// Legacy bridge for standalone rooms
 	const [bridgeKey, dTag] = await Promise.all([
 		deriveBridgeKey(roomCode),
 		computeBridgeDTag(roomCode, 'request'),
@@ -271,12 +291,31 @@ export async function queryEstimationRequest(roomCode: string): Promise<Estimati
 
 /**
  * Publish verdict results back to the bridge channel for Slim to consume.
+ * Compound room codes route through the SamenEvent bus; standalone codes use legacy bridge.
  */
 export async function publishBridgeVerdicts(
 	roomCode: string,
 	secretKeyHex: string,
 	verdicts: BridgeVerdict[],
 ): Promise<void> {
+	const { teamCode, sessionCode } = parseRoomCode(roomCode)
+	if (teamCode) {
+		const payload: VerdictResultPayload = { verdicts }
+		const event = createEvent(
+			sessionEventType(EVENT_VERDICTS, sessionCode),
+			1,
+			payload,
+			'anonymous',
+		)
+		const keys: SyncKeys = {
+			secretKeyHex,
+			publicKeyHex: getPublicKey(hexToBytes(secretKeyHex)),
+		}
+		await publishEvent(teamCode, keys, event)
+		return
+	}
+
+	// Legacy bridge for standalone rooms
 	const [bridgeKey, dTag] = await Promise.all([
 		deriveBridgeKey(roomCode),
 		computeBridgeDTag(roomCode, 'verdicts'),
