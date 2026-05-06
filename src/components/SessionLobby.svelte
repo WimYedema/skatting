@@ -12,8 +12,9 @@
 		type SavedSession,
 	} from '../lib/session-store'
 	import { parseRoomCode } from '../lib/samen/types'
-	import { rosterNames } from '../lib/samen/roster'
+	import { rosterNames, findMemberByName } from '../lib/samen/roster'
 	import type { TeamSpace } from '../lib/samen/types'
+	import { loadCachedRoster, saveCachedRoster, loadIdentity, saveIdentity } from '../lib/samen/roster-store'
 
 	interface Props {
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
@@ -31,7 +32,7 @@
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
 
 	let roomId = $state(urlRoom || '')
-	let userName = $state(getLastUserName())
+	let userName = $state(loadIdentity()?.displayName || getLastUserName())
 	let unit = $state('points')
 	let customUnit = $state('')
 	let effectiveUnit = $derived(unit === 'custom' ? (customUnit.trim() || 'units') : unit)
@@ -106,15 +107,26 @@
 		return Array.from(nameMap.values())
 	}
 
+	/** Cached roster for the current compound room code. Used to save identity on join. */
+	let cachedTeamRoster = $state<TeamSpace | null>(null)
+
 	/** Query team roster names from a compound room code's team prefix. Returns [] for standalone codes. */
 	async function fetchTeamNames(code: string): Promise<string[]> {
 		const { teamCode } = parseRoomCode(code)
 		if (!teamCode || !queryTeamRoster) return []
+		// Try localStorage cache first for instant display
+		const cached = loadCachedRoster(teamCode)
+		if (cached) cachedTeamRoster = cached
 		try {
 			const roster = await queryTeamRoster(teamCode)
-			return roster ? rosterNames(roster) : []
+			if (roster) {
+				cachedTeamRoster = roster
+				saveCachedRoster(roster)
+				return rosterNames(roster)
+			}
+			return cached ? rosterNames(cached) : []
 		} catch {
-			return []
+			return cached ? rosterNames(cached) : []
 		}
 	}
 
@@ -169,6 +181,15 @@
 		clearRoomFromUrl()
 	}
 
+	/** Save identity to localStorage if the chosen name matches a roster member. */
+	function trySaveIdentity(name: string) {
+		if (!cachedTeamRoster) return
+		const member = findMemberByName(cachedTeamRoster, name)
+		if (member) {
+			saveIdentity({ memberId: member.id, displayName: member.displayName, publicKeyHex: '' })
+		}
+	}
+
 	function handleSubmit() {
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
@@ -189,6 +210,7 @@
 				)
 				if (match?.isCreator) selectedUnit = match.unit
 			}
+			trySaveIdentity(trimmedName)
 			onJoin(trimmedRoom, trimmedName, selectedUnit)
 		}
 	}
@@ -234,6 +256,7 @@
 			url.searchParams.set('room', selectedSession.roomId)
 			window.history.replaceState({}, '', url.toString())
 		}
+		trySaveIdentity(trimmedName)
 		onJoin(selectedSession.roomId, trimmedName, selectedUnit)
 	}
 

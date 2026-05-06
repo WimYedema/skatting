@@ -28,6 +28,9 @@
 	import { createSession, getPeerColor, selfId } from './lib/peer'
 	import { saveSession, createScopedStorage, setStorageQuotaHandler } from './lib/session-store'
 	import { queryRoster as queryTeamRoster } from './lib/samen/roster-sync'
+	import { loadCachedRoster } from './lib/samen/roster-store'
+	import { parseRoomCode } from './lib/samen/types'
+	import { rosterNames as getRosterNames } from './lib/samen/roster'
 	import {
 		createInitialState,
 		getCurrentTicket,
@@ -282,6 +285,20 @@
 		debugLog('app', 'handleJoin', { roomId, name, selectedUnit })
 		nameConflict = ''
 		connecting = true
+		// Fetch roster for compound room codes — skip name-conflict bounce for roster members
+		const { teamCode } = parseRoomCode(roomId)
+		if (teamCode) {
+			// Try localStorage cache first (SessionLobby caches on lookup)
+			const cached = loadCachedRoster(teamCode)
+			if (cached) {
+				deps.teamRosterNames = getRosterNames(cached)
+			} else {
+				try {
+					const roster = await queryTeamRoster(teamCode)
+					if (roster) deps.teamRosterNames = getRosterNames(roster)
+				} catch { /* non-fatal */ }
+			}
+		}
 		prepareJoin(s, deps, roomId, name, selectedUnit)
 		try {
 			debugLog('app', 'querying Nostr state…')

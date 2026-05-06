@@ -289,7 +289,9 @@ export function createPeerCallbacks(s: SessionState, deps: SessionDeps): PeerCal
 			// Bounce if another peer is using our name and we're the one who should yield.
 			// Only newcomers (joined < 10s ago) can be bounced — established peers stay.
 			// Debounced: ghost peers that join and vanish within 3s are ignored.
-			if (name.toLowerCase() === s.userName.toLowerCase()) {
+			// Skip bounce for roster-identified members (same person, different device).
+			const isRosterName = deps.teamRosterNames?.some((rn) => rn.toLowerCase() === name.toLowerCase())
+			if (name.toLowerCase() === s.userName.toLowerCase() && !isRosterName) {
 				const recentJoin = Date.now() - s.sessionStartedAt < 10_000
 				const theyWin = peerIsCreator && !s.isCreator
 				const tiebreak = peerIsCreator === s.isCreator && deps.selfId > peerId
