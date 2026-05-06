@@ -15,7 +15,7 @@ import {
 	rosterNames,
 	touchMember,
 } from './roster'
-import type { TeamSpace } from './types'
+import { type TeamSpace, compoundRoomCode, parseRoomCode } from './types'
 
 function makeTeam(): TeamSpace {
 	return createTeamSpace('room-123', 'Test Squad', 'Alice', 'pubkey-alice')
@@ -207,5 +207,45 @@ describe('activeRooms', () => {
 		team = archiveRoom(team, 'board-2')
 		expect(activeRooms(team)).toHaveLength(1)
 		expect(activeRooms(team)[0].label).toBe('Active')
+	})
+})
+
+// ── Compound room codes ──
+
+describe('compoundRoomCode', () => {
+	it('joins team code and session code with hyphen', () => {
+		expect(compoundRoomCode('sunfish', 'bakuside')).toBe('sunfish-bakuside')
+	})
+})
+
+describe('parseRoomCode', () => {
+	it('parses compound code into team and session', () => {
+		const parsed = parseRoomCode('sunfish-bakuside')
+		expect(parsed.teamCode).toBe('sunfish')
+		expect(parsed.sessionCode).toBe('bakuside')
+	})
+
+	it('returns null teamCode for standalone codes', () => {
+		const parsed = parseRoomCode('bakuside')
+		expect(parsed.teamCode).toBeNull()
+		expect(parsed.sessionCode).toBe('bakuside')
+	})
+
+	it('treats leading hyphen as standalone', () => {
+		const parsed = parseRoomCode('-bakuside')
+		expect(parsed.teamCode).toBeNull()
+		expect(parsed.sessionCode).toBe('-bakuside')
+	})
+
+	it('treats trailing hyphen as standalone', () => {
+		const parsed = parseRoomCode('sunfish-')
+		expect(parsed.teamCode).toBeNull()
+		expect(parsed.sessionCode).toBe('sunfish-')
+	})
+
+	it('splits only on first hyphen', () => {
+		const parsed = parseRoomCode('team-session-extra')
+		expect(parsed.teamCode).toBe('team')
+		expect(parsed.sessionCode).toBe('session-extra')
 	})
 })

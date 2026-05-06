@@ -74,3 +74,31 @@ export interface SamenIdentity {
 	/** This device's Nostr public key (hex) */
 	publicKeyHex: string
 }
+
+// ── Compound room codes ──
+
+/** Parsed result of a compound room code. */
+export interface ParsedRoomCode {
+	/** Team code prefix, or null for standalone rooms */
+	teamCode: string | null
+	/** The session-specific portion */
+	sessionCode: string
+}
+
+/** Separator between team code and session code in compound room codes. */
+const COMPOUND_SEP = '-'
+
+/** Build a compound room code: `teamCode-sessionCode`. */
+export function compoundRoomCode(teamCode: string, sessionCode: string): string {
+	return `${teamCode}${COMPOUND_SEP}${sessionCode}`
+}
+
+/** Parse a room code into team prefix and session suffix.
+ *  Codes without `-` are standalone (teamCode = null). */
+export function parseRoomCode(code: string): ParsedRoomCode {
+	const idx = code.indexOf(COMPOUND_SEP)
+	if (idx < 1 || idx === code.length - 1) {
+		return { teamCode: null, sessionCode: code }
+	}
+	return { teamCode: code.slice(0, idx), sessionCode: code.slice(idx + 1) }
+}
