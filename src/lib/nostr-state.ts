@@ -17,7 +17,7 @@ import {
 } from './crypto'
 import { parseRoomCode, sessionEventType, EVENT_ESTIMATION_REQUEST, EVENT_VERDICTS, type EstimationRequestPayload, type VerdictResultPayload, type VerdictEntry } from './samen/types'
 import { createEvent, publishEvent, queryEventByType } from './samen/events'
-import { type SyncKeys } from './samen/nostr-config'
+import { type SyncKeys, sessionExpirationTag } from './samen/nostr-config'
 import type { ImportedTicket } from './types'
 
 // --- Kind constants ---
@@ -75,7 +75,7 @@ export async function publishRoomState(
 		{
 			kind: KIND_ROOM_STATE,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: [['d', dTag]],
+			tags: [['d', dTag], sessionExpirationTag()],
 			content: ciphertext,
 		},
 		sk,
@@ -115,6 +115,7 @@ export async function publishPrepDone(
 				['d', dTag],
 				['t', 'prep-done'],
 				['r', roomDTag],
+				sessionExpirationTag(),
 			],
 			content: ciphertext,
 		},
@@ -327,7 +328,6 @@ export async function publishBridgeVerdicts(
 	}
 	const ciphertext = await encrypt(bridgeKey, JSON.stringify(payload))
 	const sk = hexToBytes(secretKeyHex)
-	const expiration = String(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60)
 
 	const event = finalizeEvent(
 		{
@@ -335,7 +335,7 @@ export async function publishBridgeVerdicts(
 			created_at: Math.floor(Date.now() / 1000),
 			tags: [
 				['d', dTag],
-				['expiration', expiration],
+				sessionExpirationTag(),
 			],
 			content: ciphertext,
 		},
