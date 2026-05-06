@@ -291,8 +291,8 @@
 			])
 			debugLog('app', 'Nostr state received', { hasRoomState: !!roomState, prepDoneCount: prepDone.length, hasBridge: !!bridgeRequest })
 			applyNostrState(s, roomState, prepDone)
-			// If creator and no backlog yet, apply bridge estimation request from Slim
-			if (bridgeRequest && s.isCreator && s.backlog.length === 0) {
+			// Apply bridge estimation request from Slim (first joiner with empty backlog)
+			if (bridgeRequest && s.backlog.length === 0) {
 				const tickets = estimationRequestToTickets(bridgeRequest)
 				if (tickets.length > 0) {
 					s.backlog = tickets
@@ -494,7 +494,7 @@
 </script>
 
 {#if !s.session && !demoMode}
-	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} queryBridgeRequest={queryEstimationRequest} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>

@@ -4,7 +4,7 @@
 	import { generateRoomId, MAX_PEERS, NOSTR_RELAY_URLS } from '../lib/config'
 	import { runConnectivityCheck, type ConnectivityResult } from '../lib/connectivity'
 	import { DEBUG } from '../lib/debug'
-	import type { RoomState, PrepDoneSignal } from '../lib/nostr-state'
+	import type { RoomState, PrepDoneSignal, EstimationRequest } from '../lib/nostr-state'
 	import {
 		deleteSession,
 		getLastUserName,
@@ -16,11 +16,12 @@
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
 		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
 		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
+		queryBridgeRequest?: (roomCode: string) => Promise<EstimationRequest | null>
 		nameConflict?: string
 		onDemo?: () => void
 	}
 
-	let { onJoin, queryRoomState, queryPrepDone, nameConflict = '', onDemo }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone, queryBridgeRequest, nameConflict = '', onDemo }: Props = $props()
 
 	// Check URL for a shared room link (?room=XYZ)
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
@@ -58,7 +59,7 @@
 	)
 
 	// Join preview state
-	let roomPreview = $state<{ roomState: RoomState | null; prepDone: PrepDoneSignal[]; knownNames: KnownName[] } | null>(null)
+	let roomPreview = $state<{ roomState: RoomState | null; prepDone: PrepDoneSignal[]; knownNames: KnownName[]; bridgeRequest?: EstimationRequest | null } | null>(null)
 	let loadingPreview = $state(false)
 
 	interface KnownName {
@@ -103,12 +104,13 @@
 		if (code.length < 4) return
 		loadingPreview = true
 		try {
-			const [roomState, prepDone] = await Promise.all([
+			const [roomState, prepDone, bridgeRequest] = await Promise.all([
 				queryRoomState(code),
 				queryPrepDone(code),
+				queryBridgeRequest?.(code) ?? Promise.resolve(null),
 			])
 			const knownNames = buildKnownNames(roomState, prepDone, code)
-			roomPreview = { roomState, prepDone, knownNames }
+			roomPreview = { roomState, prepDone, knownNames, bridgeRequest }
 		} catch {
 			// Query failed — fall back to direct join
 			roomPreview = { roomState: null, prepDone: [], knownNames: buildKnownNames(null, [], code) }
@@ -448,6 +450,13 @@
 				<div class="room-code-large">{roomId}</div>
 				{#if roomPreview.roomState}
 					{@render roomStatePreview(roomPreview.roomState)}
+				{:else if roomPreview.bridgeRequest}
+					<div class="session-preview bridge-preview">
+						<span class="preview-bridge-label">📋 From Slim{#if roomPreview.bridgeRequest.boardName}: {roomPreview.bridgeRequest.boardName}{/if}</span>
+						<span class="preview-meta">
+							{roomPreview.bridgeRequest.deliverables.length} deliverables · {roomPreview.bridgeRequest.unit}
+						</span>
+					</div>
 				{:else}
 					<p class="preview-empty">No session data found — join anyway?</p>
 				{/if}
@@ -847,6 +856,11 @@
 	.preview-empty {
 		color: var(--c-text-ghost);
 		font-style: italic;
+	}
+
+	.preview-bridge-label {
+		font-size: var(--fs-base);
+		font-weight: 500;
 	}
 
 	.preview-loading {
