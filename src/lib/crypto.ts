@@ -60,10 +60,7 @@ export async function deriveBridgeKey(roomCode: string): Promise<CryptoKey> {
 }
 
 /** Compute a bridge d-tag from a room code: base hash + suffix. */
-export async function computeBridgeDTag(
-	roomCode: string,
-	suffix: string,
-): Promise<string> {
+export async function computeBridgeDTag(roomCode: string, suffix: string): Promise<string> {
 	const base = await computeDTag(roomCode)
 	return `${base}-${suffix}`
 }

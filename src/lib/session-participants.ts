@@ -54,7 +54,7 @@ export function hasMic(s: SessionState, selfId: string): boolean {
 }
 
 /** Creator hands the 🎤 to a peer */
-export function handOffMic(s: SessionState, selfId: string, peerId: string): void {
+export function handOffMic(s: SessionState, _selfId: string, peerId: string): void {
 	if (!s.isCreator) return
 	s.micHolder = peerId
 	s.session?.sendMic({ holder: peerId })

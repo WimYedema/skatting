@@ -15,7 +15,7 @@ import {
 	rosterNames,
 	touchMember,
 } from './roster'
-import { type TeamSpace, compoundRoomCode, parseRoomCode } from './types'
+import { compoundRoomCode, parseRoomCode, type TeamSpace } from './types'
 
 function makeTeam(): TeamSpace {
 	return createTeamSpace('room-123', 'Test Squad', 'Alice', 'pubkey-alice')
@@ -77,7 +77,7 @@ describe('removeMember', () => {
 
 describe('renameMember', () => {
 	it('renames a member', () => {
-		const team = renameMember(makeTeam(), makeTeam().members[0].id, 'Alicia')
+		const _team = renameMember(makeTeam(), makeTeam().members[0].id, 'Alicia')
 		// Need to use the same team instance
 		const t = makeTeam()
 		const renamed = renameMember(t, t.members[0].id, 'Alicia')

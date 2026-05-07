@@ -39,18 +39,30 @@ export interface RelayHealth {
 /** Check relay health by attempting a WebSocket connection to each relay.
  *  Returns per-relay reachability and latency. */
 export async function checkRelayHealth(urls: string[] = RELAY_URLS): Promise<RelayHealth[]> {
-	return Promise.all(urls.map(async (url): Promise<RelayHealth> => {
-		const start = Date.now()
-		try {
-			const ws = new WebSocket(url)
-			const ok = await new Promise<boolean>((resolve) => {
-				const timer = setTimeout(() => { ws.close(); resolve(false) }, 5000)
-				ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(true) }
-				ws.onerror = () => { clearTimeout(timer); resolve(false) }
-			})
-			return { url, reachable: ok, latencyMs: ok ? Date.now() - start : null }
-		} catch {
-			return { url, reachable: false, latencyMs: null }
-		}
-	}))
+	return Promise.all(
+		urls.map(async (url): Promise<RelayHealth> => {
+			const start = Date.now()
+			try {
+				const ws = new WebSocket(url)
+				const ok = await new Promise<boolean>((resolve) => {
+					const timer = setTimeout(() => {
+						ws.close()
+						resolve(false)
+					}, 5000)
+					ws.onopen = () => {
+						clearTimeout(timer)
+						ws.close()
+						resolve(true)
+					}
+					ws.onerror = () => {
+						clearTimeout(timer)
+						resolve(false)
+					}
+				})
+				return { url, reachable: ok, latencyMs: ok ? Date.now() - start : null }
+			} catch {
+				return { url, reachable: false, latencyMs: null }
+			}
+		}),
+	)
 }

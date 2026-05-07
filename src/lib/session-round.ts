@@ -1,5 +1,5 @@
 import { getCurrentTicket, MIC_HOLDER_STALE_MS, type SessionState } from './session-state'
-import type { HistoryEntry, PeerEstimate, RevealMessage, VerdictSnapshot } from './types'
+import type { HistoryEntry, RevealMessage, VerdictSnapshot } from './types'
 import type { VerdictResult } from './verdict'
 import { applyVerdict, computeVerdict, upsertHistory } from './verdict'
 

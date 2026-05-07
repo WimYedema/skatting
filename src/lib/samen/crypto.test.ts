@@ -48,21 +48,21 @@ describe('d-tag computation', () => {
 		const roomCode = 'test-room-code'
 		const rosterDTag = await computeRosterDTag(roomCode)
 		const baseDTag = await computeDTag(roomCode)
-		expect(rosterDTag).toBe(baseDTag + '-roster')
+		expect(rosterDTag).toBe(`${baseDTag}-roster`)
 	})
 
 	it('appends -rooms suffix to the base hash', async () => {
 		const roomCode = 'test-room-code'
 		const roomsDTag = await computeRoomsDTag(roomCode)
 		const baseDTag = await computeDTag(roomCode)
-		expect(roomsDTag).toBe(baseDTag + '-rooms')
+		expect(roomsDTag).toBe(`${baseDTag}-rooms`)
 	})
 
 	it('appends -events suffix to the base hash', async () => {
 		const roomCode = 'test-room-code'
 		const eventsDTag = await computeEventsDTag(roomCode)
 		const baseDTag = await computeDTag(roomCode)
-		expect(eventsDTag).toBe(baseDTag + '-events')
+		expect(eventsDTag).toBe(`${baseDTag}-events`)
 	})
 
 	it('all d-tags are distinct for the same room code', async () => {

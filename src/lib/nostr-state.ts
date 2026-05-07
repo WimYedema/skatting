@@ -15,9 +15,16 @@ import {
 	deriveRoomKey,
 	encrypt,
 } from './crypto'
-import { parseRoomCode, sessionEventType, EVENT_ESTIMATION_REQUEST, EVENT_VERDICTS, type EstimationRequestPayload, type VerdictResultPayload, type VerdictEntry } from './samen/types'
 import { createEvent, publishEvent, queryEventByType } from './samen/events'
 import { type SyncKeys, sessionExpirationTag } from './samen/nostr-config'
+import {
+	type EstimationRequestPayload,
+	EVENT_ESTIMATION_REQUEST,
+	EVENT_VERDICTS,
+	parseRoomCode,
+	sessionEventType,
+	type VerdictResultPayload,
+} from './samen/types'
 import type { ImportedTicket } from './types'
 
 // --- Kind constants ---
@@ -111,12 +118,7 @@ export async function publishPrepDone(
 		{
 			kind: KIND_PREP_DONE,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: [
-				['d', dTag],
-				['t', 'prep-done'],
-				['r', roomDTag],
-				sessionExpirationTag(),
-			],
+			tags: [['d', dTag], ['t', 'prep-done'], ['r', roomDTag], sessionExpirationTag()],
 			content: ciphertext,
 		},
 		sk,
@@ -333,10 +335,7 @@ export async function publishBridgeVerdicts(
 		{
 			kind: KIND_ROOM_STATE,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: [
-				['d', dTag],
-				sessionExpirationTag(),
-			],
+			tags: [['d', dTag], sessionExpirationTag()],
 			content: ciphertext,
 		},
 		sk,

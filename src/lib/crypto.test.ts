@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { computeBridgeDTag, computeDTag, decrypt, deriveBridgeKey, deriveRoomKey, encrypt } from './crypto'
+import {
+	computeBridgeDTag,
+	computeDTag,
+	decrypt,
+	deriveBridgeKey,
+	deriveRoomKey,
+	encrypt,
+} from './crypto'
 
 describe('deriveRoomKey', () => {
 	it('returns an AES-GCM CryptoKey', async () => {
