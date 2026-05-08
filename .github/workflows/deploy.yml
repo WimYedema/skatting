@@ -3,6 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,9 +28,21 @@ jobs:
       - run: npm run check
       - run: npm run test
       - run: npm run build
+      - name: Prepare deployment
+        run: |
+          mkdir -p staging/beta
+          cp dist/index.html staging/beta/index.html
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Promote: production = fresh build
+            cp dist/index.html staging/index.html
+          else
+            # Auto-deploy: keep current production, update beta only
+            curl -fsSL https://wimyedema.github.io/skatting/index.html -o staging/index.html \
+              || cp dist/index.html staging/index.html
+          fi
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: staging
 
   deploy:
     needs: check
