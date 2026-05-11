@@ -20,9 +20,17 @@
 		publishPrepDone,
 		queryRoomState,
 		queryPrepDone,
+		queryEstimationRequest,
+		publishBridgeVerdicts,
+		estimationRequestToTickets,
+		type BridgeVerdict,
 	} from './lib/nostr-state'
 	import { createSession, getPeerColor, selfId } from './lib/peer'
 	import { saveSession, createScopedStorage, setStorageQuotaHandler } from './lib/session-store'
+	import { queryRoster as queryTeamRoster } from './lib/samen/roster-sync'
+	import { loadCachedRoster } from './lib/samen/roster-store'
+	import { parseRoomCode } from './lib/samen/types'
+	import { rosterNames as getRosterNames } from './lib/samen/roster'
 	import {
 		createInitialState,
 		getCurrentTicket,
@@ -277,15 +285,42 @@
 		debugLog('app', 'handleJoin', { roomId, name, selectedUnit })
 		nameConflict = ''
 		connecting = true
+		// Fetch roster for compound room codes — skip name-conflict bounce for roster members
+		const { teamCode } = parseRoomCode(roomId)
+		if (teamCode) {
+			// Try localStorage cache first (SessionLobby caches on lookup)
+			const cached = loadCachedRoster(teamCode)
+			if (cached) {
+				deps.teamRosterNames = getRosterNames(cached)
+			} else {
+				try {
+					const roster = await queryTeamRoster(teamCode)
+					if (roster) deps.teamRosterNames = getRosterNames(roster)
+				} catch { /* non-fatal */ }
+			}
+		}
 		prepareJoin(s, deps, roomId, name, selectedUnit)
 		try {
 			debugLog('app', 'querying Nostr state…')
-			const [roomState, prepDone] = await Promise.all([
+			const [roomState, prepDone, bridgeRequest] = await Promise.all([
 				queryRoomState(roomId),
 				queryPrepDone(roomId),
+				queryEstimationRequest(roomId),
 			])
-			debugLog('app', 'Nostr state received', { hasRoomState: !!roomState, prepDoneCount: prepDone.length })
+			debugLog('app', 'Nostr state received', { hasRoomState: !!roomState, prepDoneCount: prepDone.length, hasBridge: !!bridgeRequest })
 			applyNostrState(s, roomState, prepDone)
+			// Apply bridge estimation request from Slim (first joiner with empty backlog)
+			if (bridgeRequest && s.backlog.length === 0) {
+				const tickets = estimationRequestToTickets(bridgeRequest)
+				if (tickets.length > 0) {
+					s.backlog = tickets
+					s.unit = bridgeRequest.unit
+					s.prepMode = true
+					if (s.storage) s.storage.saveBacklog(tickets)
+					selectTicket(s, 0)
+					debugLog('app', 'bridge backlog applied', { count: tickets.length, unit: bridgeRequest.unit })
+				}
+			}
 		} catch {
 			debugLog('app', 'Nostr query failed (non-fatal)')
 		}
@@ -301,6 +336,32 @@
 		if (!s.isCreator && !s.prepMode) {
 			missedRounds = s.backlog.filter((t) => t.median != null).length
 		}
+	}
+
+	/** Publish accumulated verdicts to the bridge channel for Slim to consume. */
+	function syncBridgeVerdicts(): void {
+		if (!s.roomCode || !s.secretKeyHex) return
+		const verdicts: BridgeVerdict[] = []
+		for (const ticket of s.backlog) {
+			if (!ticket.externalId || ticket.median == null) continue
+			const entry = s.history.find((h) => h.label === ticket.title)
+			if (!entry) continue
+			verdicts.push({
+				externalId: ticket.externalId,
+				title: ticket.title,
+				mu: entry.mu,
+				sigma: entry.sigma,
+				n: s.peerIds.length + 1,
+				snappedValue: snapVerdict(ticket.median, s.unit),
+				unit: s.unit,
+				estimatedAt: Date.now(),
+			})
+		}
+		if (verdicts.length === 0) return
+		debugLog('app', 'publishing bridge verdicts', { count: verdicts.length })
+		publishBridgeVerdicts(s.roomCode, s.secretKeyHex, verdicts).catch(() => {
+			debugLog('app', 'bridge verdict publish failed (non-fatal)')
+		})
 	}
 
 	// Derived values
@@ -451,7 +512,7 @@
 </script>
 
 {#if !s.session && !demoMode}
-	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
+	<SessionLobby onJoin={handleJoin} {queryRoomState} {queryPrepDone} queryBridgeRequest={queryEstimationRequest} {queryTeamRoster} {nameConflict} onDemo={() => { demoMode = true; const url = new URL(window.location.href); url.searchParams.set('demo', ''); window.history.replaceState({}, '', url.toString()) }} />
 	{#if connecting}
 		<div class="connecting-overlay">
 			<div class="connecting-spinner"></div>
@@ -525,7 +586,7 @@
 					/>
 				{/if}
 				{#if s.prepMode}
-					<button class="next" onclick={() => handleNext(s, deps)}>
+					<button class="next" onclick={() => { handleNext(s, deps); syncBridgeVerdicts() }}>
 						{s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Finish ✓'}
 					</button>
 					{#if s.isCreator}
@@ -541,7 +602,7 @@
 						>{s.liveAdjust ? '🔓' : '🔒'}</button>
 					{/if}
 					{#if hasVerdict && holdsMic}
-						<button class="next" onclick={() => { handleNext(s, deps, verdictValue) }}>
+						<button class="next" onclick={() => { handleNext(s, deps, verdictValue); syncBridgeVerdicts() }}>
 							{s.backlog.length > 0 && s.backlogIndex < s.backlog.length - 1 ? 'Next issue →' : 'Next →'}
 						</button>
 					{/if}

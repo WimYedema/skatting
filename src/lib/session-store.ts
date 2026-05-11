@@ -66,6 +66,7 @@ export interface HistoryVerdict {
 	timestamp: number
 	roomId?: string
 	ticketId?: string
+	externalId?: string
 }
 
 // --- Scoped storage (isolates per room+user) ---
@@ -189,9 +190,10 @@ export function createScopedStorage(roomId: string, userName: string): ScopedSto
 			try {
 				// Strip runtime-only fields (median, p10, p90, estimateUnit) to avoid
 				// leaking one user's verdicts into another user's backlog view.
-				const clean = tickets.map(({ id, title, url }) => {
+				const clean = tickets.map(({ id, title, url, externalId }) => {
 					const t: ImportedTicket = { id, title }
 					if (url) t.url = url
+					if (externalId) t.externalId = externalId
 					return t
 				})
 				localStorage.setItem(backlogKey, JSON.stringify(clean))

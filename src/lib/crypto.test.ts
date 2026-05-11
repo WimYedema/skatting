@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { computeDTag, decrypt, deriveRoomKey, encrypt } from './crypto'
+import {
+	computeBridgeDTag,
+	computeDTag,
+	decrypt,
+	deriveBridgeKey,
+	deriveRoomKey,
+	encrypt,
+} from './crypto'
 
 describe('deriveRoomKey', () => {
 	it('returns an AES-GCM CryptoKey', async () => {
@@ -84,5 +91,42 @@ describe('encrypt / decrypt', () => {
 		const ct = await encrypt(key, JSON.stringify(data))
 		const result = JSON.parse(await decrypt(key, ct))
 		expect(result).toEqual(data)
+	})
+})
+
+describe('deriveBridgeKey', () => {
+	it('returns an AES-GCM CryptoKey', async () => {
+		const key = await deriveBridgeKey('bakitume')
+		expect(key.algorithm).toMatchObject({ name: 'AES-GCM', length: 256 })
+		expect(key.usages).toContain('encrypt')
+		expect(key.usages).toContain('decrypt')
+	})
+
+	it('produces a different key than deriveRoomKey for the same room code', async () => {
+		const bridgeKey = await deriveBridgeKey('bakitume')
+		const roomKey = await deriveRoomKey('bakitume')
+		const ct = await encrypt(bridgeKey, 'secret')
+		await expect(decrypt(roomKey, ct)).rejects.toThrow()
+	})
+
+	it('round-trips through encrypt/decrypt', async () => {
+		const key = await deriveBridgeKey('bakitume')
+		const ct = await encrypt(key, 'bridge payload')
+		expect(await decrypt(key, ct)).toBe('bridge payload')
+	})
+})
+
+describe('computeBridgeDTag', () => {
+	it('appends the suffix to the base hash', async () => {
+		const base = await computeDTag('bakitume')
+		const request = await computeBridgeDTag('bakitume', 'request')
+		const verdicts = await computeBridgeDTag('bakitume', 'verdicts')
+		expect(request).toBe(`${base}-request`)
+		expect(verdicts).toBe(`${base}-verdicts`)
+	})
+
+	it('bridge d-tag matches pinned value (must match Slim repo)', async () => {
+		const tag = await computeBridgeDTag('bakitume', 'request')
+		expect(tag).toBe('eacdca523b7c0cac-request')
 	})
 })

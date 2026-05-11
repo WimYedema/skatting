@@ -80,6 +80,7 @@ Three independent channels, all broadcasting simultaneously:
 16. **Ghost peer two-phase cleanup** — nameless peers (WebRTC-discovered but never sent a name) get nudged at 5s (re-send own name) and evicted at 10s. Timers cancelled on `onName` or `onPeerLeave`.
 17. **`handleDone` auto-abstains unmoved users** — if `!hasMoved && !selfAbstained`, delegates to `handleAbstain` instead of marking ready (prevents default position from polluting combined estimate).
 18. **`peerSyncPending` gates shared actions** — Ready, Force Reveal, and Abstain are disabled when all peers are nameless (still syncing).
+19. **Roster-identified members skip name-conflict bounce** — when `deps.teamRosterNames` is set (compound room code), `onName` skips the conflict check for names in the roster. Same person on multiple devices shares a canonical roster name.
 
 ### Module responsibilities (quick reference)
 
@@ -204,7 +205,7 @@ npm run dev          # start Vite dev server
 npm run build        # production build (single HTML file)
 npm run check        # svelte-check (type checking)
 npm run lint         # biome check
-npm run test         # vitest run (463+ tests)
+npm run test         # vitest run (512+ tests)
 ```
 
 ## Deployment

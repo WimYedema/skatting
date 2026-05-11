@@ -7,7 +7,24 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, SimplePool } from 'nostr-tools'
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils'
 import { NOSTR_RELAY_URLS } from './config'
-import { computeDTag, decrypt, deriveRoomKey, encrypt } from './crypto'
+import {
+	computeBridgeDTag,
+	computeDTag,
+	decrypt,
+	deriveBridgeKey,
+	deriveRoomKey,
+	encrypt,
+} from './crypto'
+import { createEvent, publishEvent, queryEventByType } from './samen/events'
+import { type SyncKeys, sessionExpirationTag } from './samen/nostr-config'
+import {
+	type EstimationRequestPayload,
+	EVENT_ESTIMATION_REQUEST,
+	EVENT_VERDICTS,
+	parseRoomCode,
+	sessionEventType,
+	type VerdictResultPayload,
+} from './samen/types'
 import type { ImportedTicket } from './types'
 
 // --- Kind constants ---
@@ -65,7 +82,7 @@ export async function publishRoomState(
 		{
 			kind: KIND_ROOM_STATE,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: [['d', dTag]],
+			tags: [['d', dTag], sessionExpirationTag()],
 			content: ciphertext,
 		},
 		sk,
@@ -101,11 +118,7 @@ export async function publishPrepDone(
 		{
 			kind: KIND_PREP_DONE,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: [
-				['d', dTag],
-				['t', 'prep-done'],
-				['r', roomDTag],
-			],
+			tags: [['d', dTag], ['t', 'prep-done'], ['r', roomDTag], sessionExpirationTag()],
 			content: ciphertext,
 		},
 		sk,
@@ -198,6 +211,165 @@ function isPrepDoneSignal(v: unknown): v is PrepDoneSignal {
 	return (
 		typeof obj.name === 'string' &&
 		typeof obj.ticketCount === 'number' &&
+		typeof obj.timestamp === 'number'
+	)
+}
+
+// --- Bridge types (Slim ↔ Estimate) ---
+
+/** Estimation request pushed from Slim → Estimate via bridge channel. */
+export interface EstimationRequest {
+	type: 'estimation-request'
+	deliverables: {
+		id: string
+		title: string
+		kind: 'delivery' | 'discovery'
+	}[]
+	unit: 'days' | 'points'
+	boardName?: string
+	timestamp: number
+}
+
+/** Single verdict entry for bridge publishing. */
+export interface BridgeVerdict {
+	externalId: string
+	title: string
+	mu: number
+	sigma: number
+	n: number
+	snappedValue: string
+	unit: string
+	estimatedAt: number
+}
+
+// --- Bridge query ---
+
+/**
+ * Query the bridge channel for an estimation request from Slim.
+ * Compound room codes query the SamenEvent bus; standalone codes use legacy bridge.
+ */
+export async function queryEstimationRequest(roomCode: string): Promise<EstimationRequest | null> {
+	const { teamCode, sessionCode } = parseRoomCode(roomCode)
+	if (teamCode) {
+		const eventType = sessionEventType(EVENT_ESTIMATION_REQUEST, sessionCode)
+		const event = await queryEventByType(teamCode, eventType)
+		if (!event) return null
+		const payload = event.payload as EstimationRequestPayload
+		if (!Array.isArray(payload?.deliverables)) return null
+		return {
+			type: 'estimation-request',
+			deliverables: payload.deliverables,
+			unit: payload.unit,
+			boardName: payload.boardName,
+			timestamp: event.publishedAt,
+		}
+	}
+
+	// Legacy bridge for standalone rooms
+	const [bridgeKey, dTag] = await Promise.all([
+		deriveBridgeKey(roomCode),
+		computeBridgeDTag(roomCode, 'request'),
+	])
+
+	const pool = new SimplePool()
+	try {
+		const event = await pool.get(NOSTR_RELAY_URLS, {
+			kinds: [KIND_ROOM_STATE],
+			'#d': [dTag],
+		})
+		if (!event) return null
+
+		const plaintext = await decrypt(bridgeKey, event.content)
+		const data: unknown = JSON.parse(plaintext)
+		if (!isEstimationRequest(data)) return null
+		return data
+	} catch {
+		return null
+	} finally {
+		pool.close(NOSTR_RELAY_URLS)
+	}
+}
+
+// --- Bridge publish ---
+
+/**
+ * Publish verdict results back to the bridge channel for Slim to consume.
+ * Compound room codes route through the SamenEvent bus; standalone codes use legacy bridge.
+ */
+export async function publishBridgeVerdicts(
+	roomCode: string,
+	secretKeyHex: string,
+	verdicts: BridgeVerdict[],
+): Promise<void> {
+	const { teamCode, sessionCode } = parseRoomCode(roomCode)
+	if (teamCode) {
+		const payload: VerdictResultPayload = { verdicts }
+		const event = createEvent(
+			sessionEventType(EVENT_VERDICTS, sessionCode),
+			1,
+			payload,
+			'anonymous',
+		)
+		const keys: SyncKeys = {
+			secretKeyHex,
+			publicKeyHex: getPublicKey(hexToBytes(secretKeyHex)),
+		}
+		await publishEvent(teamCode, keys, event)
+		return
+	}
+
+	// Legacy bridge for standalone rooms
+	const [bridgeKey, dTag] = await Promise.all([
+		deriveBridgeKey(roomCode),
+		computeBridgeDTag(roomCode, 'verdicts'),
+	])
+	const payload = {
+		type: 'verdict-result',
+		verdicts,
+		timestamp: Date.now(),
+	}
+	const ciphertext = await encrypt(bridgeKey, JSON.stringify(payload))
+	const sk = hexToBytes(secretKeyHex)
+
+	const event = finalizeEvent(
+		{
+			kind: KIND_ROOM_STATE,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [['d', dTag], sessionExpirationTag()],
+			content: ciphertext,
+		},
+		sk,
+	)
+
+	const pool = new SimplePool()
+	try {
+		await Promise.any(pool.publish(NOSTR_RELAY_URLS, event))
+	} finally {
+		pool.close(NOSTR_RELAY_URLS)
+	}
+}
+
+// --- Bridge helpers ---
+
+/**
+ * Convert an estimation request from Slim into ImportedTickets for the backlog.
+ * Maps Slim deliverable IDs into externalId so verdicts can be linked back.
+ */
+export function estimationRequestToTickets(request: EstimationRequest): ImportedTicket[] {
+	return request.deliverables.map((d, i) => ({
+		id: `bridge-${i + 1}`,
+		title: d.title,
+		externalId: d.id,
+	}))
+}
+
+function isEstimationRequest(v: unknown): v is EstimationRequest {
+	if (typeof v !== 'object' || v === null) return false
+	const obj = v as Record<string, unknown>
+	return (
+		obj.type === 'estimation-request' &&
+		Array.isArray(obj.deliverables) &&
+		typeof obj.unit === 'string' &&
 		typeof obj.timestamp === 'number'
 	)
 }

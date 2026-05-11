@@ -147,6 +147,8 @@ export interface SessionDeps {
 	queryPrepDone: (roomCode: string) => Promise<PrepDoneSignal[]>
 	onConclusion?: (mode: number | null, sigma: number | null, ts: number) => void
 	onNameConflict?: (conflictingName: string) => void
+	/** Roster names from team code — skip name-conflict bounce for roster-identified members (same person, different device). */
+	teamRosterNames?: string[]
 }
 
 /** State that can be pre-loaded from Nostr relays before connecting P2P. */

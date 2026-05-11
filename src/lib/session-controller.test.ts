@@ -1656,6 +1656,51 @@ describe('createPeerCallbacks', () => {
 		vi.useRealTimers()
 	})
 
+	it('onName skips conflict for roster-identified members (same person, different device)', () => {
+		vi.useFakeTimers()
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		deps.teamRosterNames = ['Alice', 'Bob']
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
+		cb.onName('p1', 'Alice', true)
+		vi.advanceTimersByTime(3000)
+		expect(conflictSpy).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('onName skips conflict for roster members case-insensitively', () => {
+		vi.useFakeTimers()
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		deps.teamRosterNames = ['alice']
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
+		cb.onName('p1', 'ALICE', true)
+		vi.advanceTimersByTime(3000)
+		expect(conflictSpy).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('onName still bounces non-roster names in team rooms', () => {
+		vi.useFakeTimers()
+		const conflictSpy = vi.fn()
+		deps.onNameConflict = conflictSpy
+		deps.teamRosterNames = ['Bob', 'Charlie']
+		const cb = createPeerCallbacks(s, deps)
+		s.userName = 'Alice'
+		s.sessionStartedAt = Date.now()
+		s.peerIds = ['p1']
+		cb.onName('p1', 'Alice', true)
+		vi.advanceTimersByTime(3000)
+		expect(conflictSpy).toHaveBeenCalledWith('Alice')
+		vi.useRealTimers()
+	})
+
 	it('onTopic syncs backlog index by ticketId', () => {
 		withBacklog(s)
 		callbacks.onTopic('', undefined, 'T2')

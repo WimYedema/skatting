@@ -6,6 +6,9 @@
 const HKDF_SALT = 'estimate-p2p-tool'
 const HKDF_INFO = 'skatting-room-v1'
 
+const BRIDGE_SALT = 'slim-estimate-bridge'
+const BRIDGE_INFO = 'bridge-v1'
+
 /** Derive a 256-bit AES-GCM key from a room code using HKDF-SHA256. */
 export async function deriveRoomKey(roomCode: string): Promise<CryptoKey> {
 	const encoder = new TextEncoder()
@@ -34,6 +37,32 @@ export async function computeDTag(roomCode: string): Promise<string> {
 	return Array.from(bytes.slice(0, 8))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('')
+}
+
+/** Derive a 256-bit AES-GCM key for the Slim↔Estimate bridge channel. */
+export async function deriveBridgeKey(roomCode: string): Promise<CryptoKey> {
+	const encoder = new TextEncoder()
+	const ikm = await crypto.subtle.importKey('raw', encoder.encode(roomCode), 'HKDF', false, [
+		'deriveKey',
+	])
+	return crypto.subtle.deriveKey(
+		{
+			name: 'HKDF',
+			hash: 'SHA-256',
+			salt: encoder.encode(BRIDGE_SALT),
+			info: encoder.encode(BRIDGE_INFO),
+		},
+		ikm,
+		{ name: 'AES-GCM', length: 256 },
+		false,
+		['encrypt', 'decrypt'],
+	)
+}
+
+/** Compute a bridge d-tag from a room code: base hash + suffix. */
+export async function computeBridgeDTag(roomCode: string, suffix: string): Promise<string> {
+	const base = await computeDTag(roomCode)
+	return `${base}-${suffix}`
 }
 
 /**

@@ -187,7 +187,7 @@ export async function runConnectivityCheck(
 	const wsOk = wsResults.some((r) => r.ok)
 	result.webSocket = wsOk ? 'ok' : 'fail'
 	for (const r of wsResults) {
-		result.details.push(`WS ${r.url}: ${r.ok ? '✓' : '✗ ' + r.error}`)
+		result.details.push(`WS ${r.url}: ${r.ok ? '✓' : `✗ ${r.error}`}`)
 		debugLog('check', `WebSocket ${r.url}`, r.ok ? 'OK' : r.error)
 	}
 	onUpdate({ ...result, details: [...result.details] })
@@ -196,7 +196,7 @@ export async function runConnectivityCheck(
 	const stunResult = await testStun()
 	result.stun = stunResult.ok ? 'ok' : 'fail'
 	result.details.push(
-		`STUN: ${stunResult.ok ? '✓' : '✗'} candidates=[${stunResult.candidateTypes.join(',')}]${stunResult.error ? ' — ' + stunResult.error : ''}`,
+		`STUN: ${stunResult.ok ? '✓' : '✗'} candidates=[${stunResult.candidateTypes.join(',')}]${stunResult.error ? ` — ${stunResult.error}` : ''}`,
 	)
 	debugLog('check', 'STUN', stunResult)
 	onUpdate({ ...result, details: [...result.details] })
@@ -205,7 +205,7 @@ export async function runConnectivityCheck(
 	const loopback = await testLocalWebRtc()
 	result.webRtcLocal = loopback.ok ? 'ok' : 'fail'
 	result.details.push(
-		`WebRTC local: ${loopback.ok ? '✓' : '✗'}${loopback.error ? ' — ' + loopback.error : ''}`,
+		`WebRTC local: ${loopback.ok ? '✓' : '✗'}${loopback.error ? ` — ${loopback.error}` : ''}`,
 	)
 	debugLog('check', 'WebRTC local', loopback)
 	onUpdate({ ...result, details: [...result.details] })

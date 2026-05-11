@@ -4,29 +4,35 @@
 	import { generateRoomId, MAX_PEERS, NOSTR_RELAY_URLS } from '../lib/config'
 	import { runConnectivityCheck, type ConnectivityResult } from '../lib/connectivity'
 	import { DEBUG } from '../lib/debug'
-	import type { RoomState, PrepDoneSignal } from '../lib/nostr-state'
+	import type { RoomState, PrepDoneSignal, EstimationRequest } from '../lib/nostr-state'
 	import {
 		deleteSession,
 		getLastUserName,
 		getSavedSessions,
 		type SavedSession,
 	} from '../lib/session-store'
+	import { parseRoomCode } from '../lib/samen/types'
+	import { rosterNames, findMemberByName } from '../lib/samen/roster'
+	import type { TeamSpace } from '../lib/samen/types'
+	import { loadCachedRoster, saveCachedRoster, loadIdentity, saveIdentity } from '../lib/samen/roster-store'
 
 	interface Props {
 		onJoin: (roomId: string, userName: string, unit: string | null) => void
 		queryRoomState?: (roomCode: string) => Promise<RoomState | null>
 		queryPrepDone?: (roomCode: string) => Promise<PrepDoneSignal[]>
+		queryBridgeRequest?: (roomCode: string) => Promise<EstimationRequest | null>
+		queryTeamRoster?: (teamCode: string) => Promise<TeamSpace | null>
 		nameConflict?: string
 		onDemo?: () => void
 	}
 
-	let { onJoin, queryRoomState, queryPrepDone, nameConflict = '', onDemo }: Props = $props()
+	let { onJoin, queryRoomState, queryPrepDone, queryBridgeRequest, queryTeamRoster, nameConflict = '', onDemo }: Props = $props()
 
 	// Check URL for a shared room link (?room=XYZ)
 	const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase() ?? ''
 
 	let roomId = $state(urlRoom || '')
-	let userName = $state(getLastUserName())
+	let userName = $state(loadIdentity()?.displayName || getLastUserName())
 	let unit = $state('points')
 	let customUnit = $state('')
 	let effectiveUnit = $derived(unit === 'custom' ? (customUnit.trim() || 'units') : unit)
@@ -58,7 +64,7 @@
 	)
 
 	// Join preview state
-	let roomPreview = $state<{ roomState: RoomState | null; prepDone: PrepDoneSignal[]; knownNames: KnownName[] } | null>(null)
+	let roomPreview = $state<{ roomState: RoomState | null; prepDone: PrepDoneSignal[]; knownNames: KnownName[]; bridgeRequest?: EstimationRequest | null } | null>(null)
 	let loadingPreview = $state(false)
 
 	interface KnownName {
@@ -67,8 +73,12 @@
 		ticketCount?: number
 	}
 
-	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string): KnownName[] {
+	function buildKnownNames(roomState: RoomState | null, prepDone: PrepDoneSignal[], roomCode: string, teamNames: string[] = []): KnownName[] {
 		const nameMap = new Map<string, KnownName>()
+		// From team roster (highest priority — canonical names)
+		for (const name of teamNames) {
+			nameMap.set(name.toLowerCase(), { name, isCreator: false })
+		}
 		// From Nostr room state (creator name published by room creator)
 		if (roomState?.creatorName) {
 			nameMap.set(roomState.creatorName.toLowerCase(), { name: roomState.creatorName, isCreator: true })
@@ -97,18 +107,43 @@
 		return Array.from(nameMap.values())
 	}
 
+	/** Cached roster for the current compound room code. Used to save identity on join. */
+	let cachedTeamRoster = $state<TeamSpace | null>(null)
+
+	/** Query team roster names from a compound room code's team prefix. Returns [] for standalone codes. */
+	async function fetchTeamNames(code: string): Promise<string[]> {
+		const { teamCode } = parseRoomCode(code)
+		if (!teamCode || !queryTeamRoster) return []
+		// Try localStorage cache first for instant display
+		const cached = loadCachedRoster(teamCode)
+		if (cached) cachedTeamRoster = cached
+		try {
+			const roster = await queryTeamRoster(teamCode)
+			if (roster) {
+				cachedTeamRoster = roster
+				saveCachedRoster(roster)
+				return rosterNames(roster)
+			}
+			return cached ? rosterNames(cached) : []
+		} catch {
+			return cached ? rosterNames(cached) : []
+		}
+	}
+
 	async function handleLookup() {
 		if (!queryRoomState || !queryPrepDone) return
 		const code = roomId.trim().toLowerCase()
 		if (code.length < 4) return
 		loadingPreview = true
 		try {
-			const [roomState, prepDone] = await Promise.all([
+			const [roomState, prepDone, bridgeRequest, teamNames] = await Promise.all([
 				queryRoomState(code),
 				queryPrepDone(code),
+				queryBridgeRequest?.(code) ?? Promise.resolve(null),
+				fetchTeamNames(code),
 			])
-			const knownNames = buildKnownNames(roomState, prepDone, code)
-			roomPreview = { roomState, prepDone, knownNames }
+			const knownNames = buildKnownNames(roomState, prepDone, code, teamNames)
+			roomPreview = { roomState, prepDone, knownNames, bridgeRequest }
 		} catch {
 			// Query failed — fall back to direct join
 			roomPreview = { roomState: null, prepDone: [], knownNames: buildKnownNames(null, [], code) }
@@ -146,6 +181,15 @@
 		clearRoomFromUrl()
 	}
 
+	/** Save identity to localStorage if the chosen name matches a roster member. */
+	function trySaveIdentity(name: string) {
+		if (!cachedTeamRoster) return
+		const member = findMemberByName(cachedTeamRoster, name)
+		if (member) {
+			saveIdentity({ memberId: member.id, displayName: member.displayName, publicKeyHex: '' })
+		}
+	}
+
 	function handleSubmit() {
 		const trimmedRoom = roomId.trim().toLowerCase()
 		const trimmedName = userName.trim()
@@ -166,6 +210,7 @@
 				)
 				if (match?.isCreator) selectedUnit = match.unit
 			}
+			trySaveIdentity(trimmedName)
 			onJoin(trimmedRoom, trimmedName, selectedUnit)
 		}
 	}
@@ -182,9 +227,9 @@
 		// Fire off Nostr lookup to enrich with live data
 		if (queryRoomState && queryPrepDone) {
 			loadingPreview = true
-			Promise.all([queryRoomState(saved.roomId), queryPrepDone(saved.roomId)])
-				.then(([roomState, prepDone]) => {
-					const enriched = buildKnownNames(roomState, prepDone, saved.roomId)
+			Promise.all([queryRoomState(saved.roomId), queryPrepDone(saved.roomId), fetchTeamNames(saved.roomId)])
+				.then(([roomState, prepDone, teamNames]) => {
+					const enriched = buildKnownNames(roomState, prepDone, saved.roomId, teamNames)
 					roomPreview = { roomState, prepDone, knownNames: enriched }
 				})
 				.catch(() => {
@@ -211,6 +256,7 @@
 			url.searchParams.set('room', selectedSession.roomId)
 			window.history.replaceState({}, '', url.toString())
 		}
+		trySaveIdentity(trimmedName)
 		onJoin(selectedSession.roomId, trimmedName, selectedUnit)
 	}
 
@@ -448,6 +494,13 @@
 				<div class="room-code-large">{roomId}</div>
 				{#if roomPreview.roomState}
 					{@render roomStatePreview(roomPreview.roomState)}
+				{:else if roomPreview.bridgeRequest}
+					<div class="session-preview bridge-preview">
+						<span class="preview-bridge-label">📋 From Slim{#if roomPreview.bridgeRequest.boardName}: {roomPreview.bridgeRequest.boardName}{/if}</span>
+						<span class="preview-meta">
+							{roomPreview.bridgeRequest.deliverables.length} deliverables · {roomPreview.bridgeRequest.unit}
+						</span>
+					</div>
 				{:else}
 					<p class="preview-empty">No session data found — join anyway?</p>
 				{/if}
@@ -847,6 +900,11 @@
 	.preview-empty {
 		color: var(--c-text-ghost);
 		font-style: italic;
+	}
+
+	.preview-bridge-label {
+		font-size: var(--fs-base);
+		font-weight: 500;
 	}
 
 	.preview-loading {

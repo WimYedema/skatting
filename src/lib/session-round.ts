@@ -1,5 +1,5 @@
 import { getCurrentTicket, MIC_HOLDER_STALE_MS, type SessionState } from './session-state'
-import type { HistoryEntry, PeerEstimate, RevealMessage, VerdictSnapshot } from './types'
+import type { HistoryEntry, RevealMessage, VerdictSnapshot } from './types'
 import type { VerdictResult } from './verdict'
 import { applyVerdict, computeVerdict, upsertHistory } from './verdict'
 
@@ -135,6 +135,7 @@ export function addOrUpdateHistory(s: SessionState, entry: HistoryEntry): void {
 			roomId: s.session.roomId,
 			timestamp: Date.now(),
 			ticketId: currentTicket?.id,
+			externalId: currentTicket?.externalId,
 		})
 		s.persistentHistory = s.storage.getVerdictHistory(s.unit)
 	}
